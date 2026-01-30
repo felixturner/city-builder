@@ -5,11 +5,13 @@ import {
   Object3D,
   BatchedMesh,
   MeshPhysicalNodeMaterial,
+  Color,
 } from 'three/webgpu'
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture } from 'three/tsl'
-import { ABlock } from './lib/ABlock.js'
+import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
+import { Howl } from 'howler'
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -27,13 +29,13 @@ export class CityBuilder {
     this.scene = scene
     this.params = params
 
-    this.blocks = []
-    this.gridZone = new Box2(new Vector2(0, 0), new Vector2(148, 148))
-    this.blockMesh = null
-    this.blockMaterial = null
+    this.towers = []
+    this.gridZone = new Box2(new Vector2(0, 0), new Vector2(154, 154)) // 11x11 lots at 14 cells each
+    this.towerMesh = null
+    this.towerMaterial = null
     this.dummy = new Object3D()
-    this.blockSize = new Vector2(1, 1)
-    this.blockCenter = new Vector2()
+    this.towerSize = new Vector2(1, 1)
+    this.towerCenter = new Vector2()
 
     // City height distribution noise - lower frequency for larger "neighborhoods"
     this.noiseFrequency = params.scene.noiseScale
@@ -53,21 +55,47 @@ export class CityBuilder {
 
     this.actualGridWidth = 0
     this.actualGridHeight = 0
+
+    // Hover state
+    this.hoveredTower = null
+    // Base hover colors - transformed to lighter/less saturated versions
+    const baseHoverColors = [
+      new Color('#FC238D'),
+      new Color('#D2E253'),
+      new Color('#1BB3F6'),
+    ]
+    // Transform colors: reduce saturation, increase lightness (50% of previous transform)
+    this.hoverColors = baseHoverColors.map(c => {
+      const hsl = {}
+      c.getHSL(hsl)
+      return new Color().setHSL(hsl.h, hsl.s * 0.8, Math.min(1, hsl.l + 0.1))
+    })
+    this.instanceToTower = new Map() // Maps instance ID to tower
+
+    // Click state
+    this.pressedTower = null
+    this.pointerDownPos = new Vector2()
+    this.dragThreshold = 5 // pixels
+
+    // Sound
+    this.popSound = new Howl({ src: ['assets/sfx/pop.mp3'] })
+    this.tickSound = new Howl({ src: ['assets/sfx/tick.mp3'] })
+    this.rollSound = new Howl({ src: ['assets/sfx/roll.mp3'] })
   }
 
   async init() {
     await BlockGeometry.init()
     this.initGrid()
-    await this.initBlocks()
+    await this.initTowers()
     this.updateMatrices()
     this.recalculateVisibility()
   }
 
   initGrid() {
-    // Lot layout: 10x10 building cells with 3-cell roads between lots
+    // Lot layout: 10x10 building cells with 4-cell roads between lots
     const lotSize = 10
-    const roadWidth = 3
-    const cellSize = lotSize + roadWidth // 13 cells per lot unit
+    const roadWidth = 4
+    const cellSize = lotSize + roadWidth // 14 cells per lot unit
 
     // Calculate number of lots that fit in the grid
     const numLotsX = Math.floor(this.gridZone.max.x / cellSize)
@@ -123,16 +151,16 @@ export class CityBuilder {
           continue
         }
 
-        const block = new ABlock()
+        const tower = new Tower()
         const isSquare = MathUtils.randFloat(0, 1) < squareChance
-        block.typeTop = isSquare ? MathUtils.randInt(0, 5) : 0
-        block.typeBottom = BlockGeometry.topToBottom.get(block.typeTop)
-        block.setTopColorIndex(MathUtils.randInt(0, ABlock.LIGHT_COLORS.length - 1))
+        tower.typeTop = isSquare ? MathUtils.randInt(0, 5) : 0
+        tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
+        tower.setTopColorIndex(MathUtils.randInt(0, Tower.LIGHT_COLORS.length - 1))
 
         const sx = MathUtils.randInt(1, maxW)
         const sy = isSquare ? sx : MathUtils.randInt(1, Math.min(maxBlockSize.y, height - py))
 
-        // Skip blocks that extend outside the city block bounds (creates empty areas)
+        // Skip towers that extend outside the lot bounds (creates empty areas)
         if (px + sx > width || py + sy > height) {
           px++
           continue
@@ -141,27 +169,28 @@ export class CityBuilder {
         // Convert local coords to global grid coords
         const globalX = startX + px
         const globalY = startY + py
-        block.box.min.set(globalX, globalY)
-        block.box.max.set(globalX + sx, globalY + sy)
+        tower.box.min.set(globalX, globalY)
+        tower.box.max.set(globalX + sx, globalY + sy)
 
         // Store noise and random values
         const centerX = globalX + sx / 2
         const centerY = globalY + sy / 2
-        block.cityNoiseVal = this.cityNoise.scaled2D(centerX, centerY)
-        block.randFactor = MathUtils.randFloat(0, 1)
-        block.skipFactor = MathUtils.randFloat(0, 1) // For realtime visibility
-        block.rotation = isSquare
+        tower.cityNoiseVal = this.cityNoise.scaled2D(centerX, centerY)
+        tower.randFactor = MathUtils.randFloat(0, 1)
+        tower.skipFactor = MathUtils.randFloat(0, 1) // For realtime visibility
+        tower.rotation = isSquare
           ? (MathUtils.randInt(0, 4) * Math.PI) / 2
           : MathUtils.randInt(0, 2) * Math.PI
+        tower.colorIndex = MathUtils.randInt(0, 2)
 
-        this.blocks.push(block)
+        this.towers.push(tower)
 
         // Mark cells as occupied (local coords)
         const localEndX = Math.min(width, px + sx)
         const localEndY = Math.min(height, py + sy)
         for (let i = px; i < localEndX; i++) {
           for (let j = py; j < localEndY; j++) {
-            occupied[i][j] = block.id
+            occupied[i][j] = tower.id
           }
         }
         px += sx
@@ -178,14 +207,14 @@ export class CityBuilder {
   }
 
   finalizeGrid() {
-    console.log('Block count:', this.blocks.length, 'instances:', this.blocks.length * 2)
+    console.log('Tower count:', this.towers.length, 'instances:', this.towers.length * 2)
     this.recalculateHeights()
   }
 
-  async initBlocks() {
+  async initTowers() {
     // Material values set by applyParams
     const mat = new MeshPhysicalNodeMaterial()
-    this.blockMaterial = mat
+    this.towerMaterial = mat
 
     // Environment rotation uniform (radians)
     this.envRotation = uniform(0)
@@ -207,65 +236,67 @@ export class CityBuilder {
       iCounts.push(g.index.count)
     }
 
-    // Floor stacking: each building needs up to maxFloors base instances + 1 roof
+    // Floor stacking: each tower needs up to maxFloors base instances + 1 roof
     this.maxFloors = 20
-    this.floorHeight = 1
+    this.floorHeight = 2
 
-    // Calculate total geometry needed for all buildings with max floors
+    // Calculate total geometry needed for all towers with max floors
     let totalV = 0
     let totalI = 0
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i]
-      // maxFloors base instances + 1 roof instance per building
-      totalV += vCounts[block.typeBottom] * this.maxFloors
-      totalV += vCounts[block.typeTop]
-      totalI += iCounts[block.typeBottom] * this.maxFloors
-      totalI += iCounts[block.typeTop]
+    for (let i = 0; i < this.towers.length; i++) {
+      const tower = this.towers[i]
+      // maxFloors base instances + 1 roof instance per tower
+      totalV += vCounts[tower.typeBottom] * this.maxFloors
+      totalV += vCounts[tower.typeTop]
+      totalI += iCounts[tower.typeBottom] * this.maxFloors
+      totalI += iCounts[tower.typeTop]
     }
 
-    const maxInstances = this.blocks.length * (this.maxFloors + 1)
-    this.blockMesh = new BatchedMesh(maxInstances, totalV, totalI, mat)
-    this.blockMesh.sortObjects = false
-    this.blockMesh.castShadow = true
-    this.blockMesh.receiveShadow = true
-    this.blockMesh.position.x = -this.actualGridWidth * 0.5
-    this.blockMesh.position.z = -this.actualGridHeight * 0.5
-    this.scene.add(this.blockMesh)
+    const maxInstances = this.towers.length * (this.maxFloors + 1) + 10 // +10 for debug instances
+    this.towerMesh = new BatchedMesh(maxInstances, totalV, totalI, mat)
+    this.towerMesh.sortObjects = false
+    this.towerMesh.castShadow = true
+    this.towerMesh.receiveShadow = true
+    this.towerMesh.position.x = -this.actualGridWidth * 0.5
+    this.towerMesh.position.z = -this.actualGridHeight * 0.5
+    this.scene.add(this.towerMesh)
 
     const geomIds = []
     for (let i = 0; i < geoms.length; i++) {
-      geomIds.push(this.blockMesh.addGeometry(geoms[i]))
+      geomIds.push(this.towerMesh.addGeometry(geoms[i]))
     }
 
-    // Create instances for each building: maxFloors base + 1 roof
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i]
-      block.floorInstances = []
+    // Create instances for each tower: maxFloors base + 1 roof
+    for (let i = 0; i < this.towers.length; i++) {
+      const tower = this.towers[i]
+      tower.floorInstances = []
 
       // Create floor instances (base geometry)
       for (let f = 0; f < this.maxFloors; f++) {
-        const idx = this.blockMesh.addInstance(geomIds[block.typeBottom])
-        this.blockMesh.setColorAt(idx, block.baseColor)
-        this.blockMesh.setVisibleAt(idx, false)
-        block.floorInstances.push(idx)
+        const idx = this.towerMesh.addInstance(geomIds[tower.typeBottom])
+        this.towerMesh.setColorAt(idx, tower.baseColor)
+        this.towerMesh.setVisibleAt(idx, false)
+        tower.floorInstances.push(idx)
+        this.instanceToTower.set(idx, tower)
       }
 
       // Create roof instance (top geometry)
-      block.roofInstance = this.blockMesh.addInstance(geomIds[block.typeTop])
-      this.blockMesh.setColorAt(block.roofInstance, block.topColor)
-      this.blockMesh.setVisibleAt(block.roofInstance, false)
+      tower.roofInstance = this.towerMesh.addInstance(geomIds[tower.typeTop])
+      this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
+      this.towerMesh.setVisibleAt(tower.roofInstance, false)
+      this.instanceToTower.set(tower.roofInstance, tower)
     }
 
-    console.log('Block count:', this.blocks.length, 'Max instances:', maxInstances)
+    console.log('Tower count:', this.towers.length, 'Max instances:', maxInstances)
   }
 
   recalculateHeights() {
     const gridCenterX = this.actualGridWidth / 2
     const gridCenterY = this.actualGridHeight / 2
 
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i]
-      const center = block.box.getCenter(this.blockCenter)
+    for (let i = 0; i < this.towers.length; i++) {
+      const tower = this.towers[i]
+      const center = tower.box.getCenter(this.towerCenter)
 
       // Distance from center falloff using max axis distance (0 at center, 1 at any edge)
       const dx = Math.abs(center.x - gridCenterX)
@@ -274,71 +305,75 @@ export class CityBuilder {
       const distFactor = 1 - Math.pow(normalizedDist, 2) * this.centerFalloff
 
       // Subtract from noise, clamp to 0, then cube for contrast
-      const adjustedNoise = Math.max(0, block.cityNoiseVal - this.noiseSubtract)
+      const adjustedNoise = Math.max(0, tower.cityNoiseVal - this.noiseSubtract)
       const noiseHeight = Math.pow(adjustedNoise, 3) * this.heightNoiseScale
-      // Power > 1 skews distribution: most buildings short, few tall outliers
-      const randHeight = Math.pow(block.randFactor, this.randHeightPower) * this.randHeightAmount
-      block.height = (noiseHeight + randHeight) * distFactor
+      // Power > 1 skews distribution: most towers short, few tall outliers
+      const randHeight = Math.pow(tower.randFactor, this.randHeightPower) * this.randHeightAmount
+      tower.height = (noiseHeight + randHeight) * distFactor
     }
     this.updateMatrices()
   }
 
   updateMatrices() {
-    if (!this.blockMesh) return
-    const { dummy, blockMesh, blocks } = this
+    if (!this.towerMesh) return
+    const { dummy, towerMesh, towers } = this
 
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i]
+    for (let i = 0; i < towers.length; i++) {
+      const tower = towers[i]
 
-      // Hide all instances if block is not visible
-      if (block.visible === false) {
+      // Hide all instances if tower is not visible
+      if (tower.visible === false) {
         for (let f = 0; f < this.maxFloors; f++) {
-          blockMesh.setVisibleAt(block.floorInstances[f], false)
+          towerMesh.setVisibleAt(tower.floorInstances[f], false)
         }
-        blockMesh.setVisibleAt(block.roofInstance, false)
+        towerMesh.setVisibleAt(tower.roofInstance, false)
         continue
       }
 
-      const center = block.box.getCenter(this.blockCenter)
-      const size = block.box.getSize(this.blockSize)
+      const center = tower.box.getCenter(this.towerCenter)
+      const size = tower.box.getSize(this.towerSize)
 
       // Calculate number of floors based on height
-      const numFloors = Math.max(1, Math.floor(block.height / this.floorHeight))
+      const numFloors = Math.max(1, Math.floor(tower.height / this.floorHeight))
 
-      // Position and show floor instances
+      // Half-heights for centered geometries
+      const floorHalfHeight = this.floorHeight / 2 // Base geom is 1 unit, scaled to floorHeight
+      const roofHalfHeight = BlockGeometry.halfHeights[tower.typeTop]
+
+      // Position and show floor instances (geometry centered, so add halfHeight)
       for (let f = 0; f < this.maxFloors; f++) {
-        const idx = block.floorInstances[f]
+        const idx = tower.floorInstances[f]
         if (f < numFloors) {
-          dummy.position.set(center.x, f * this.floorHeight, center.y)
+          dummy.position.set(center.x, f * this.floorHeight + floorHalfHeight, center.y)
           dummy.scale.set(size.x, this.floorHeight, size.y)
-          dummy.rotation.y = block.rotation
+          dummy.rotation.y = tower.rotation
           dummy.updateMatrix()
-          blockMesh.setMatrixAt(idx, dummy.matrix)
-          blockMesh.setVisibleAt(idx, true)
+          towerMesh.setMatrixAt(idx, dummy.matrix)
+          towerMesh.setVisibleAt(idx, true)
         } else {
-          blockMesh.setVisibleAt(idx, false)
+          towerMesh.setVisibleAt(idx, false)
         }
       }
 
-      // Position roof on top
-      dummy.position.set(center.x, numFloors * this.floorHeight, center.y)
+      // Position roof on top (geometry centered, so add halfHeight)
+      dummy.position.set(center.x, numFloors * this.floorHeight + roofHalfHeight, center.y)
       dummy.scale.set(size.x, 1, size.y)
-      dummy.rotation.y = block.rotation
+      dummy.rotation.y = tower.rotation
       dummy.updateMatrix()
-      blockMesh.setMatrixAt(block.roofInstance, dummy.matrix)
-      blockMesh.setVisibleAt(block.roofInstance, true)
+      towerMesh.setMatrixAt(tower.roofInstance, dummy.matrix)
+      towerMesh.setVisibleAt(tower.roofInstance, true)
     }
   }
 
   recalculateVisibility() {
-    if (!this.blockMesh) return
+    if (!this.towerMesh) return
     const gridCenterX = this.actualGridWidth / 2
     const gridCenterY = this.actualGridHeight / 2
     const maxDist = Math.sqrt(gridCenterX * gridCenterX + gridCenterY * gridCenterY)
 
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i]
-      const center = block.box.getCenter(this.blockCenter)
+    for (let i = 0; i < this.towers.length; i++) {
+      const tower = this.towers[i]
+      const center = tower.box.getCenter(this.towerCenter)
 
       // Increase skip chance based on distance from center
       const dx = center.x - gridCenterX
@@ -347,9 +382,9 @@ export class CityBuilder {
       const distFactor = Math.pow(dist / maxDist, 2) // 0 at center, 1 at corners, squared
       const effectiveSkipChance = this.skipChance + distFactor * 1.2 // adds up to 1.2 at edges
 
-      block.visible = block.skipFactor >= effectiveSkipChance
+      tower.visible = tower.skipFactor >= effectiveSkipChance
     }
-    // Visibility is applied in updateMatrices based on block.visible
+    // Visibility is applied in updateMatrices based on tower.visible
     this.updateMatrices()
   }
 
@@ -362,22 +397,22 @@ export class CityBuilder {
       max: 1,
       persistence: 0.6,
     })
-    // Recalculate noise values for all blocks
+    // Recalculate noise values for all towers
     let minNoise = Infinity
     let maxNoise = -Infinity
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i]
-      const center = block.box.getCenter(this.blockCenter)
-      block.cityNoiseVal = this.cityNoise.scaled2D(center.x, center.y)
-      minNoise = Math.min(minNoise, block.cityNoiseVal)
-      maxNoise = Math.max(maxNoise, block.cityNoiseVal)
+    for (let i = 0; i < this.towers.length; i++) {
+      const tower = this.towers[i]
+      const center = tower.box.getCenter(this.towerCenter)
+      tower.cityNoiseVal = this.cityNoise.scaled2D(center.x, center.y)
+      minNoise = Math.min(minNoise, tower.cityNoiseVal)
+      maxNoise = Math.max(maxNoise, tower.cityNoiseVal)
     }
     console.log('Noise range:', minNoise, '-', maxNoise)
     this.recalculateHeights()
   }
 
   setupEnvRotation() {
-    const mat = this.blockMaterial
+    const mat = this.towerMaterial
     const angle = this.envRotation
 
     // Get the environment texture from scene
@@ -398,5 +433,170 @@ export class CityBuilder {
 
     // Set as the material's environment node
     mat.envNode = envMapNode
+  }
+
+  /**
+   * Handle hover from raycast intersection
+   * @param {Object|null} intersection - Three.js intersection object or null if no hit
+   */
+  onHover(intersection) {
+    let tower = null
+
+    if (intersection && intersection.batchId !== undefined) {
+      // Get the instance ID from batchId (BatchedMesh uses batchId for instance index)
+      const instanceId = intersection.batchId
+      tower = this.instanceToTower.get(instanceId)
+    }
+
+    // No change
+    if (tower === this.hoveredTower) return
+
+    // Unhover previous tower
+    if (this.hoveredTower) {
+      this.animateTowerColor(this.hoveredTower, false)
+    }
+
+    // Hover new tower
+    this.hoveredTower = tower
+    if (tower) {
+      this.animateTowerColor(tower, true)
+    }
+  }
+
+  /**
+   * Animate tower color to/from hover state
+   * @param {Tower} tower - The tower to animate
+   * @param {boolean} isHovering - True to animate to hover color, false to restore
+   */
+  animateTowerColor(tower, isHovering) {
+    const targetColor = isHovering ? this.hoverColors[tower.colorIndex] : null
+    tower.animateHoverColor(this.towerMesh, targetColor, this.floorHeight)
+  }
+
+  /**
+   * Handle pointer down on a tower - push it down
+   * @param {Object|null} intersection - Three.js intersection object or null
+   * @param {number} clientX - pointer X position
+   * @param {number} clientY - pointer Y position
+   */
+  onPointerDown(intersection, clientX, clientY) {
+    let tower = null
+    if (intersection && intersection.batchId !== undefined) {
+      tower = this.instanceToTower.get(intersection.batchId)
+    }
+
+    if (!tower || !tower.visible) return
+
+    this.pressedTower = tower
+    this.pointerDownPos.set(clientX, clientY)
+
+    // Play tick sound with random pitch variation
+    const tickId = this.tickSound.play()
+    this.tickSound.rate(0.85 + Math.random() * 0.3, tickId)
+
+    // Push the tower down by 0.25 floor height
+    const pushAmount = this.floorHeight * 0.25
+    this.animateTowerOffset(tower, -pushAmount, 0.1)
+  }
+
+  /**
+   * Handle pointer move - cancel click if dragged
+   * @param {number} clientX - pointer X position
+   * @param {number} clientY - pointer Y position
+   */
+  onPointerMove(clientX, clientY) {
+    if (!this.pressedTower) return
+
+    const dx = clientX - this.pointerDownPos.x
+    const dy = clientY - this.pointerDownPos.y
+    const dist = Math.sqrt(dx * dx + dy * dy)
+
+    if (dist > this.dragThreshold) {
+      // Cancel the click - animate back to normal
+      const tower = this.pressedTower
+      this.pressedTower = null
+      this.animateTowerOffset(tower, 0, 0.15)
+    }
+  }
+
+  /**
+   * Handle pointer up - add a floor and animate it rising
+   */
+  onPointerUp() {
+    if (!this.pressedTower) return
+
+    const tower = this.pressedTower
+    this.pressedTower = null
+
+    const numFloors = Math.max(1, Math.floor(tower.height / this.floorHeight))
+
+    // Check if we can add another floor
+    if (numFloors >= this.maxFloors) {
+      // Just animate back to normal position
+      this.animateTowerOffset(tower, 0, 0.2)
+      return
+    }
+
+    // Set height to exact floor count + 1 (align to floor boundaries)
+    tower.height = (numFloors + 1) * this.floorHeight
+
+    // Play pop sound with random pitch variation
+    const popId = this.popSound.play()
+    this.popSound.rate(0.85 + Math.random() * 0.3, popId)
+
+    // Animate the tower back up with the new floor emerging
+    this.animateNewFloor(tower, numFloors)
+  }
+
+  /**
+   * Animate tower vertical offset (for press down effect)
+   */
+  animateTowerOffset(tower, offset, duration, onComplete) {
+    tower.animateOffset(this.towerMesh, this.floorHeight, this.maxFloors, offset, duration, onComplete)
+  }
+
+  /**
+   * Animate adding a new floor with roof pop-off effect
+   */
+  animateNewFloor(tower, oldNumFloors) {
+    const hoverColor = this.hoverColors[tower.colorIndex]
+    tower.animateNewFloor(this.towerMesh, this.floorHeight, oldNumFloors, hoverColor, () => {
+      this.updateTowerMatrices(tower)
+    })
+  }
+
+  /**
+   * Update matrices for a single tower
+   */
+  updateTowerMatrices(tower) {
+    const { dummy, towerMesh } = this
+    const center = tower.box.getCenter(this.towerCenter)
+    const size = tower.box.getSize(this.towerSize)
+    const numFloors = Math.max(1, Math.floor(tower.height / this.floorHeight))
+
+    // Half-heights for centered geometries
+    const floorHalfHeight = this.floorHeight / 2
+    const roofHalfHeight = BlockGeometry.halfHeights[tower.typeTop]
+
+    for (let f = 0; f < this.maxFloors; f++) {
+      const idx = tower.floorInstances[f]
+      if (f < numFloors) {
+        dummy.position.set(center.x, f * this.floorHeight + floorHalfHeight, center.y)
+        dummy.scale.set(size.x, this.floorHeight, size.y)
+        dummy.rotation.y = tower.rotation
+        dummy.updateMatrix()
+        towerMesh.setMatrixAt(idx, dummy.matrix)
+        towerMesh.setVisibleAt(idx, true)
+      } else {
+        towerMesh.setVisibleAt(idx, false)
+      }
+    }
+
+    // Roof on top
+    dummy.position.set(center.x, numFloors * this.floorHeight + roofHalfHeight, center.y)
+    dummy.scale.set(size.x, 1, size.y)
+    dummy.rotation.y = tower.rotation
+    dummy.updateMatrix()
+    towerMesh.setMatrixAt(tower.roofInstance, dummy.matrix)
   }
 }

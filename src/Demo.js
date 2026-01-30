@@ -11,6 +11,7 @@ import {
   WebGPURenderer,
   PCFSoftShadowMap,
   GridHelper,
+  AxesHelper,
 } from 'three/webgpu'
 import {
   pass,
@@ -105,12 +106,42 @@ export class Demo {
     await this.lighting.init()
     await this.city.init()
 
-    // Add grid lines matching city grid
+    // Set up hover and click detection on city blocks
+    this.pointerHandler.setRaycastTargets(
+      [this.city.towerMesh],
+      {
+        onHover: (intersection) => this.city.onHover(intersection),
+        onPointerDown: (intersection, x, y) => this.city.onPointerDown(intersection, x, y),
+        onPointerUp: () => this.city.onPointerUp(),
+        onPointerMove: (x, y) => this.city.onPointerMove(x, y)
+      }
+    )
+
+    // Add grid lines - fine cell grid (light) and coarse lot grid (darker)
     const gridSize = this.city.actualGridWidth
-    const gridDivisions = this.city.actualGridWidth // 1 unit per cell
-    const grid = new GridHelper(gridSize, gridDivisions, 0x777777, 0x777777)
-    grid.position.y = 0.01 // Slight offset to avoid z-fighting
-    this.scene.add(grid)
+
+    // Fine cell grid (semi-transparent)
+    // Use integer division to ensure gridSize matches divisions exactly
+    const cellDivisions = Math.floor(gridSize)
+    const cellGrid = new GridHelper(cellDivisions, cellDivisions, 0x666666, 0x666666)
+    cellGrid.material.transparent = true
+    cellGrid.material.opacity = 0.5
+    cellGrid.position.y = 0.01
+    this.scene.add(cellGrid)
+
+    // Coarse lot grid (every 14 cells = lot + road)
+    // Offset by 2 cells so grid runs down middle of roads
+    const lotSpacing = 14 // lotSize (10) + roadWidth (4)
+    const lotDivisions = Math.floor(gridSize / lotSpacing)
+    const lotGridSize = lotDivisions * lotSpacing
+    const lotGrid = new GridHelper(lotGridSize, lotDivisions, 0x666666, 0x666666)
+    lotGrid.position.set(-2, 0.02, -2) // Offset to center on roads
+    this.scene.add(lotGrid)
+
+    // DEBUG: Axis helper (red=X, green=Y, blue=Z)
+    const axisHelper = new AxesHelper(10)
+    axisHelper.position.set(0, 10, 0)
+    this.scene.add(axisHelper)
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
@@ -327,6 +358,7 @@ export class Demo {
     // Clamp target Y to prevent panning under the city
     if (controls.target.y < 0) controls.target.y = 0
     this.lighting.updateShadowCamera(this.controls.target, this.camera, this.orthoCamera, this.perspCamera)
+
     post.render()
 
     this.stats.end()

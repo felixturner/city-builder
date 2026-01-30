@@ -2,6 +2,17 @@
 
 Converting this repo into a city builder toy.
 
+## Naming Conventions
+
+- **City** - The entire grid, comprised of 11x11 lots
+- **Lot** - A 10x10 grid of cells containing towers (separated by 3-cell roads)
+- **Cell** - A 1x1 grid unit, the size of the smallest block
+- **Tower** - A building/stack made of multiple blocks. Has position, rotation, height, colors. (class: `Tower`)
+- **Block** - An individual mesh instance within a tower
+  - **Base Block** - Floor/body block geometry (typeBottom: 0-8)
+  - **Top Block** - Roof block geometry (typeTop: 0-5)
+- **Floor** - One level of a tower, rendered as a base block instance
+
 ## Instructions
 
 - Don't ask leading questions about next steps

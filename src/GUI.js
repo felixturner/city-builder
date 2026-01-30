@@ -199,19 +199,19 @@ export class GUIManager {
     // Material folder
     const matFolder = gui.addFolder('Material').close()
     matFolder.add(allParams.material, 'roughness', 0, 1, 0.01).name('Roughness').onChange((v) => {
-      if (demo.city.blockMaterial) demo.city.blockMaterial.roughness = v
+      if (demo.city.towerMaterial) demo.city.towerMaterial.roughness = v
     })
     matFolder.add(allParams.material, 'metalness', 0, 1, 0.01).name('Metalness').onChange((v) => {
-      if (demo.city.blockMaterial) demo.city.blockMaterial.metalness = v
+      if (demo.city.towerMaterial) demo.city.towerMaterial.metalness = v
     })
     matFolder.add(allParams.material, 'clearcoat', 0, 1, 0.01).name('Clearcoat').onChange((v) => {
-      if (demo.city.blockMaterial) demo.city.blockMaterial.clearcoat = v
+      if (demo.city.towerMaterial) demo.city.towerMaterial.clearcoat = v
     })
     matFolder.add(allParams.material, 'clearcoatRoughness', 0, 1, 0.01).name('Clearcoat Rough').onChange((v) => {
-      if (demo.city.blockMaterial) demo.city.blockMaterial.clearcoatRoughness = v
+      if (demo.city.towerMaterial) demo.city.towerMaterial.clearcoatRoughness = v
     })
     matFolder.add(allParams.material, 'iridescence', 0, 1, 0.01).name('Iridescence').onChange((v) => {
-      if (demo.city.blockMaterial) demo.city.blockMaterial.iridescence = v
+      if (demo.city.towerMaterial) demo.city.towerMaterial.iridescence = v
     })
 
     // Effects folder
@@ -268,12 +268,12 @@ export class GUIManager {
     }
 
     // Material
-    if (demo.city.blockMaterial) {
-      demo.city.blockMaterial.roughness = params.material.roughness
-      demo.city.blockMaterial.metalness = params.material.metalness
-      demo.city.blockMaterial.clearcoat = params.material.clearcoat
-      demo.city.blockMaterial.clearcoatRoughness = params.material.clearcoatRoughness
-      demo.city.blockMaterial.iridescence = params.material.iridescence
+    if (demo.city.towerMaterial) {
+      demo.city.towerMaterial.roughness = params.material.roughness
+      demo.city.towerMaterial.metalness = params.material.metalness
+      demo.city.towerMaterial.clearcoat = params.material.clearcoat
+      demo.city.towerMaterial.clearcoatRoughness = params.material.clearcoatRoughness
+      demo.city.towerMaterial.iridescence = params.material.iridescence
     }
 
     // Post processing

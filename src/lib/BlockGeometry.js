@@ -2,6 +2,8 @@ import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 
 export class BlockGeometry {
   static geoms = []
+  // Half-heights for each geometry (for positioning at center)
+  static halfHeights = []
 
   static async init() {
     await this.loadGeometries()
@@ -28,30 +30,73 @@ export class BlockGeometry {
       console.log((progress.loaded / progress.total) * 100 + '% blocks loaded')
     })
 
-    const bottomBlock = this.findGeometry(gltf, 'Square_Base')
-    const bottomQuart = this.findGeometry(gltf, 'Quart_Base')
-    const bottomHole = this.findGeometry(gltf, 'Hole_Base')
+    const bottomBlock = this.findAndCenterGeometry(gltf, 'Square_Base')
+    const bottomQuart = this.findAndCenterGeometry(gltf, 'Quart_Base')
+    const bottomHole = this.findAndCenterGeometry(gltf, 'Hole_Base')
 
-    const topSquare = this.findGeometry(gltf, 'Square_Top')
-    const topQuart = this.findGeometry(gltf, 'Quart_Top')
-    const topHole = this.findGeometry(gltf, 'Hole_Top')
-    const topPeg = this.findGeometry(gltf, 'Peg_Top')
-    const topDivot = this.findGeometry(gltf, 'Divot_Top')
-    const topCross = this.findGeometry(gltf, 'Cross_Top')
+    const topSquare = this.findAndCenterGeometry(gltf, 'Square_Top')
+    const topQuart = this.findAndCenterGeometry(gltf, 'Quart_Top')
+    const topHole = this.findAndCenterGeometry(gltf, 'Hole_Top')
+    const topPeg = this.findAndCenterGeometry(gltf, 'Peg_Top')
+    const topDivot = this.findAndCenterGeometry(gltf, 'Divot_Top')
+    const topCross = this.findAndCenterGeometry(gltf, 'Cross_Top')
 
-    this.geoms.push(topSquare)
-    this.geoms.push(topQuart)
-    this.geoms.push(topHole)
-    this.geoms.push(topPeg)
-    this.geoms.push(topDivot)
-    this.geoms.push(topCross)
+    // Push in same order as before (tops 0-5, bottoms 6-8)
+    this.geoms.push(topSquare.geom)
+    this.halfHeights.push(topSquare.halfHeight)
 
-    this.geoms.push(bottomBlock)
-    this.geoms.push(bottomQuart)
-    this.geoms.push(bottomHole)
+    this.geoms.push(topQuart.geom)
+    this.halfHeights.push(topQuart.halfHeight)
+
+    this.geoms.push(topHole.geom)
+    this.halfHeights.push(topHole.halfHeight)
+
+    this.geoms.push(topPeg.geom)
+    this.halfHeights.push(topPeg.halfHeight)
+
+    this.geoms.push(topDivot.geom)
+    this.halfHeights.push(topDivot.halfHeight)
+
+    this.geoms.push(topCross.geom)
+    this.halfHeights.push(topCross.halfHeight)
+
+    this.geoms.push(bottomBlock.geom)
+    this.halfHeights.push(bottomBlock.halfHeight)
+
+    this.geoms.push(bottomQuart.geom)
+    this.halfHeights.push(bottomQuart.halfHeight)
+
+    this.geoms.push(bottomHole.geom)
+    this.halfHeights.push(bottomHole.halfHeight)
+
+    console.log('BlockGeometry halfHeights:', this.halfHeights)
   }
 
-  static findGeometry(gltf, name) {
-    return gltf.scene.children.find((child) => child.name === name).geometry
+  /**
+   * Find geometry by name, center it vertically, and return with half-height
+   */
+  static findAndCenterGeometry(gltf, name) {
+    const geom = gltf.scene.children.find((child) => child.name === name).geometry
+    geom.computeBoundingBox()
+
+    const minY = geom.boundingBox.min.y
+    const maxY = geom.boundingBox.max.y
+    const height = maxY - minY
+    const halfHeight = height / 2
+    const centerY = (minY + maxY) / 2
+
+    console.log(`${name} bbox: ${minY.toFixed(4)} to ${maxY.toFixed(4)}, centering by ${-centerY.toFixed(4)}`)
+
+    // Translate geometry so center is at Y=0
+    const posAttr = geom.attributes.position
+    for (let i = 0; i < posAttr.count; i++) {
+      posAttr.setY(i, posAttr.getY(i) - centerY)
+    }
+    posAttr.needsUpdate = true
+
+    // Recompute bounding box after centering
+    geom.computeBoundingBox()
+
+    return { geom, halfHeight }
   }
 }
