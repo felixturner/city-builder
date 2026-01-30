@@ -10,6 +10,7 @@ import {
   PostProcessing,
   WebGPURenderer,
   PCFSoftShadowMap,
+  GridHelper,
 } from 'three/webgpu'
 import {
   pass,
@@ -103,6 +104,13 @@ export class Demo {
 
     await this.lighting.init()
     await this.city.init()
+
+    // Add grid lines matching city grid
+    const gridSize = this.city.actualGridWidth
+    const gridDivisions = this.city.actualGridWidth // 1 unit per cell
+    const grid = new GridHelper(gridSize, gridDivisions, 0x777777, 0x777777)
+    grid.position.y = 0.01 // Slight offset to avoid z-fighting
+    this.scene.add(grid)
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)

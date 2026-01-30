@@ -201,23 +201,30 @@ export class CityBuilder {
 
     const vCounts = []
     const iCounts = []
-    let totalV = 0
-    let totalI = 0
     for (let i = 0; i < geoms.length; i++) {
       const g = geoms[i]
       vCounts.push(g.attributes.position.count)
       iCounts.push(g.index.count)
     }
 
+    // Floor stacking: each building needs up to maxFloors base instances + 1 roof
+    this.maxFloors = 20
+    this.floorHeight = 1
+
+    // Calculate total geometry needed for all buildings with max floors
+    let totalV = 0
+    let totalI = 0
     for (let i = 0; i < this.blocks.length; i++) {
-      totalV += vCounts[this.blocks[i].typeBottom]
-      totalV += vCounts[this.blocks[i].typeTop]
-      totalI += iCounts[this.blocks[i].typeBottom]
-      totalI += iCounts[this.blocks[i].typeTop]
+      const block = this.blocks[i]
+      // maxFloors base instances + 1 roof instance per building
+      totalV += vCounts[block.typeBottom] * this.maxFloors
+      totalV += vCounts[block.typeTop]
+      totalI += iCounts[block.typeBottom] * this.maxFloors
+      totalI += iCounts[block.typeTop]
     }
 
-    const maxBlocks = this.blocks.length * 2
-    this.blockMesh = new BatchedMesh(maxBlocks, totalV, totalI, mat)
+    const maxInstances = this.blocks.length * (this.maxFloors + 1)
+    this.blockMesh = new BatchedMesh(maxInstances, totalV, totalI, mat)
     this.blockMesh.sortObjects = false
     this.blockMesh.castShadow = true
     this.blockMesh.receiveShadow = true
@@ -230,13 +237,26 @@ export class CityBuilder {
       geomIds.push(this.blockMesh.addGeometry(geoms[i]))
     }
 
+    // Create instances for each building: maxFloors base + 1 roof
     for (let i = 0; i < this.blocks.length; i++) {
       const block = this.blocks[i]
-      this.blockMesh.addInstance(geomIds[block.typeBottom])
-      this.blockMesh.addInstance(geomIds[block.typeTop])
-      this.blockMesh.setColorAt(i * 2, block.baseColor)
-      this.blockMesh.setColorAt(i * 2 + 1, block.topColor)
+      block.floorInstances = []
+
+      // Create floor instances (base geometry)
+      for (let f = 0; f < this.maxFloors; f++) {
+        const idx = this.blockMesh.addInstance(geomIds[block.typeBottom])
+        this.blockMesh.setColorAt(idx, block.baseColor)
+        this.blockMesh.setVisibleAt(idx, false)
+        block.floorInstances.push(idx)
+      }
+
+      // Create roof instance (top geometry)
+      block.roofInstance = this.blockMesh.addInstance(geomIds[block.typeTop])
+      this.blockMesh.setColorAt(block.roofInstance, block.topColor)
+      this.blockMesh.setVisibleAt(block.roofInstance, false)
     }
+
+    console.log('Block count:', this.blocks.length, 'Max instances:', maxInstances)
   }
 
   recalculateHeights() {
@@ -265,26 +285,48 @@ export class CityBuilder {
 
   updateMatrices() {
     if (!this.blockMesh) return
-    const { dummy, blockMesh, blocks, blockSize, blockCenter } = this
+    const { dummy, blockMesh, blocks } = this
 
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i]
-      const baseI = i * 2
-      const topI = i * 2 + 1
 
-      block.box.getSize(blockSize)
-      block.box.getCenter(blockCenter)
+      // Hide all instances if block is not visible
+      if (block.visible === false) {
+        for (let f = 0; f < this.maxFloors; f++) {
+          blockMesh.setVisibleAt(block.floorInstances[f], false)
+        }
+        blockMesh.setVisibleAt(block.roofInstance, false)
+        continue
+      }
 
+      const center = block.box.getCenter(this.blockCenter)
+      const size = block.box.getSize(this.blockSize)
+
+      // Calculate number of floors based on height
+      const numFloors = Math.max(1, Math.floor(block.height / this.floorHeight))
+
+      // Position and show floor instances
+      for (let f = 0; f < this.maxFloors; f++) {
+        const idx = block.floorInstances[f]
+        if (f < numFloors) {
+          dummy.position.set(center.x, f * this.floorHeight, center.y)
+          dummy.scale.set(size.x, this.floorHeight, size.y)
+          dummy.rotation.y = block.rotation
+          dummy.updateMatrix()
+          blockMesh.setMatrixAt(idx, dummy.matrix)
+          blockMesh.setVisibleAt(idx, true)
+        } else {
+          blockMesh.setVisibleAt(idx, false)
+        }
+      }
+
+      // Position roof on top
+      dummy.position.set(center.x, numFloors * this.floorHeight, center.y)
+      dummy.scale.set(size.x, 1, size.y)
       dummy.rotation.y = block.rotation
-      dummy.position.set(blockCenter.x, 0, blockCenter.y)
-      dummy.scale.set(blockSize.x, block.height, blockSize.y)
       dummy.updateMatrix()
-      blockMesh.setMatrixAt(baseI, dummy.matrix)
-
-      dummy.position.y += block.height
-      dummy.scale.set(blockSize.x, 1, blockSize.y)
-      dummy.updateMatrix()
-      blockMesh.setMatrixAt(topI, dummy.matrix)
+      blockMesh.setMatrixAt(block.roofInstance, dummy.matrix)
+      blockMesh.setVisibleAt(block.roofInstance, true)
     }
   }
 
@@ -305,11 +347,10 @@ export class CityBuilder {
       const distFactor = Math.pow(dist / maxDist, 2) // 0 at center, 1 at corners, squared
       const effectiveSkipChance = this.skipChance + distFactor * 1.2 // adds up to 1.2 at edges
 
-      const visible = block.skipFactor >= effectiveSkipChance
-      // Each block has 2 instances: base (i*2) and top (i*2+1)
-      this.blockMesh.setVisibleAt(i * 2, visible)
-      this.blockMesh.setVisibleAt(i * 2 + 1, visible)
+      block.visible = block.skipFactor >= effectiveSkipChance
     }
+    // Visibility is applied in updateMatrices based on block.visible
+    this.updateMatrices()
   }
 
   recalculateNoise() {

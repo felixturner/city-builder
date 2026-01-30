@@ -33,7 +33,7 @@ export class GUIManager {
       lightY: 100,
       lightZ: 50,
       showHelper: false,
-      hdrRotation: 0,
+      hdrRotation: 180,
     },
     material: {
       roughness: 0.75,
