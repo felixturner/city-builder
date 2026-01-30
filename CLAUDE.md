@@ -13,7 +13,7 @@ Converting this repo into a city builder toy.
 - [ ] Dynamic AO blur based on zoom - reduce blur when zoomed out, increase when zoomed in
 - [ ] Add three-point lighting? (key, fill, rim lights)
 - [ ] add UI to zoom/pan on desktop/ mobile. Townscaper: left click drag - pan. left click - add block. scroll wheel zoom. right click rotate. right click destroy
-- [ ] Clone to new repo. setup vite build with github pages
+- [ ] Setup Netlify deploy (alternative to GitHub Pages)
 - [ ] Update to latest threejs
 - [ ] add dynamic windows/lights
 - [ ] add floor grid and UI like https://robot.co/playground/grid
