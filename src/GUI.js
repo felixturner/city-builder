@@ -33,6 +33,7 @@ export class GUIManager {
       lightY: 100,
       lightZ: 50,
       showHelper: false,
+      hdrRotation: 0,
     },
     material: {
       roughness: 0.75,
@@ -151,6 +152,13 @@ export class GUIManager {
     lightsFolder.add(allParams.lighting, 'hdr', hdrOptions).name('HDR').onChange((v) => {
       demo.lighting.loadHDR(v)
     })
+    lightsFolder.add(allParams.lighting, 'hdrRotation', 0, 360, 1).name('HDR Rotation').onChange((v) => {
+      const rad = v * Math.PI / 180
+      demo.scene.backgroundRotation.y = rad
+      if (demo.city.envRotation) {
+        demo.city.envRotation.value = rad
+      }
+    })
     lightsFolder.add(allParams.lighting, 'exposure', 0, 2, 0.05).name('Exposure').onChange((v) => {
       demo.renderer.toneMappingExposure = v
     })
@@ -253,6 +261,11 @@ export class GUIManager {
       demo.lighting.updateShadowFrustum()
     }
     if (demo.lighting.dirLightHelper) demo.lighting.dirLightHelper.visible = params.lighting.showHelper
+    const hdrRad = params.lighting.hdrRotation * Math.PI / 180
+    demo.scene.backgroundRotation.y = hdrRad
+    if (demo.city.envRotation) {
+      demo.city.envRotation.value = hdrRad
+    }
 
     // Material
     if (demo.city.blockMaterial) {

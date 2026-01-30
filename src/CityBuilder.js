@@ -6,9 +6,21 @@ import {
   BatchedMesh,
   MeshPhysicalNodeMaterial,
 } from 'three/webgpu'
+import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture } from 'three/tsl'
 import { ABlock } from './lib/ABlock.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
+
+// Rotate a vec3 around Y axis by angle (in radians)
+const rotateY = (v, angle) => {
+  const c = cos(angle)
+  const s = sin(angle)
+  return vec3(
+    v.x.mul(c).add(v.z.mul(s)),
+    v.y,
+    v.z.mul(c).sub(v.x.mul(s))
+  )
+}
 
 export class CityBuilder {
   constructor(scene, params) {
@@ -175,6 +187,13 @@ export class CityBuilder {
     const mat = new MeshPhysicalNodeMaterial()
     this.blockMaterial = mat
 
+    // Environment rotation uniform (radians)
+    this.envRotation = uniform(0)
+
+    // Custom environment node with rotation support
+    // We'll set this up after the scene environment is loaded
+    this.setupEnvRotation()
+
     const geoms = []
     for (let i = 0; i < BlockGeometry.geoms.length; i++) {
       geoms.push(BlockGeometry.geoms[i])
@@ -314,5 +333,29 @@ export class CityBuilder {
     }
     console.log('Noise range:', minNoise, '-', maxNoise)
     this.recalculateHeights()
+  }
+
+  setupEnvRotation() {
+    const mat = this.blockMaterial
+    const angle = this.envRotation
+
+    // Get the environment texture from scene
+    const envTexture = this.scene.environment
+    if (!envTexture) {
+      console.warn('Environment texture not yet loaded')
+      return
+    }
+
+    // Create rotated reflection vector for specular
+    // Reflection is computed in view space, transform to world, then rotate
+    const reflectView = positionViewDirection.negate().reflect(normalWorld)
+    const reflectWorld = reflectView.transformDirection(cameraViewMatrix)
+    const rotatedReflectWorld = rotateY(reflectWorld, angle)
+
+    // Create PMREM texture node with rotated UV direction
+    const envMapNode = pmremTexture(envTexture, rotatedReflectWorld, roughness)
+
+    // Set as the material's environment node
+    mat.envNode = envMapNode
   }
 }
