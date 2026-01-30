@@ -159,9 +159,10 @@ export class Demo {
       RIGHT: 0   // ROTATE
     }
     // Touch: 1 finger=pan, 2 fingers=rotate+zoom
+    // TOUCH constants: ROTATE=0, PAN=1, DOLLY_PAN=2, DOLLY_ROTATE=3
     this.controls.touches = {
-      ONE: 2,  // TOUCH.PAN
-      TWO: 5   // TOUCH.DOLLY_ROTATE
+      ONE: 1,  // TOUCH.PAN
+      TWO: 3   // TOUCH.DOLLY_ROTATE
     }
     // Zoom limits (distance from target)
     this.controls.minDistance = 40
