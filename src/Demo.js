@@ -41,8 +41,8 @@ export class Demo {
   constructor(canvas) {
     this.canvas = canvas
     this.renderer = null
-    this.orthoCamera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 500)
-    this.perspCamera = new PerspectiveCamera(30, 1, 0.1, 500)
+    this.orthoCamera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1000)
+    this.perspCamera = new PerspectiveCamera(30, 1, 0.1, 1000)
     this.camera = this.perspCamera
     this.controls = null
     this.post = null
@@ -157,6 +157,11 @@ export class Demo {
       LEFT: 2,  // PAN
       MIDDLE: 1, // DOLLY
       RIGHT: 0   // ROTATE
+    }
+    // Touch: 1 finger=pan, 2 fingers=rotate+zoom
+    this.controls.touches = {
+      ONE: 2,  // TOUCH.PAN
+      TWO: 5   // TOUCH.DOLLY_ROTATE
     }
     // Zoom limits (distance from target)
     this.controls.minDistance = 40

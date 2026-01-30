@@ -52,37 +52,37 @@ export class CityBuilder {
   }
 
   initGrid() {
-    // City block layout: 10x10 building blocks with 3-cell roads between
-    const cityBlockSize = 10
+    // Lot layout: 10x10 building cells with 3-cell roads between lots
+    const lotSize = 10
     const roadWidth = 3
-    const cellSize = cityBlockSize + roadWidth // 13 cells per city block unit
+    const cellSize = lotSize + roadWidth // 13 cells per lot unit
 
-    // Calculate number of city blocks that fit in the grid
-    const numBlocksX = Math.floor(this.gridZone.max.x / cellSize)
-    const numBlocksY = Math.floor(this.gridZone.max.y / cellSize)
+    // Calculate number of lots that fit in the grid
+    const numLotsX = Math.floor(this.gridZone.max.x / cellSize)
+    const numLotsY = Math.floor(this.gridZone.max.y / cellSize)
 
     // Store actual grid dimensions for centering
-    this.actualGridWidth = numBlocksX * cellSize
-    this.actualGridHeight = numBlocksY * cellSize
+    this.actualGridWidth = numLotsX * cellSize
+    this.actualGridHeight = numLotsY * cellSize
 
-    // Iterate over each city block and fill it with buildings
-    for (let blockY = 0; blockY < numBlocksY; blockY++) {
-      for (let blockX = 0; blockX < numBlocksX; blockX++) {
-        // Calculate the bounds of this city block (excluding roads)
-        const startX = blockX * cellSize
-        const startY = blockY * cellSize
-        const endX = startX + cityBlockSize
-        const endY = startY + cityBlockSize
+    // Iterate over each lot and fill it with buildings
+    for (let lotY = 0; lotY < numLotsY; lotY++) {
+      for (let lotX = 0; lotX < numLotsX; lotX++) {
+        // Calculate the bounds of this lot (excluding roads)
+        const startX = lotX * cellSize
+        const startY = lotY * cellSize
+        const endX = startX + lotSize
+        const endY = startY + lotSize
 
-        // Fill this city block with buildings
-        this.fillCityBlock(startX, startY, endX, endY)
+        // Fill this lot with buildings
+        this.fillLot(startX, startY, endX, endY)
       }
     }
 
     this.finalizeGrid()
   }
 
-  fillCityBlock(startX, startY, endX, endY) {
+  fillLot(startX, startY, endX, endY) {
     const width = endX - startX
     const height = endY - startY
 
@@ -284,7 +284,7 @@ export class CityBuilder {
       const dy = center.y - gridCenterY
       const dist = Math.sqrt(dx * dx + dy * dy)
       const distFactor = Math.pow(dist / maxDist, 2) // 0 at center, 1 at corners, squared
-      const effectiveSkipChance = this.skipChance + distFactor * 0.8 // adds up to 0.8 at edges
+      const effectiveSkipChance = this.skipChance + distFactor * 1.2 // adds up to 1.2 at edges
 
       const visible = block.skipFactor >= effectiveSkipChance
       // Each block has 2 instances: base (i*2) and top (i*2+1)

@@ -9,15 +9,21 @@ Converting this repo into a city builder toy.
 
 ## TODO
 
-- [ ] Fix FXAA on resize - use DPR approach from tsl-pills project (or femove FXAA)
+- [ ] Fix AO flicker on pan when zoomed out
+- [ ] Dial in AO
+- [ ] Add HDR rotation controls?
+- [ ] Rotate some blocks?
+- [ ] Smooth camera zoom
+- [ ] use multiple blocks for tall towers?
+- [ ] add dynamic windows/lights
+- [ ] click to destroy / build buildings (like townscaper) https://oskarstalberg.com/Townscaper/
+- [ ] Fix FXAA on resize - use DPR approach from tsl-pills project (or remove FXAA)
 - [ ] Dynamic AO blur based on zoom - reduce blur when zoomed out, increase when zoomed in
 - [ ] Add three-point lighting? (key, fill, rim lights)
-- [ ] add UI to zoom/pan on desktop/ mobile. Townscaper: left click drag - pan. left click - add block. scroll wheel zoom. right click rotate. right click destroy
-- [ ] Setup Netlify deploy (alternative to GitHub Pages)
+- [ ] Test on mobile
 - [ ] Update to latest threejs
-- [ ] add dynamic windows/lights
 - [ ] add floor grid and UI like https://robot.co/playground/grid
-- [ ] click to destroy / build buildings (like townscaper) https://oskarstalberg.com/Townscaper/
+- [ ] Setup Netlify deploy (alternative to GitHub Pages)
 - [ ] subtle sound effects
 - [ ] day/night toggle (move dir light / fade between HDRs)
 - [ ] roads / cars

@@ -14,13 +14,13 @@ export class GUIManager {
       fov: 20,
     },
     scene: {
-      noiseScale: 0.02,
-      noiseSubtract: 0.2,
-      noiseHeight: 20,
+      noiseScale: 0.015,
+      noiseSubtract: 0.15,
+      noiseHeight: 27,
       randHeight: 5,
-      randHeightPower: 1,
-      centerFalloff: 0.8,
-      skipChance: 0.2,
+      randHeightPower: 6.5,
+      centerFalloff: 1,
+      skipChance: 0.1,
     },
     lighting: {
       exposure: 1.0,
@@ -133,7 +133,7 @@ export class GUIManager {
       demo.city.centerFalloff = v
       demo.city.recalculateHeights()
     })
-    cityFolder.add(allParams.scene, 'skipChance', 0, 0.5, 0.05).name('Skip Chance').onChange((v) => {
+    cityFolder.add(allParams.scene, 'skipChance', 0, 1, 0.05).name('Skip Chance').onChange((v) => {
       demo.city.skipChance = v
       demo.city.recalculateVisibility()
     })

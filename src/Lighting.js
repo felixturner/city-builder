@@ -36,7 +36,7 @@ export class Lighting {
     scene.background = texture
     scene.environment = texture
 
-    const groundGeom = new PlaneGeometry(148, 148, 1, 1)
+    const groundGeom = new PlaneGeometry(296, 296, 1, 1)
     groundGeom.rotateX(-Math.PI * 0.5)
     const groundMat = new MeshStandardNodeMaterial({ color: 0x999999 })
     const groundMesh = new Mesh(groundGeom, groundMat)
