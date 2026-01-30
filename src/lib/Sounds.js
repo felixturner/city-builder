@@ -1,0 +1,49 @@
+import { Howl } from 'howler'
+
+/**
+ * Centralized sound manager
+ */
+class SoundsManager {
+  constructor() {
+    this.sounds = {
+      pop: new Howl({ src: ['assets/sfx/pop.mp3'] }),
+      tick: new Howl({ src: ['assets/sfx/tick.mp3'] }),
+      roll: new Howl({ src: ['assets/sfx/roll.mp3'] }),
+    }
+    // Multiple stone sounds for random selection
+    this.stoneSounds = [
+      new Howl({ src: ['assets/sfx/stone-01.mp3'] }),
+      new Howl({ src: ['assets/sfx/stone-02.mp3'] }),
+      new Howl({ src: ['assets/sfx/stone-03.mp3'] }),
+      new Howl({ src: ['assets/sfx/stone-04.mp3'] }),
+      new Howl({ src: ['assets/sfx/stone-05.mp3'] }),
+    ]
+  }
+
+  /**
+   * Play a sound with optional rate variation and volume
+   * @param {string} name - Sound name (pop, tick, roll, stone)
+   * @param {number} baseRate - Base playback rate (default 1.0)
+   * @param {number} variation - Random variation amount (default 0.2)
+   * @param {number} volume - Volume 0-1 (default 1.0)
+   */
+  play(name, baseRate = 1.0, variation = 0.2, volume = 1.0) {
+    let sound
+    if (name === 'stone') {
+      // Randomly select one of the stone sounds
+      sound = this.stoneSounds[Math.floor(Math.random() * this.stoneSounds.length)]
+    } else {
+      sound = this.sounds[name]
+    }
+    if (!sound) {
+      console.warn(`Sound "${name}" not found`)
+      return
+    }
+    const id = sound.play()
+    sound.rate(baseRate - variation / 2 + Math.random() * variation, id)
+    sound.volume(volume, id)
+    return id
+  }
+}
+
+export const Sounds = new SoundsManager()

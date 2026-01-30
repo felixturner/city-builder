@@ -1,6 +1,7 @@
 import { Box2, Color, Object3D, Vector2 } from 'three/webgpu'
 import gsap from 'gsap'
 import { BlockGeometry } from './lib/BlockGeometry.js'
+import { randCentered, clampSym } from './lib/utils.js'
 
 /**
  * Tower class - represents a building/stack of blocks
@@ -51,6 +52,13 @@ export class Tower {
     // Animation state
     this.hoverTween = null
     this.floorTween = null
+    this.roofTween = null // Separate tween for roof Y position (persists across clicks)
+    // Persistent roof animation state (so GSAP can tween from current values)
+    this.roofAnim = { y: 0, tiltX: 0, tiltY: 0, tiltZ: 0 }
+    // Persistent dummy for roof animation (avoids stale closures)
+    this.roofDummy = new Object3D()
+    // Flag to prevent external matrix updates from overwriting animated roof
+    this.roofAnimating = false
   }
 
   setTopColorIndex(index) {
@@ -139,6 +147,7 @@ export class Tower {
 
     // Animate all floor instances
     const anim = { offset: 0 }
+    const self = this
     gsap.to(anim, {
       offset: offset,
       duration: duration,
@@ -152,12 +161,14 @@ export class Tower {
           dummy.updateMatrix()
           mesh.setMatrixAt(idx, dummy.matrix)
         }
-        // Roof follows
-        dummy.position.set(center.x, numFloors * floorHeight + roofHalfHeight + anim.offset, center.y)
-        dummy.scale.set(size.x, 1, size.y)
-        dummy.rotation.set(0, this.rotation, 0)
-        dummy.updateMatrix()
-        mesh.setMatrixAt(this.roofInstance, dummy.matrix)
+        // Only update roof if not being animated separately
+        if (!self.roofAnimating) {
+          dummy.position.set(center.x, numFloors * floorHeight + roofHalfHeight + anim.offset, center.y)
+          dummy.scale.set(size.x, 1, size.y)
+          dummy.rotation.set(0, this.rotation, 0)
+          dummy.updateMatrix()
+          mesh.setMatrixAt(this.roofInstance, dummy.matrix)
+        }
       },
       onComplete: onComplete
     })
@@ -165,191 +176,139 @@ export class Tower {
 
   /**
    * Animate adding a new floor with roof pop-off effect
-   * @param {BatchedMesh} mesh - The batched mesh
-   * @param {number} floorHeight - Height of each floor
-   * @param {number} oldNumFloors - Number of floors before adding
-   * @param {Color} hoverColor - Color to apply to new floor
-   * @param {Function} onComplete - Callback when animation completes
    */
-  animateNewFloor(mesh, floorHeight, oldNumFloors, hoverColor, onComplete) {
-    // Use local dummy to avoid conflicts with other animations
+  animateNewFloor(mesh, floorHeight, oldNumFloors, hoverColor, onComplete, onRoofLand) {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
-    const newNumFloors = oldNumFloors + 1
 
-    // If animation is running, fast-forward to end
-    if (this.floorTween && this.floorTween.isActive()) {
-      this.floorTween.progress(1)
-    }
+    if (this.floorTween?.isActive()) this.floorTween.kill()
 
-    // Reset dummy rotation to avoid stale state
-    dummy.rotation.set(0, 0, 0)
-
-    // Get the next unused floor instance for the new floor
-    const newFloorIdx = this.floorInstances[oldNumFloors]
-
-    // Set the new floor to hover color (but keep hidden initially)
-    mesh.setColorAt(newFloorIdx, hoverColor)
-
-    // Random tilt for roof pop-off (max: X/Z ±0.3, Y ±0.48)
-    const tiltX = (Math.random() - 0.5) * 0.6
-    const tiltY = (Math.random() - 0.5) * 0.96 // 60% of 1.6
-    const tiltZ = (Math.random() - 0.5) * 0.6
-
-    // Half-heights for centered geometries
     const floorHalfHeight = floorHeight / 2
     const roofHalfHeight = BlockGeometry.halfHeights[this.typeTop]
-
-    // Position where new floor will be placed (on top of existing floors)
+    const newFloorIdx = this.floorInstances[oldNumFloors]
     const newFloorY = oldNumFloors * floorHeight + floorHalfHeight
-    // Final roof position (center of roof)
-    const finalRoofY = newNumFloors * floorHeight + roofHalfHeight
-    // Current roof position
-    const currentRoofY = oldNumFloors * floorHeight + roofHalfHeight
+    const finalRoofY = (oldNumFloors + 1) * floorHeight + roofHalfHeight
 
-    // Random tilt for new floor pop (max: X/Z ±0.1, Y ±0.2)
-    const floorTiltX = (Math.random() - 0.5) * 0.2
-    const floorTiltY = (Math.random() - 0.5) * 0.4
-    const floorTiltZ = (Math.random() - 0.5) * 0.2
-
-    // Tower Y offset on mouse up
-    const towerYOffset = floorHeight * 0.2
-
-    // Animation state
-    const anim = {
-      // Roof pop-off - starts at offset position
-      roofY: currentRoofY + towerYOffset,
-      roofTiltX: 0,
-      roofTiltY: 0,
-      roofTiltZ: 0,
-      // New floor scale (starts small, scales from center)
-      newFloorScale: 0.1,
-      // Y bounce offset (starts at 0, pops up then settles)
-      newFloorYOffset: 0,
-      // New floor tilt (pops up with tilt, settles to 0)
-      newFloorTiltX: 0,
-      newFloorTiltY: 0,
-      newFloorTiltZ: 0,
-      // Base offset - immediately set to slight offset up (not from pressed state)
-      baseOffset: towerYOffset
+    // Initialize roofAnim.y on first click
+    if (this.roofAnim.y === 0) {
+      this.roofAnim.y = oldNumFloors * floorHeight + roofHalfHeight + floorHeight * 0.2
     }
 
-    // Create timeline for sequenced animation
+    mesh.setColorAt(newFloorIdx, hoverColor)
+
+    const anim = {
+      scale: 0.1,
+      yOffset: 0,
+      tiltX: 0, tiltY: 0, tiltZ: 0,
+      baseOffset: floorHeight * 0.2
+    }
+    const tiltTarget = {
+      x: randCentered(0.2),
+      y: randCentered(0.4),
+      z: randCentered(0.2)
+    }
+
+    const updateFloor = () => {
+      dummy.position.set(center.x, newFloorY + anim.yOffset, center.y)
+      dummy.scale.set(size.x * anim.scale, floorHeight * anim.scale, size.y * anim.scale)
+      dummy.rotation.set(anim.tiltX, this.rotation + anim.tiltY, anim.tiltZ)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(newFloorIdx, dummy.matrix)
+    }
+
     const tl = gsap.timeline({
-      onComplete: () => {
-        this.floorTween = null
-        if (onComplete) onComplete()
-      }
+      onComplete: () => { this.floorTween = null; onComplete?.() }
     })
     this.floorTween = tl
     tl.timeScale(0.5)
 
-    // ===== TIMELINE (absolute times) =====
-    // 0.00 - 0.12: Tower settles down from offset (power2.out)
-    // 0.00 - 0.08: Roof flies off with tilt (power2.out) - starts immediately!
-    // 0.00 - 0.1: New floor scales in (bounce.out)
-    // 0.00 - 0.1: New floor Y pops up (power2.out)
-    // 0.09 - 0.34: Roof falls back down (bounce.out)
-    // 0.11 - 0.18: New floor Y bounces down (bounce.out)
-
-    // [0.00 - 0.12] Phase 1: Tower settles down from slight offset (power2.out)
+    // Existing floors settle down
     tl.to(anim, {
       baseOffset: 0,
       duration: 0.12,
       ease: 'power2.out',
       onUpdate: () => {
-        // Update existing floors only (roof handled by Phase 2)
         for (let f = 0; f < oldNumFloors; f++) {
-          const idx = this.floorInstances[f]
           dummy.position.set(center.x, f * floorHeight + floorHalfHeight + anim.baseOffset, center.y)
           dummy.scale.set(size.x, floorHeight, size.y)
           dummy.rotation.set(0, this.rotation, 0)
           dummy.updateMatrix()
-          mesh.setMatrixAt(idx, dummy.matrix)
+          mesh.setMatrixAt(this.floorInstances[f], dummy.matrix)
         }
       }
     }, 0)
 
-    // [0.00 - 0.08] Phase 2: Roof flies off immediately with tilt (starts at offset position)
+    // New floor scales in + pops up
     tl.to(anim, {
-      roofY: finalRoofY + floorHeight * 2.0,
-      roofTiltX: tiltX,
-      roofTiltY: tiltY,
-      roofTiltZ: tiltZ,
-      duration: 0.08,
+      scale: 1,
+      yOffset: floorHeight * 0.3,
+      tiltX: tiltTarget.x, tiltY: tiltTarget.y, tiltZ: tiltTarget.z,
+      duration: 0.1,
       ease: 'power2.out',
-      onUpdate: () => {
-        dummy.position.set(center.x, anim.roofY, center.y)
-        dummy.scale.set(size.x, 1, size.y)
-        dummy.rotation.set(anim.roofTiltX, this.rotation + anim.roofTiltY, anim.roofTiltZ)
-        dummy.updateMatrix()
-        mesh.setMatrixAt(this.roofInstance, dummy.matrix)
-      }
+      onStart: () => mesh.setVisibleAt(newFloorIdx, true),
+      onUpdate: updateFloor
     }, 0)
 
-    // [0.00 - 0.10] New floor scales in (XYZ from center)
+    // New floor settles down
     tl.to(anim, {
-      newFloorScale: 1,
-      duration: 0.1,
-      ease: 'bounce.out',
-      onStart: () => {
-        mesh.setVisibleAt(newFloorIdx, true)
-      },
-      onUpdate: () => {
-        dummy.position.set(center.x, newFloorY + anim.newFloorYOffset, center.y)
-        dummy.scale.set(size.x * anim.newFloorScale, floorHeight * anim.newFloorScale, size.y * anim.newFloorScale)
-        dummy.rotation.set(anim.newFloorTiltX, this.rotation + anim.newFloorTiltY, anim.newFloorTiltZ)
-        dummy.updateMatrix()
-        mesh.setMatrixAt(newFloorIdx, dummy.matrix)
-      },
-      onComplete: () => {
-        this.floorInstances[oldNumFloors] = newFloorIdx
-      }
-    }, 0)
-
-    // [0.09 - 0.34] Roof falls with bounce
-    tl.to(anim, {
-      roofY: finalRoofY,
-      roofTiltX: 0,
-      roofTiltY: 0,
-      roofTiltZ: 0,
-      duration: 0.25,
-      ease: 'bounce.out',
-      onUpdate: () => {
-        dummy.position.set(center.x, anim.roofY, center.y)
-        dummy.scale.set(size.x, 1, size.y)
-        dummy.rotation.set(anim.roofTiltX, this.rotation + anim.roofTiltY, anim.roofTiltZ)
-        dummy.updateMatrix()
-        mesh.setMatrixAt(this.roofInstance, dummy.matrix)
-      }
-    }, 0.09)
-
-    // [0.00 - 0.10] New floor Y pops up with tilt
-    tl.to(anim, {
-      newFloorYOffset: floorHeight * 0.3,
-      newFloorTiltX: floorTiltX,
-      newFloorTiltY: floorTiltY,
-      newFloorTiltZ: floorTiltZ,
-      duration: 0.1,
-      ease: 'power2.out'
-    }, 0)
-
-    // [0.11 - 0.18] New floor Y bounces down, tilt settles
-    tl.to(anim, {
-      newFloorYOffset: 0,
-      newFloorTiltX: 0,
-      newFloorTiltY: 0,
-      newFloorTiltZ: 0,
+      yOffset: 0, tiltX: 0, tiltY: 0, tiltZ: 0,
       duration: 0.07,
       ease: 'bounce.out',
-      onUpdate: () => {
-        dummy.position.set(center.x, newFloorY + anim.newFloorYOffset, center.y)
-        dummy.scale.set(size.x * anim.newFloorScale, floorHeight * anim.newFloorScale, size.y * anim.newFloorScale)
-        dummy.rotation.set(anim.newFloorTiltX, this.rotation + anim.newFloorTiltY, anim.newFloorTiltZ)
-        dummy.updateMatrix()
-        mesh.setMatrixAt(newFloorIdx, dummy.matrix)
-      }
+      onUpdate: updateFloor
     }, 0.11)
+
+    // Roof animation (separate)
+    this.startRoofAnimation(mesh, center, size, floorHeight, finalRoofY, onRoofLand)
+  }
+
+  /**
+   * Animate roof pop-off (separate from floor timeline for fast-click support)
+   */
+  startRoofAnimation(mesh, center, size, floorHeight, finalRoofY, onRoofLand) {
+    if (this.roofTween) this.roofTween.kill()
+    this.roofAnimating = true
+
+    const maxTilt = 0.5
+
+    // Pop up above final position (not current position, to prevent stacking on fast clicks)
+    const popUpY = finalRoofY + floorHeight * 1.5
+    const tiltX = clampSym(this.roofAnim.tiltX + randCentered(0.6), maxTilt)
+    const tiltY = clampSym(this.roofAnim.tiltY + randCentered(0.96), maxTilt)
+    const tiltZ = clampSym(this.roofAnim.tiltZ + randCentered(0.6), maxTilt)
+
+    const self = this
+    const render = () => {
+      self.roofDummy.position.set(center.x, self.roofAnim.y, center.y)
+      self.roofDummy.scale.set(size.x, 1, size.y)
+      self.roofDummy.rotation.set(self.roofAnim.tiltX, self.rotation + self.roofAnim.tiltY, self.roofAnim.tiltZ)
+      self.roofDummy.updateMatrix()
+      mesh.setMatrixAt(self.roofInstance, self.roofDummy.matrix)
+    }
+
+    // Render immediately at current position
+    render()
+
+    // Timeline: pop up, then bounce down
+    const tl = gsap.timeline({
+      onComplete: () => { self.roofAnimating = false; self.roofTween = null }
+    })
+    this.roofTween = tl
+
+    tl.to(this.roofAnim, {
+      y: popUpY, tiltX, tiltY, tiltZ,
+      duration: 0.16,
+      ease: 'power2.out',
+      onUpdate: render
+    })
+    tl.to(this.roofAnim, {
+      y: finalRoofY, tiltX: 0, tiltY: 0, tiltZ: 0,
+      duration: 0.5,
+      ease: 'bounce.out',
+      onUpdate: render
+    }, 0.18)
+
+    // Play sound when roof lands (delay from timeline start)
+    tl.call(onRoofLand, null, 0.35)
   }
 }

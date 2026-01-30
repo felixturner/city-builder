@@ -10,8 +10,8 @@ import {
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
+import { Sounds } from './lib/Sounds.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
-import { Howl } from 'howler'
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -77,10 +77,6 @@ export class CityBuilder {
     this.pointerDownPos = new Vector2()
     this.dragThreshold = 5 // pixels
 
-    // Sound
-    this.popSound = new Howl({ src: ['assets/sfx/pop.mp3'] })
-    this.tickSound = new Howl({ src: ['assets/sfx/tick.mp3'] })
-    this.rollSound = new Howl({ src: ['assets/sfx/roll.mp3'] })
   }
 
   async init() {
@@ -490,9 +486,7 @@ export class CityBuilder {
     this.pressedTower = tower
     this.pointerDownPos.set(clientX, clientY)
 
-    // Play tick sound with random pitch variation
-    const tickId = this.tickSound.play()
-    this.tickSound.rate(0.85 + Math.random() * 0.3, tickId)
+    Sounds.play('tick', 1.0, 0)
 
     // Push the tower down by 0.25 floor height
     const pushAmount = this.floorHeight * 0.25
@@ -540,9 +534,7 @@ export class CityBuilder {
     // Set height to exact floor count + 1 (align to floor boundaries)
     tower.height = (numFloors + 1) * this.floorHeight
 
-    // Play pop sound with random pitch variation
-    const popId = this.popSound.play()
-    this.popSound.rate(0.85 + Math.random() * 0.3, popId)
+    Sounds.play('pop', 1.0, 0.3)
 
     // Animate the tower back up with the new floor emerging
     this.animateNewFloor(tower, numFloors)
@@ -562,6 +554,8 @@ export class CityBuilder {
     const hoverColor = this.hoverColors[tower.colorIndex]
     tower.animateNewFloor(this.towerMesh, this.floorHeight, oldNumFloors, hoverColor, () => {
       this.updateTowerMatrices(tower)
+    }, () => {
+      Sounds.play('stone', 1.0, 0.4, 0.2)
     })
   }
 
@@ -591,6 +585,9 @@ export class CityBuilder {
         towerMesh.setVisibleAt(idx, false)
       }
     }
+
+    // Skip roof update if animation is in progress (roof is being controlled by GSAP)
+    if (tower.roofAnimating) return
 
     // Roof on top
     dummy.position.set(center.x, numFloors * this.floorHeight + roofHalfHeight, center.y)
