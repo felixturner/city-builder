@@ -144,7 +144,9 @@ export class Lighting {
       const cam = perspCamera
       const distance = cam.position.distanceTo(target)
       const vFov = (cam.fov * Math.PI) / 180
-      halfSize = Math.tan(vFov / 2) * distance * cam.aspect
+      const vHalf = Math.tan(vFov / 2) * distance  // vertical half-height
+      const hHalf = vHalf * cam.aspect              // horizontal half-width
+      halfSize = Math.max(vHalf, hHalf)             // use larger extent for portrait/landscape
     }
     // Clamp to reasonable range - allow smaller when zoomed in for better resolution
     halfSize = Math.max(8, Math.min(halfSize * 1.2, 120))
