@@ -11,7 +11,10 @@ import {
   WebGPURenderer,
   PCFSoftShadowMap,
   GridHelper,
-  AxesHelper,
+  CircleGeometry,
+  InstancedMesh,
+  MeshBasicMaterial,
+  Object3D,
 } from 'three/webgpu'
 import {
   pass,
@@ -130,6 +133,27 @@ export class Demo {
     cellGrid.position.y = 0.01
     this.scene.add(cellGrid)
 
+    // Grid intersection dots
+    const dotSize = 0.05
+    const dotGeometry = new CircleGeometry(dotSize, 8)
+    dotGeometry.rotateX(-Math.PI / 2) // Lay flat on ground
+    const dotMaterial = new MeshBasicMaterial({ color: 0x666666 })
+    const numDots = (cellDivisions + 1) * (cellDivisions + 1)
+    const dotMesh = new InstancedMesh(dotGeometry, dotMaterial, numDots)
+    dotMesh.position.y = 0.015
+    const dotDummy = new Object3D()
+    let dotIndex = 0
+    const halfGrid = cellDivisions / 2
+    for (let x = 0; x <= cellDivisions; x++) {
+      for (let z = 0; z <= cellDivisions; z++) {
+        dotDummy.position.set(x - halfGrid, 0, z - halfGrid)
+        dotDummy.updateMatrix()
+        dotMesh.setMatrixAt(dotIndex++, dotDummy.matrix)
+      }
+    }
+    dotMesh.instanceMatrix.needsUpdate = true
+    this.scene.add(dotMesh)
+
     // Coarse lot grid (every 14 cells = lot + road)
     // Offset by 2 cells so grid runs down middle of roads
     const lotSpacing = 14 // lotSize (10) + roadWidth (4)
@@ -139,10 +163,6 @@ export class Demo {
     lotGrid.position.set(-2, 0.02, -2) // Offset to center on roads
     this.scene.add(lotGrid)
 
-    // DEBUG: Axis helper (red=X, green=Y, blue=Z)
-    const axisHelper = new AxesHelper(10)
-    axisHelper.position.set(0, 10, 0)
-    this.scene.add(axisHelper)
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)

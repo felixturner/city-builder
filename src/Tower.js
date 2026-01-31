@@ -95,9 +95,15 @@ export class Tower {
     mesh.getColorAt(floorInstances[0], currentFloorColor)
     mesh.getColorAt(roofInstance, currentRoofColor)
 
-    // Target colors
-    const toFloorColor = targetColor || this.baseColor
-    const toRoofColor = targetColor || this.topColor
+    // Target colors - multiply hover color with original to preserve light/dark variation
+    let toFloorColor, toRoofColor
+    if (targetColor) {
+      toFloorColor = this.baseColor.clone().multiply(targetColor)
+      toRoofColor = this.topColor.clone().multiply(targetColor)
+    } else {
+      toFloorColor = this.baseColor
+      toRoofColor = this.topColor
+    }
 
     // Interpolation colors
     const floorColor = currentFloorColor.clone()
@@ -195,7 +201,9 @@ export class Tower {
       this.roofAnim.y = oldNumFloors * floorHeight + roofHalfHeight + floorHeight * 0.2
     }
 
-    mesh.setColorAt(newFloorIdx, hoverColor)
+    // Multiply hover color with base color to preserve light/dark variation
+    const floorColor = this.baseColor.clone().multiply(hoverColor)
+    mesh.setColorAt(newFloorIdx, floorColor)
 
     const anim = {
       scale: 0.1,

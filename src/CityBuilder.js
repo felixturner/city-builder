@@ -496,9 +496,12 @@ export class CityBuilder {
 
     Sounds.play('tick', 1.0, 0)
 
-    // Push the tower down by 0.25 floor height
-    const pushAmount = this.floorHeight * 0.25
-    this.animateTowerOffset(tower, -pushAmount, 0.1)
+    // Push the tower down by 0.25 floor height (skip if 0 floors to avoid roof clipping through ground)
+    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
+    if (numFloors > 0) {
+      const pushAmount = this.floorHeight * 0.25
+      this.animateTowerOffset(tower, -pushAmount, 0.1)
+    }
 
     return true // Event handled - stop propagation to OrbitControls
   }
@@ -611,6 +614,7 @@ export class CityBuilder {
 
     // Get tower info for debris
     const hoverColor = this.hoverColors[tower.colorIndex]
+    const debrisColor = tower.baseColor.clone().multiply(hoverColor)
     const center = tower.box.getCenter(this.towerCenter)
     const gridOffsetX = -this.actualGridWidth * 0.5
     const gridOffsetZ = -this.actualGridHeight * 0.5
@@ -621,7 +625,7 @@ export class CityBuilder {
 
     // Spawn debris immediately
     this.debris.setupNearbyCollisions(tower, this.towers, this.floorHeight, gridOffsetX, gridOffsetZ)
-    this.debris.spawn(worldX, numFloors * this.floorHeight, worldZ, radius, hoverColor)
+    this.debris.spawn(worldX, numFloors * this.floorHeight, worldZ, radius, debrisColor)
 
     // Animate the deletion
     tower.animateDelete(this.towerMesh, this.floorHeight, numFloors,
@@ -649,6 +653,7 @@ export class CityBuilder {
    */
   animateNewFloor(tower, oldNumFloors) {
     const hoverColor = this.hoverColors[tower.colorIndex]
+    const debrisColor = tower.baseColor.clone().multiply(hoverColor)
     const center = tower.box.getCenter(this.towerCenter)
     const newFloorY = (oldNumFloors + 1) * this.floorHeight
 
@@ -665,7 +670,7 @@ export class CityBuilder {
     // Callback to spawn debris when floor reaches max scale
     const onFloorPop = () => {
       this.debris.setupNearbyCollisions(tower, this.towers, this.floorHeight, gridOffsetX, gridOffsetZ)
-      this.debris.spawn(worldX, newFloorY, worldZ, radius, hoverColor)
+      this.debris.spawn(worldX, newFloorY, worldZ, radius, debrisColor)
     }
 
     tower.animateNewFloor(this.towerMesh, this.floorHeight, oldNumFloors, hoverColor, () => {

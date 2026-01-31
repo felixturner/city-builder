@@ -19,6 +19,11 @@
         left: 0;
         width: 100%;
         height: 100%;
+        /* Disable long-press context menu and haptic feedback on mobile */
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        touch-action: manipulation;
       }
       #loading {
         position: fixed;
