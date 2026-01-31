@@ -485,7 +485,7 @@ export class CityBuilder {
       tower = this.instanceToTower.get(intersection.batchId)
     }
 
-    if (!tower || !tower.visible) return
+    if (!tower || !tower.visible) return false
 
     this.pressedTower = tower
     this.pointerDownPos.set(clientX, clientY)
@@ -495,6 +495,8 @@ export class CityBuilder {
     // Push the tower down by 0.25 floor height
     const pushAmount = this.floorHeight * 0.25
     this.animateTowerOffset(tower, -pushAmount, 0.1)
+
+    return true // Event handled - stop propagation to OrbitControls
   }
 
   /**

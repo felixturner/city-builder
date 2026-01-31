@@ -49,7 +49,11 @@ export class Pointer {
         )
         this.rayCaster.setFromCamera(this.pointer, this.camera)
         const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
-        this.onPointerDownCallback(intersects.length > 0 ? intersects[0] : null, e.clientX, e.clientY)
+        const handled = this.onPointerDownCallback(intersects.length > 0 ? intersects[0] : null, e.clientX, e.clientY)
+        // Stop propagation if callback handled the event (prevents OrbitControls from panning on mobile)
+        if (handled) {
+          e.stopPropagation()
+        }
       }
     }
     this.clientPointer.set(e.clientX, e.clientY)
