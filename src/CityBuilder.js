@@ -79,7 +79,7 @@ export class CityBuilder {
     this.dragThreshold = 5 // pixels
 
     // Debris system
-    this.debris = new Debris(scene)
+    this.debris = new Debris(scene, params.material)
   }
 
   async init() {
@@ -145,7 +145,8 @@ export class CityBuilder {
           if (occupied[i][py] != -1) break
           maxW++
         }
-        if (maxW == 0) {
+        // Skip if not enough room for minimum 2x2 tower
+        if (maxW < 2) {
           px++
           continue
         }
@@ -156,8 +157,8 @@ export class CityBuilder {
         tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
         tower.setTopColorIndex(MathUtils.randInt(0, Tower.LIGHT_COLORS.length - 1))
 
-        const sx = MathUtils.randInt(1, maxW)
-        const sy = isSquare ? sx : MathUtils.randInt(1, Math.min(maxBlockSize.y, height - py))
+        const sx = MathUtils.randInt(2, maxW)
+        const sy = isSquare ? sx : MathUtils.randInt(2, Math.min(maxBlockSize.y, height - py))
 
         // Skip towers that extend outside the lot bounds (creates empty areas)
         if (px + sx > width || py + sy > height) {

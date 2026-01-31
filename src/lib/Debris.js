@@ -1,5 +1,5 @@
 import * as CANNON from 'cannon-es'
-import { Object3D, BoxGeometry, InstancedMesh, Color, DynamicDrawUsage, MeshStandardMaterial, Vector2 } from 'three/webgpu'
+import { Object3D, BoxGeometry, InstancedMesh, Color, DynamicDrawUsage, MeshPhysicalMaterial, Vector2 } from 'three/webgpu'
 import { randRange, randCentered } from './utils.js'
 import { Sounds } from './Sounds.js'
 
@@ -13,7 +13,7 @@ export class Debris {
   static LIFETIME = 2.0 // Seconds before fade out
   static FADE_DURATION = 0.5 // Fade out duration
 
-  constructor(scene) {
+  constructor(scene, materialParams) {
     this.scene = scene
 
     // Physics world
@@ -38,16 +38,19 @@ export class Debris {
     this.pool = []
     this.activeCount = 0
 
-    // Grey material similar to buildings
-    const material = new MeshStandardMaterial({
-      color: 0x888888,
-      roughness: 0.8,
-      metalness: 0.0
+    // Material matching tower material
+    this.material = new MeshPhysicalMaterial({
+      color: 0xffffff,
+      roughness: materialParams?.roughness ?? 0.8,
+      metalness: materialParams?.metalness ?? 0.0,
+      clearcoat: materialParams?.clearcoat ?? 0,
+      clearcoatRoughness: materialParams?.clearcoatRoughness ?? 0,
+      iridescence: materialParams?.iridescence ?? 0
     })
 
     // Three.js instanced mesh for rendering (square brick)
     const geometry = new BoxGeometry(Debris.BRICK_SIZE, Debris.BRICK_SIZE, Debris.BRICK_SIZE)
-    this.mesh = new InstancedMesh(geometry, material, Debris.POOL_SIZE)
+    this.mesh = new InstancedMesh(geometry, this.material, Debris.POOL_SIZE)
     this.mesh.instanceMatrix.setUsage(DynamicDrawUsage)
     this.mesh.castShadow = true
     this.mesh.receiveShadow = true
@@ -212,7 +215,7 @@ export class Debris {
 
       particle.body.position.set(
         spawnX + randCentered(0.1),
-        y + randRange(2, 3),
+        y + randRange(4, 5),
         spawnZ + randCentered(0.1)
       )
 
