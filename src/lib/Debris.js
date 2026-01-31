@@ -124,7 +124,7 @@ export class Debris {
       const centerX = center.x
       const centerY = center.y
       const size = tower.box.getSize(this.tempVec2)
-      const numFloors = Math.max(1, Math.floor(tower.height / floorHeight))
+      const numFloors = Math.max(0, Math.floor(tower.height / floorHeight))
       // Include roof height in collision body
       const height = numFloors * floorHeight + roofHeight
 
@@ -152,7 +152,7 @@ export class Debris {
    */
   spawn(x, y, z, radius, color) {
     // Number of bricks based on tower size
-    const count = Math.floor(randRange(radius, radius * 4 + 2))
+    const count = Math.floor(randRange(radius, radius * 3))
 
     for (let i = 0; i < count; i++) {
       // Find inactive particle

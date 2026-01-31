@@ -237,7 +237,7 @@ export class CityBuilder {
     }
 
     // Floor stacking: each tower needs up to maxFloors base instances + 1 roof
-    this.maxFloors = 20
+    this.maxFloors = 10
     this.floorHeight = 2
 
     // Calculate total geometry needed for all towers with max floors
@@ -334,7 +334,7 @@ export class CityBuilder {
       const size = tower.box.getSize(this.towerSize)
 
       // Calculate number of floors based on height
-      const numFloors = Math.max(1, Math.floor(tower.height / this.floorHeight))
+      const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
 
       // Half-heights for centered geometries
       const floorHalfHeight = this.floorHeight / 2 // Base geom is 1 unit, scaled to floorHeight
@@ -474,12 +474,16 @@ export class CityBuilder {
   }
 
   /**
-   * Handle pointer down on a tower - push it down
+   * Handle pointer down on a tower - push it down (mouse only)
    * @param {Object|null} intersection - Three.js intersection object or null
    * @param {number} clientX - pointer X position
    * @param {number} clientY - pointer Y position
+   * @param {boolean} isTouch - true if this is a touch event
    */
-  onPointerDown(intersection, clientX, clientY) {
+  onPointerDown(intersection, clientX, clientY, isTouch) {
+    // For touch, we handle everything on pointerup to avoid interfering with pan
+    if (isTouch) return false
+
     let tower = null
     if (intersection && intersection.batchId !== undefined) {
       tower = this.instanceToTower.get(intersection.batchId)
@@ -521,14 +525,22 @@ export class CityBuilder {
 
   /**
    * Handle pointer up - add a floor and animate it rising
+   * @param {boolean} isTouch - true if this is a touch event
+   * @param {Object|null} touchIntersection - intersection from touch start (touch only)
    */
-  onPointerUp() {
+  onPointerUp(isTouch, touchIntersection) {
+    // For touch, handle the full tap sequence here
+    if (isTouch) {
+      this.handleTouchTap(touchIntersection)
+      return
+    }
+
     if (!this.pressedTower) return
 
     const tower = this.pressedTower
     this.pressedTower = null
 
-    const numFloors = Math.max(1, Math.floor(tower.height / this.floorHeight))
+    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
 
     // Check if we can add another floor
     if (numFloors >= this.maxFloors) {
@@ -544,6 +556,85 @@ export class CityBuilder {
 
     // Animate the tower back up with the new floor emerging
     this.animateNewFloor(tower, numFloors)
+  }
+
+  /**
+   * Handle touch tap - play press down then release animation sequentially
+   * @param {Object|null} intersection - intersection from touch start
+   */
+  handleTouchTap(intersection) {
+    let tower = null
+    if (intersection && intersection.batchId !== undefined) {
+      tower = this.instanceToTower.get(intersection.batchId)
+    }
+
+    if (!tower || !tower.visible) return
+
+    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
+
+    // Check if we can add another floor
+    if (numFloors >= this.maxFloors) {
+      return // Can't add more floors, do nothing
+    }
+
+    Sounds.play('tick', 1.0, 0)
+
+    // Push the tower down, then on complete add the floor
+    const pushAmount = this.floorHeight * 0.25
+    this.animateTowerOffset(tower, -pushAmount, 0.1, () => {
+      // Set height to exact floor count + 1 (align to floor boundaries)
+      tower.height = (numFloors + 1) * this.floorHeight
+
+      Sounds.play('pop', 1.0, 0.3)
+
+      // Animate the tower back up with the new floor emerging
+      this.animateNewFloor(tower, numFloors)
+    })
+  }
+
+  /**
+   * Handle right-click - delete tower floors (keep only base floor)
+   * @param {Object} intersection - Three.js intersection object
+   */
+  onRightClick(intersection) {
+    let tower = null
+    if (intersection && intersection.batchId !== undefined) {
+      tower = this.instanceToTower.get(intersection.batchId)
+    }
+
+    if (!tower || !tower.visible) return
+
+    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
+
+    // Only delete if tower has at least 1 floor
+    if (numFloors < 1) return
+
+    // Get tower info for debris
+    const hoverColor = this.hoverColors[tower.colorIndex]
+    const center = tower.box.getCenter(this.towerCenter)
+    const gridOffsetX = -this.actualGridWidth * 0.5
+    const gridOffsetZ = -this.actualGridHeight * 0.5
+    const worldX = center.x + gridOffsetX
+    const worldZ = center.y + gridOffsetZ
+    const size = tower.box.getSize(this.towerSize)
+    const radius = Math.max(size.x, size.y) / 2
+
+    // Spawn debris immediately
+    this.debris.setupNearbyCollisions(tower, this.towers, this.floorHeight, gridOffsetX, gridOffsetZ)
+    this.debris.spawn(worldX, numFloors * this.floorHeight, worldZ, radius, hoverColor)
+
+    // Animate the deletion
+    tower.animateDelete(this.towerMesh, this.floorHeight, numFloors,
+      // onComplete
+      () => {
+        tower.height = 0 // No floors, just roof
+        this.updateTowerMatrices(tower)
+      },
+      // onFloorHide - called for each floor as it hides
+      () => {
+        Sounds.play('stone', 1.0, 0.4, 0.4)
+      }
+    )
   }
 
   /**
@@ -598,7 +689,7 @@ export class CityBuilder {
     const { dummy, towerMesh } = this
     const center = tower.box.getCenter(this.towerCenter)
     const size = tower.box.getSize(this.towerSize)
-    const numFloors = Math.max(1, Math.floor(tower.height / this.floorHeight))
+    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
 
     // Half-heights for centered geometries
     const floorHalfHeight = this.floorHeight / 2

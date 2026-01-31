@@ -70,7 +70,7 @@ export class Tower {
    * Get the number of floors based on height and floor height
    */
   getNumFloors(floorHeight) {
-    return Math.max(1, Math.floor(this.height / floorHeight))
+    return Math.max(0, Math.floor(this.height / floorHeight))
   }
 
   /**
@@ -139,7 +139,7 @@ export class Tower {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
-    const numFloors = Math.max(1, Math.floor(this.height / floorHeight))
+    const numFloors = Math.max(0, Math.floor(this.height / floorHeight))
 
     // Half-heights for centered geometries
     const floorHalfHeight = floorHeight / 2
@@ -311,5 +311,113 @@ export class Tower {
 
     // Play sound when roof lands (delay from timeline start)
     tl.call(onRoofLand, null, 0.35)
+  }
+
+  /**
+   * Animate deleting all floors except the base floor
+   * Pop off roof, stagger-delete floors top-down, drop roof back
+   * @param {Function} onFloorHide - Called for each floor as it hides
+   */
+  animateDelete(mesh, floorHeight, numFloors, onComplete, onFloorHide) {
+    if (this.floorTween?.isActive()) this.floorTween.kill()
+    if (this.roofTween) this.roofTween.kill()
+
+    const dummy = new Object3D()
+    const center = this.box.getCenter(new Vector2())
+    const size = this.box.getSize(new Vector2())
+
+    const floorHalfHeight = floorHeight / 2
+    const roofHalfHeight = BlockGeometry.halfHeights[this.typeTop]
+
+    // Current roof Y position (or calculate from numFloors)
+    const currentRoofY = this.roofAnim.y > 0 ? this.roofAnim.y : numFloors * floorHeight + roofHalfHeight
+    const finalRoofY = roofHalfHeight // At ground level (no floors)
+    const popUpY = currentRoofY + floorHeight * 2 // Pop up high
+
+    this.roofAnimating = true
+
+    const self = this
+    const renderRoof = () => {
+      self.roofDummy.position.set(center.x, self.roofAnim.y, center.y)
+      self.roofDummy.scale.set(size.x, 1, size.y)
+      self.roofDummy.rotation.set(self.roofAnim.tiltX, self.rotation + self.roofAnim.tiltY, self.roofAnim.tiltZ)
+      self.roofDummy.updateMatrix()
+      mesh.setMatrixAt(self.roofInstance, self.roofDummy.matrix)
+    }
+
+    // Animation state for each floor (to be deleted - all floors including floor 0)
+    const floorAnims = []
+    for (let f = 0; f < numFloors; f++) {
+      floorAnims.push({
+        floorIdx: f,
+        scale: 1,
+        yOffset: 0,
+        tiltX: 0, tiltY: 0, tiltZ: 0
+      })
+    }
+
+    const tl = gsap.timeline({
+      onComplete: () => {
+        self.floorTween = null
+        self.roofAnimating = false
+        self.roofTween = null
+        onComplete?.()
+      }
+    })
+    this.floorTween = tl
+
+    // Phase 1: Pop roof up with tilt
+    const tiltX = randCentered(0.4)
+    const tiltY = randCentered(0.6)
+    const tiltZ = randCentered(0.4)
+
+    tl.to(this.roofAnim, {
+      y: popUpY, tiltX, tiltY, tiltZ,
+      duration: 0.15,
+      ease: 'power2.out',
+      onUpdate: renderRoof
+    })
+
+    // Phase 2: Stagger-delete floors from top to bottom
+    const staggerDelay = 0.06
+    for (let i = floorAnims.length - 1; i >= 0; i--) {
+      const anim = floorAnims[i]
+      const floorY = anim.floorIdx * floorHeight + floorHalfHeight
+      const instanceIdx = this.floorInstances[anim.floorIdx]
+
+      const updateFloor = () => {
+        dummy.position.set(center.x, floorY + anim.yOffset, center.y)
+        dummy.scale.set(size.x * anim.scale, floorHeight * anim.scale, size.y * anim.scale)
+        dummy.rotation.set(anim.tiltX, this.rotation + anim.tiltY, anim.tiltZ)
+        dummy.updateMatrix()
+        mesh.setMatrixAt(instanceIdx, dummy.matrix)
+      }
+
+      // Shrink and fall with random tilt
+      const delay = 0.15 + (floorAnims.length - 1 - i) * staggerDelay
+      tl.to(anim, {
+        scale: 0,
+        yOffset: -floorHeight * 0.5,
+        tiltX: randCentered(0.3),
+        tiltY: randCentered(0.5),
+        tiltZ: randCentered(0.3),
+        duration: 0.12,
+        ease: 'power2.in',
+        onUpdate: updateFloor,
+        onComplete: () => {
+          mesh.setVisibleAt(instanceIdx, false)
+          onFloorHide?.()
+        }
+      }, delay)
+    }
+
+    // Phase 3: Drop roof back down after floors are deleted
+    const dropDelay = 0.15 + floorAnims.length * staggerDelay + 0.1
+    tl.to(this.roofAnim, {
+      y: finalRoofY, tiltX: 0, tiltY: 0, tiltZ: 0,
+      duration: 0.4,
+      ease: 'bounce.out',
+      onUpdate: renderRoof
+    }, dropDelay)
   }
 }

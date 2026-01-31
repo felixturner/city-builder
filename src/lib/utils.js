@@ -4,6 +4,11 @@
 export const randRange = (min, max) => min + Math.random() * (max - min)
 
 /**
+ * Random integer in range [min, max] (inclusive)
+ */
+export const randRangeInt = (min, max) => Math.floor(min + Math.random() * (max - min + 1))
+
+/**
  * Random value centered around 0: [-range/2, range/2]
  */
 export const randCentered = (range) => (Math.random() - 0.5) * range

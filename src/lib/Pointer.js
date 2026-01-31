@@ -25,6 +25,7 @@ export class Pointer {
     renderer.domElement.addEventListener('pointerdown', this.onPointerDown.bind(this))
     renderer.domElement.addEventListener('pointerup', this.onPointerUp.bind(this))
     window.addEventListener('pointermove', this.onPointerMove.bind(this))
+    renderer.domElement.addEventListener('contextmenu', this.onContextMenu.bind(this))
   }
 
   setRaycastTargets(targets, callbacks) {
@@ -33,12 +34,14 @@ export class Pointer {
     this.onPointerDownCallback = callbacks.onPointerDown
     this.onPointerUpCallback = callbacks.onPointerUp
     this.onPointerMoveCallback = callbacks.onPointerMove
+    this.onRightClickCallback = callbacks.onRightClick
   }
 
   onPointerDown(e) {
     if (e.pointerType !== 'mouse' || e.button === 0) {
       this.pointerDown = true
       this.uPointerDown.value = 1
+      this.isTouch = e.pointerType === 'touch'
 
       // Raycast for click detection
       if (this.raycastTargets.length > 0 && this.onPointerDownCallback) {
@@ -49,10 +52,18 @@ export class Pointer {
         )
         this.rayCaster.setFromCamera(this.pointer, this.camera)
         const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
-        const handled = this.onPointerDownCallback(intersects.length > 0 ? intersects[0] : null, e.clientX, e.clientY)
-        // Stop propagation if callback handled the event (prevents OrbitControls from panning on mobile)
-        if (handled) {
-          e.stopPropagation()
+        const intersection = intersects.length > 0 ? intersects[0] : null
+
+        // For touch, store intersection for later use on pointerup
+        // For mouse, call callback immediately
+        if (this.isTouch) {
+          this.pendingTouchIntersection = intersection
+        } else {
+          const handled = this.onPointerDownCallback(intersection, e.clientX, e.clientY, false)
+          // Stop propagation if callback handled the event
+          if (handled) {
+            e.stopPropagation()
+          }
         }
       }
     }
@@ -65,7 +76,13 @@ export class Pointer {
     this.updateScreenPointer(e)
 
     if (this.pointerDown && this.onPointerUpCallback) {
-      this.onPointerUpCallback()
+      // For touch, pass the stored intersection so CityBuilder can handle tap
+      if (this.isTouch && this.pendingTouchIntersection !== undefined) {
+        this.onPointerUpCallback(this.isTouch, this.pendingTouchIntersection)
+        this.pendingTouchIntersection = undefined
+      } else {
+        this.onPointerUpCallback(this.isTouch)
+      }
     }
 
     this.pointerDown = false
@@ -100,6 +117,23 @@ export class Pointer {
     if (this.raycastTargets.length > 0 && this.onHoverCallback) {
       const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
       this.onHoverCallback(intersects.length > 0 ? intersects[0] : null)
+    }
+  }
+
+  onContextMenu(e) {
+    e.preventDefault()
+
+    // Raycast for right-click detection
+    if (this.raycastTargets.length > 0 && this.onRightClickCallback) {
+      this.pointer.set(
+        (e.clientX / window.innerWidth) * 2 - 1,
+        -(e.clientY / window.innerHeight) * 2 + 1
+      )
+      this.rayCaster.setFromCamera(this.pointer, this.camera)
+      const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
+      if (intersects.length > 0) {
+        this.onRightClickCallback(intersects[0])
+      }
     }
   }
 

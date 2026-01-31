@@ -111,9 +111,10 @@ export class Demo {
       [this.city.towerMesh],
       {
         onHover: (intersection) => this.city.onHover(intersection),
-        onPointerDown: (intersection, x, y) => this.city.onPointerDown(intersection, x, y),
-        onPointerUp: () => this.city.onPointerUp(),
-        onPointerMove: (x, y) => this.city.onPointerMove(x, y)
+        onPointerDown: (intersection, x, y, isTouch) => this.city.onPointerDown(intersection, x, y, isTouch),
+        onPointerUp: (isTouch, touchIntersection) => this.city.onPointerUp(isTouch, touchIntersection),
+        onPointerMove: (x, y) => this.city.onPointerMove(x, y),
+        onRightClick: (intersection) => this.city.onRightClick(intersection)
       }
     )
 
