@@ -133,6 +133,8 @@ export class Pointer {
       const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
       if (intersects.length > 0) {
         this.onRightClickCallback(intersects[0])
+        // Block the subsequent touch tap (long press triggers contextmenu then pointerup)
+        this.pendingTouchIntersection = undefined
       }
     }
   }
