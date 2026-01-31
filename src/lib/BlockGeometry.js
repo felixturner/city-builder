@@ -26,9 +26,7 @@ export class BlockGeometry {
   static async loadGeometries() {
     const file = './assets/models/blocks.glb'
     const loader = new GLTFLoader()
-    const gltf = await loader.loadAsync(file, (progress) => {
-      console.log((progress.loaded / progress.total) * 100 + '% blocks loaded')
-    })
+    const gltf = await loader.loadAsync(file)
 
     const bottomBlock = this.findAndCenterGeometry(gltf, 'Square_Base')
     const bottomQuart = this.findAndCenterGeometry(gltf, 'Quart_Base')
@@ -69,7 +67,6 @@ export class BlockGeometry {
     this.geoms.push(bottomHole.geom)
     this.halfHeights.push(bottomHole.halfHeight)
 
-    console.log('BlockGeometry halfHeights:', this.halfHeights)
   }
 
   /**
@@ -85,7 +82,6 @@ export class BlockGeometry {
     const halfHeight = height / 2
     const centerY = (minY + maxY) / 2
 
-    console.log(`${name} bbox: ${minY.toFixed(4)} to ${maxY.toFixed(4)}, centering by ${-centerY.toFixed(4)}`)
 
     // Translate geometry so center is at Y=0
     const posAttr = geom.attributes.position

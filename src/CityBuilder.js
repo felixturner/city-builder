@@ -59,17 +59,17 @@ export class CityBuilder {
 
     // Hover state
     this.hoveredTower = null
-    // Base hover colors - transformed to lighter/less saturated versions
-    const baseHoverColors = [
+    // Accent colors for lit towers, trails, and new floors
+    const baseAccentColors = [
       new Color('#FC238D'),
       new Color('#D2E253'),
       new Color('#1BB3F6'),
     ]
-    // Transform colors: reduce saturation, increase lightness (50% of previous transform)
-    this.hoverColors = baseHoverColors.map(c => {
+    // Transform colors: boost saturation slightly, increase lightness
+    this.accentColors = baseAccentColors.map(c => {
       const hsl = {}
       c.getHSL(hsl)
-      return new Color().setHSL(hsl.h, hsl.s * 0.8, Math.min(1, hsl.l + 0.1))
+      return new Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(1, hsl.l + 0.2))
     })
     this.instanceToTower = new Map() // Maps instance ID to tower
 
@@ -155,7 +155,7 @@ export class CityBuilder {
         const isSquare = MathUtils.randFloat(0, 1) < squareChance
         tower.typeTop = isSquare ? MathUtils.randInt(0, 5) : 0
         tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
-        tower.setTopColorIndex(MathUtils.randInt(0, Tower.LIGHT_COLORS.length - 1))
+        tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
 
         const sx = MathUtils.randInt(2, maxW)
         const sy = isSquare ? sx : MathUtils.randInt(2, Math.min(maxBlockSize.y, height - py))
@@ -288,6 +288,33 @@ export class CityBuilder {
     }
 
     console.log('Tower count:', this.towers.length, 'Max instances:', maxInstances)
+
+    // Light up all plus/cross towers with hover colors
+    this.applyLitTowers()
+  }
+
+  /**
+   * Light up all plus/cross shaped towers (typeTop === 5) with hover colors
+   */
+  applyLitTowers() {
+    // Cross_Top is index 5 in BlockGeometry.geoms
+    const CROSS_TYPE = 5
+    for (const tower of this.towers) {
+      tower.isLit = tower.typeTop === CROSS_TYPE
+      if (tower.isLit) {
+        const accentColor = this.accentColors[tower.colorIndex]
+        // Store the lit color on the tower for hover restore
+        tower.litColor = accentColor.clone()
+        // Apply accent color to all floor instances
+        for (const idx of tower.floorInstances) {
+          this.towerMesh.setColorAt(idx, accentColor)
+        }
+        // Apply to roof too
+        this.towerMesh.setColorAt(tower.roofInstance, accentColor)
+      } else {
+        tower.litColor = null
+      }
+    }
   }
 
   recalculateHeights() {
@@ -388,6 +415,27 @@ export class CityBuilder {
     this.updateMatrices()
   }
 
+  regenerate() {
+    // Re-randomize all tower properties and recalculate the city
+    for (const tower of this.towers) {
+      tower.randFactor = MathUtils.randFloat(0, 1)
+      tower.skipFactor = MathUtils.randFloat(0, 1)
+      tower.colorIndex = MathUtils.randInt(0, 2)
+      tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
+      // Reset to base colors first
+      tower.isLit = false
+      for (const idx of tower.floorInstances) {
+        this.towerMesh.setColorAt(idx, tower.baseColor)
+      }
+      this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
+    }
+    // Regenerate noise with new seed
+    this.recalculateNoise()
+    this.recalculateVisibility()
+    // Re-apply lit towers
+    this.applyLitTowers()
+  }
+
   recalculateNoise() {
     // Recreate noise with new frequency
     this.cityNoise = new FastSimplexNoise({
@@ -469,8 +517,7 @@ export class CityBuilder {
    * @param {boolean} isHovering - True to animate to hover color, false to restore
    */
   animateTowerColor(tower, isHovering) {
-    const targetColor = isHovering ? this.hoverColors[tower.colorIndex] : null
-    tower.animateHoverColor(this.towerMesh, targetColor, this.floorHeight)
+    tower.animateHoverColor(this.towerMesh, isHovering, this.floorHeight)
   }
 
   /**
@@ -612,9 +659,9 @@ export class CityBuilder {
     // Only delete if tower has at least 1 floor
     if (numFloors < 1) return
 
-    // Get tower info for debris
-    const hoverColor = this.hoverColors[tower.colorIndex]
-    const debrisColor = tower.baseColor.clone().multiply(hoverColor)
+    // Get tower info for debris - use lightened version of tower's base color
+    const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
+    const debrisColor = Tower.lightenColor(baseColor)
     const center = tower.box.getCenter(this.towerCenter)
     const gridOffsetX = -this.actualGridWidth * 0.5
     const gridOffsetZ = -this.actualGridHeight * 0.5
@@ -652,8 +699,10 @@ export class CityBuilder {
    * Animate adding a new floor with roof pop-off effect
    */
   animateNewFloor(tower, oldNumFloors) {
-    const hoverColor = this.hoverColors[tower.colorIndex]
-    const debrisColor = tower.baseColor.clone().multiply(hoverColor)
+    // Use lightened version of tower's base color for new floor and debris
+    const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
+    const newFloorColor = Tower.lightenColor(baseColor)
+    const debrisColor = newFloorColor.clone()
     const center = tower.box.getCenter(this.towerCenter)
     const newFloorY = (oldNumFloors + 1) * this.floorHeight
 
@@ -673,7 +722,7 @@ export class CityBuilder {
       this.debris.spawn(worldX, newFloorY, worldZ, radius, debrisColor)
     }
 
-    tower.animateNewFloor(this.towerMesh, this.floorHeight, oldNumFloors, hoverColor, () => {
+    tower.animateNewFloor(this.towerMesh, this.floorHeight, oldNumFloors, newFloorColor, () => {
       this.updateTowerMatrices(tower)
     }, () => {
       Sounds.play('stone', 1.0, 0.4, 0.2)

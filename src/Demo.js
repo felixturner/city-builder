@@ -39,6 +39,7 @@ import { Pointer } from './lib/Pointer.js'
 import { GUIManager } from './GUI.js'
 import { CityBuilder } from './CityBuilder.js'
 import { Lighting } from './Lighting.js'
+import { Trails } from './lib/Trails.js'
 
 export class Demo {
   static instance = null
@@ -63,6 +64,7 @@ export class Demo {
     this.gui = null
     this.city = null
     this.lighting = null
+    this.trails = null
     this.params = null
 
     if (Demo.instance != null) {
@@ -79,7 +81,9 @@ export class Demo {
 
     this.renderer = new WebGPURenderer({ canvas: this.canvas, antialias: true })
     await this.renderer.init()
-    this.renderer.setPixelRatio(1)
+    const dpr = Math.min(window.devicePixelRatio, 2)
+    console.log('Device Pixel Ratio:', window.devicePixelRatio, '-> using:', dpr)
+    this.renderer.setPixelRatio(dpr)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
     this.renderer.toneMapping = ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -127,7 +131,7 @@ export class Demo {
     // Fine cell grid (semi-transparent)
     // Use integer division to ensure gridSize matches divisions exactly
     const cellDivisions = Math.floor(gridSize)
-    const cellGrid = new GridHelper(cellDivisions, cellDivisions, 0x666666, 0x666666)
+    const cellGrid = new GridHelper(cellDivisions, cellDivisions, 0x888888, 0x888888)
     cellGrid.material.transparent = true
     cellGrid.material.opacity = 0.5
     cellGrid.position.y = 0.01
@@ -137,7 +141,7 @@ export class Demo {
     const dotSize = 0.05
     const dotGeometry = new CircleGeometry(dotSize, 8)
     dotGeometry.rotateX(-Math.PI / 2) // Lay flat on ground
-    const dotMaterial = new MeshBasicMaterial({ color: 0x666666 })
+    const dotMaterial = new MeshBasicMaterial({ color: 0x888888 })
     const numDots = (cellDivisions + 1) * (cellDivisions + 1)
     const dotMesh = new InstancedMesh(dotGeometry, dotMaterial, numDots)
     dotMesh.position.y = 0.015
@@ -159,10 +163,13 @@ export class Demo {
     const lotSpacing = 14 // lotSize (10) + roadWidth (4)
     const lotDivisions = Math.floor(gridSize / lotSpacing)
     const lotGridSize = lotDivisions * lotSpacing
-    const lotGrid = new GridHelper(lotGridSize, lotDivisions, 0x666666, 0x666666)
+    const lotGrid = new GridHelper(lotGridSize, lotDivisions, 0x888888, 0x888888)
     lotGrid.position.set(-2, 0.02, -2) // Offset to center on roads
     this.scene.add(lotGrid)
 
+    // Glowing trails between towers
+    this.trails = new Trails(this.scene, this.city)
+    this.trails.generatePaths(30)
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
@@ -362,7 +369,6 @@ export class Demo {
     this.updateOrthoFrustum()
     this.updatePerspFrustum()
 
-    renderer.setPixelRatio(1)
     renderer.setSize(size.x, size.y)
     renderer.domElement.style.width = `${size.x}px`
     renderer.domElement.style.height = `${size.y}px`
@@ -382,6 +388,9 @@ export class Demo {
 
     // Update debris physics
     this.city.update(dt)
+
+    // Update trails animation
+    this.trails.update(dt)
 
     post.render()
 

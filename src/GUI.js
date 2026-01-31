@@ -79,7 +79,11 @@ export class GUIManager {
       demo.debugView.value = viewMap[v]
     })
 
-    // Export buttons
+    // Action buttons
+    gui.add({ regenCity: () => {
+      demo.city.regenerate()
+      demo.trails.generatePaths(30)
+    } }, 'regenCity').name('Regen City')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
     gui.add({
       copyState: () => {

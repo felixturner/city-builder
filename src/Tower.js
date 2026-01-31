@@ -8,25 +8,17 @@ import { randCentered, clampSym } from './lib/utils.js'
  * Contains a top block (roof) and multiple base blocks (floors)
  */
 export class Tower {
-  static LIGHT_COLORS = [
-    new Color(0xffffff),
-    new Color(0xcccccc),
-    new Color(0xaaaaaa),
-    new Color(0x999999),
-    new Color(0x086ff0),
-  ]
 
-  static DARK_COLORS = [
-    new Color(0x666666),
+  static COLORS = [
     new Color(0x777777),
     new Color(0x888888),
     new Color(0x999999),
     new Color(0xbbbbbb),
+    new Color(0xcccccc),
   ]
 
   static ID = 0
-  static LIGHT_BASE_COLOR = new Color(0x999999)
-  static DARK_BASE_COLOR = new Color(0x666666)
+  static BASE_COLOR = new Color(0x666666)
 
   constructor() {
     this.id = Tower.ID++
@@ -36,8 +28,8 @@ export class Tower {
     this.height = 1
     this.rotation = 0
     this.topColorIndex = 0
-    this.topColor = Tower.DARK_COLORS[this.topColorIndex]
-    this.baseColor = Tower.DARK_BASE_COLOR
+    this.topColor = Tower.COLORS[this.topColorIndex]
+    this.baseColor = Tower.BASE_COLOR
     // For dynamic height recalculation
     this.cityNoiseVal = 0
     this.randFactor = 0
@@ -63,7 +55,7 @@ export class Tower {
 
   setTopColorIndex(index) {
     this.topColorIndex = index
-    this.topColor = Tower.DARK_COLORS[this.topColorIndex]
+    this.topColor = Tower.COLORS[this.topColorIndex]
   }
 
   /**
@@ -74,12 +66,21 @@ export class Tower {
   }
 
   /**
+   * Lighten a color by increasing its HSL lightness
+   */
+  static lightenColor(color, amount = 0.15) {
+    const hsl = {}
+    color.getHSL(hsl)
+    return new Color().setHSL(hsl.h, hsl.s, Math.min(1, hsl.l + amount))
+  }
+
+  /**
    * Animate tower color to/from hover state using a single tween
    * @param {BatchedMesh} mesh - The batched mesh containing this tower's instances
-   * @param {Color} targetColor - The target hover color, or null to restore original
+   * @param {boolean} isHovering - True to lighten colors, false to restore original
    * @param {number} floorHeight - Height of each floor for calculating visible floors
    */
-  animateHoverColor(mesh, targetColor, floorHeight) {
+  animateHoverColor(mesh, isHovering, floorHeight) {
     // Kill any existing hover tween
     if (this.hoverTween) {
       this.hoverTween.kill()
@@ -95,11 +96,18 @@ export class Tower {
     mesh.getColorAt(floorInstances[0], currentFloorColor)
     mesh.getColorAt(roofInstance, currentRoofColor)
 
-    // Target colors - multiply hover color with original to preserve light/dark variation
+    // Target colors - lighten current colors when hovering, restore original otherwise
     let toFloorColor, toRoofColor
-    if (targetColor) {
-      toFloorColor = this.baseColor.clone().multiply(targetColor)
-      toRoofColor = this.topColor.clone().multiply(targetColor)
+    if (isHovering) {
+      // Lighten the base colors for hover effect
+      const baseFloor = this.isLit && this.litColor ? this.litColor : this.baseColor
+      const baseRoof = this.isLit && this.litColor ? this.litColor : this.topColor
+      toFloorColor = Tower.lightenColor(baseFloor)
+      toRoofColor = Tower.lightenColor(baseRoof)
+    } else if (this.isLit && this.litColor) {
+      // Lit towers stay at their lit color
+      toFloorColor = this.litColor.clone()
+      toRoofColor = this.litColor.clone()
     } else {
       toFloorColor = this.baseColor
       toRoofColor = this.topColor
@@ -201,9 +209,8 @@ export class Tower {
       this.roofAnim.y = oldNumFloors * floorHeight + roofHalfHeight + floorHeight * 0.2
     }
 
-    // Multiply hover color with base color to preserve light/dark variation
-    const floorColor = this.baseColor.clone().multiply(hoverColor)
-    mesh.setColorAt(newFloorIdx, floorColor)
+    // Use hover color directly for new floors
+    mesh.setColorAt(newFloorIdx, hoverColor)
 
     const anim = {
       scale: 0.1,
