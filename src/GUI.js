@@ -49,7 +49,8 @@ export class GUIManager {
       aoBlur: 0.3,
       aoIntensity: 0.95,
       vignette: true,
-      fxaa: false,
+      trails: true,
+      dots: true,
     },
     debug: {
       view: 'final',
@@ -85,6 +86,17 @@ export class GUIManager {
       demo.trails.generatePaths(30)
     } }, 'regenCity').name('Regen City')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
+
+    // Visual toggles at top level for easy access
+    gui.add(allParams.fx, 'trails').name('Trails').onChange((v) => {
+      if (demo.trails && demo.trails.meshes) {
+        for (const mesh of demo.trails.meshes) mesh.visible = v
+      }
+    })
+    gui.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
+      if (demo.dotMesh) demo.dotMesh.visible = v
+    })
+
     gui.add({
       copyState: () => {
         const exportData = {
@@ -238,9 +250,6 @@ export class GUIManager {
     fxFolder.add(allParams.fx, 'vignette').name('Vignette').onChange((v) => {
       demo.vignetteEnabled.value = v ? 1 : 0
     })
-    fxFolder.add(allParams.fx, 'fxaa').name('FXAA').onChange((v) => {
-      demo.fxaaEnabled.value = v ? 1 : 0
-    })
 
     return allParams
   }
@@ -289,7 +298,6 @@ export class GUIManager {
     if (demo.aoBlurAmount) demo.aoBlurAmount.value = params.fx.aoBlur
     demo.aoIntensity.value = params.fx.aoIntensity
     demo.vignetteEnabled.value = params.fx.vignette ? 1 : 0
-    demo.fxaaEnabled.value = params.fx.fxaa ? 1 : 0
 
     // Camera
     demo.perspCamera.fov = params.camera.fov

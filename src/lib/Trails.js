@@ -539,6 +539,7 @@ export class Trails {
 
     const mesh = new Mesh(geometry, material)
     mesh.frustumCulled = false
+    mesh.renderOrder = 1 // Render above dots (which have default renderOrder 0)
     this.scene.add(mesh)
     this.meshes.push(mesh)
   }
@@ -594,10 +595,10 @@ export class Trails {
     material.colorNode = color
     material.opacityNode = edgeFade // Only edge fade, no band opacity fade
 
-    // Output upward-facing normal for MRT pass (trails are flat on ground)
+    // Output to MRT with upward normal - prevents AO from darkening trails
     material.mrtNode = mrt({
       output: output,
-      normal: vec3(0, 1, 0) // Up normal in view space approximation
+      normal: vec3(0, 1, 0)
     })
 
     return material

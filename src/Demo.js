@@ -11,10 +11,9 @@ import {
   WebGPURenderer,
   PCFSoftShadowMap,
   GridHelper,
-  CircleGeometry,
-  InstancedMesh,
-  MeshBasicMaterial,
-  Object3D,
+  PlaneGeometry,
+  Mesh,
+  MeshBasicNodeMaterial,
 } from 'three/webgpu'
 import {
   pass,
@@ -28,8 +27,11 @@ import {
   mix,
   float,
   vec3,
+  uv,
+  fract,
+  step,
+  min,
 } from 'three/tsl'
-import { fxaa } from 'three/addons/tsl/display/FXAANode.js'
 import { ao } from 'three/addons/tsl/display/GTAONode.js'
 import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js'
 import { OrbitControls } from 'three/examples/jsm/Addons.js'
@@ -137,26 +139,41 @@ export class Demo {
     cellGrid.position.y = 0.01
     this.scene.add(cellGrid)
 
-    // Grid intersection dots
-    const dotSize = 0.05
-    const dotGeometry = new CircleGeometry(dotSize, 8)
-    dotGeometry.rotateX(-Math.PI / 2) // Lay flat on ground
-    const dotMaterial = new MeshBasicMaterial({ color: 0x888888 })
-    const numDots = (cellDivisions + 1) * (cellDivisions + 1)
-    const dotMesh = new InstancedMesh(dotGeometry, dotMaterial, numDots)
-    dotMesh.position.y = 0.015
-    const dotDummy = new Object3D()
-    let dotIndex = 0
-    const halfGrid = cellDivisions / 2
-    for (let x = 0; x <= cellDivisions; x++) {
-      for (let z = 0; z <= cellDivisions; z++) {
-        dotDummy.position.set(x - halfGrid, 0, z - halfGrid)
-        dotDummy.updateMatrix()
-        dotMesh.setMatrixAt(dotIndex++, dotDummy.matrix)
-      }
-    }
-    dotMesh.instanceMatrix.needsUpdate = true
-    this.scene.add(dotMesh)
+    // Grid intersection dots using procedural plane shader
+    const dotPlaneGeometry = new PlaneGeometry(cellDivisions, cellDivisions)
+    dotPlaneGeometry.rotateX(-Math.PI / 2)
+    const dotMaterial = new MeshBasicNodeMaterial()
+    dotMaterial.transparent = true
+    dotMaterial.alphaTest = 0.5
+    dotMaterial.side = 2 // DoubleSide
+
+    // Procedural dots at grid intersections
+    // UV goes 0-1, scale to cell coordinates
+    const cellCoord = uv().mul(cellDivisions)
+    // Distance from nearest integer grid intersection
+    const fractCoord = fract(cellCoord)
+    const toGridX = min(fractCoord.x, float(1).sub(fractCoord.x))
+    const toGridY = min(fractCoord.y, float(1).sub(fractCoord.y))
+    const dist = toGridX.mul(toGridX).add(toGridY.mul(toGridY)).sqrt()
+    // Dot radius in cell units
+    const dotRadius = float(0.04)
+    // Alpha mask: 1 inside dot, 0 outside
+    const dotMask = float(1).sub(step(dotRadius, dist))
+
+    // Color 0x444444
+    const dotColor = vec3(0.267, 0.267, 0.267)
+    dotMaterial.colorNode = dotColor
+    dotMaterial.opacityNode = dotMask
+
+    // MRT output for post-processing
+    dotMaterial.mrtNode = mrt({
+      output: dotColor,
+      normal: vec3(0, 1, 0)
+    })
+
+    this.dotMesh = new Mesh(dotPlaneGeometry, dotMaterial)
+    this.dotMesh.position.y = 0.015
+    this.scene.add(this.dotMesh)
 
     // Coarse lot grid (every 14 cells = lot + road)
     // Offset by 2 cells so grid runs down middle of roads
@@ -283,7 +300,6 @@ export class Demo {
     // Effect toggle uniforms (values set by applyParams)
     this.aoEnabled = uniform(1)
     this.vignetteEnabled = uniform(1)
-    this.fxaaEnabled = uniform(1)
     // Debug view: 0=final, 1=color, 2=depth, 3=normal, 4=AO
     this.debugView = uniform(0)
 
@@ -326,11 +342,7 @@ export class Demo {
       clamp(viewportUV.sub(0.5).length().mul(1.4), 0.0, 1.0).pow(1.5)
     )
     const vignetteMultiplier = mix(float(1), vignetteFactor, this.vignetteEnabled)
-    const withVignette = mix(vec3(0, 0, 0), withAO, vignetteMultiplier)
-
-    // Apply FXAA (when enabled)
-    const withFXAA = fxaa(withVignette)
-    const finalOutput = mix(withVignette, withFXAA, this.fxaaEnabled)
+    const finalOutput = mix(vec3(0, 0, 0), withAO, vignetteMultiplier)
 
     // Debug views
     const depthViz = vec3(scenePassDepth)

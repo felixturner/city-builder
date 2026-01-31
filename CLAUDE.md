@@ -9,6 +9,8 @@ a city builder toy.
 
 ## TODO
 
+- [ ] Possibly switch to manual compositing passes if MRT gives more transparency issues
+- [ ] Fix FPS regression (27 on Android, 46 on MBP - used to be 60)
 - [ ] Fix AO flicker on pan when zoomed out
 - [ ] Dial in AO
 - [ ] Rotate some blocks?
@@ -24,6 +26,7 @@ a city builder toy.
 - [ ] roads / cars
 - [ ] create my own roof tiles in blender or get from a pack.
 - [ ] add subtle noise grain etc?
+- [ ] click and drag to move buildings?
 
 ## Done
 
