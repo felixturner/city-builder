@@ -83,9 +83,8 @@ export class Demo {
 
     this.renderer = new WebGPURenderer({ canvas: this.canvas, antialias: true })
     await this.renderer.init()
-    const dpr = Math.min(window.devicePixelRatio, 2)
-    console.log('Device Pixel Ratio:', window.devicePixelRatio, '-> using:', dpr)
-    this.renderer.setPixelRatio(dpr)
+    // DPR defaults to 1 for performance, adjustable via GUI
+    this.renderer.setPixelRatio(1)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
     this.renderer.toneMapping = ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0

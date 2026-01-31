@@ -9,10 +9,9 @@ a city builder toy.
 
 ## TODO
 
-- [ ] Possibly switch to manual compositing passes if MRT gives more transparency issues
-- [ ] Fix FPS regression (27 on Android, 46 on MBP - used to be 60)
+- [ ] Consider manual compositing passes instead of MRT (fixes transparency, enables half-res AO for perf)
 - [ ] Fix AO flicker on pan when zoomed out
-- [ ] Dial in AO
+- [ ] Dial in AO (some AO is banding)
 - [ ] Rotate some blocks?
 - [ ] Smooth camera zoom
 - [ ] add dynamic windows/lights

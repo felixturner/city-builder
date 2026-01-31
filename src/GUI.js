@@ -55,6 +55,9 @@ export class GUIManager {
     debug: {
       view: 'final',
     },
+    renderer: {
+      dpr: 1, // Will be set dynamically based on device
+    },
   }
 
   init() {
@@ -80,14 +83,7 @@ export class GUIManager {
       demo.debugView.value = viewMap[v]
     })
 
-    // Action buttons
-    gui.add({ regenCity: () => {
-      demo.city.regenerate()
-      demo.trails.generatePaths(30)
-    } }, 'regenCity').name('Regen City')
-    gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
-
-    // Visual toggles at top level for easy access
+    // Visual toggles at top level
     gui.add(allParams.fx, 'trails').name('Trails').onChange((v) => {
       if (demo.trails && demo.trails.meshes) {
         for (const mesh of demo.trails.meshes) mesh.visible = v
@@ -96,6 +92,20 @@ export class GUIManager {
     gui.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
       if (demo.dotMesh) demo.dotMesh.visible = v
     })
+
+    // DPR dropdown
+    allParams.renderer.dpr = 1
+    gui.add(allParams.renderer, 'dpr', [1, 1.5, 2]).name('DPR').onChange((v) => {
+      demo.renderer.setPixelRatio(v)
+      demo.onResize()
+    })
+
+    // Action buttons
+    gui.add({ regenCity: () => {
+      demo.city.regenerate()
+      demo.trails.generatePaths(30)
+    } }, 'regenCity').name('Regen City')
+    gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
 
     gui.add({
       copyState: () => {
