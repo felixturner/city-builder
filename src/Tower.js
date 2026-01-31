@@ -177,7 +177,7 @@ export class Tower {
   /**
    * Animate adding a new floor with roof pop-off effect
    */
-  animateNewFloor(mesh, floorHeight, oldNumFloors, hoverColor, onComplete, onRoofLand) {
+  animateNewFloor(mesh, floorHeight, oldNumFloors, hoverColor, onComplete, onRoofLand, onFloorPop) {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
@@ -242,12 +242,13 @@ export class Tower {
     // New floor scales in + pops up
     tl.to(anim, {
       scale: 1,
-      yOffset: floorHeight * 0.3,
+      yOffset: floorHeight * 0.5,
       tiltX: tiltTarget.x, tiltY: tiltTarget.y, tiltZ: tiltTarget.z,
       duration: 0.1,
       ease: 'power2.out',
       onStart: () => mesh.setVisibleAt(newFloorIdx, true),
-      onUpdate: updateFloor
+      onUpdate: updateFloor,
+      onComplete: onFloorPop
     }, 0)
 
     // New floor settles down

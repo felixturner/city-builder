@@ -9,6 +9,7 @@ class SoundsManager {
       pop: new Howl({ src: ['assets/sfx/pop.mp3'] }),
       tick: new Howl({ src: ['assets/sfx/tick.mp3'] }),
       roll: new Howl({ src: ['assets/sfx/roll.mp3'] }),
+      debris: new Howl({ src: ['assets/sfx/debris.mp3'] }),
     }
     // Multiple stone sounds for random selection
     this.stoneSounds = [
@@ -17,6 +18,17 @@ class SoundsManager {
       new Howl({ src: ['assets/sfx/stone-03.mp3'] }),
       new Howl({ src: ['assets/sfx/stone-04.mp3'] }),
       new Howl({ src: ['assets/sfx/stone-05.mp3'] }),
+    ]
+    // Multiple clink sounds for debris collisions
+    this.clinkSounds = [
+      new Howl({ src: ['assets/sfx/clink01.mp3'] }),
+      new Howl({ src: ['assets/sfx/clink02.mp3'] }),
+      new Howl({ src: ['assets/sfx/clink03.mp3'] }),
+      new Howl({ src: ['assets/sfx/clink04.mp3'] }),
+      new Howl({ src: ['assets/sfx/clink05.mp3'] }),
+      new Howl({ src: ['assets/sfx/clink06.mp3'] }),
+      new Howl({ src: ['assets/sfx/clink07.mp3'] }),
+      new Howl({ src: ['assets/sfx/clink08.mp3'] }),
     ]
   }
 
@@ -32,6 +44,9 @@ class SoundsManager {
     if (name === 'stone') {
       // Randomly select one of the stone sounds
       sound = this.stoneSounds[Math.floor(Math.random() * this.stoneSounds.length)]
+    } else if (name === 'clink') {
+      // Randomly select one of the clink sounds
+      sound = this.clinkSounds[Math.floor(Math.random() * this.clinkSounds.length)]
     } else {
       sound = this.sounds[name]
     }

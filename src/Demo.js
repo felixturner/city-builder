@@ -359,6 +359,9 @@ export class Demo {
     if (controls.target.y < 0) controls.target.y = 0
     this.lighting.updateShadowCamera(this.controls.target, this.camera, this.orthoCamera, this.perspCamera)
 
+    // Update debris physics
+    this.city.update(dt)
+
     post.render()
 
     this.stats.end()

@@ -11,6 +11,7 @@ import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraView
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { Sounds } from './lib/Sounds.js'
+import { Debris } from './lib/Debris.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 
 // Rotate a vec3 around Y axis by angle (in radians)
@@ -77,6 +78,8 @@ export class CityBuilder {
     this.pointerDownPos = new Vector2()
     this.dragThreshold = 5 // pixels
 
+    // Debris system
+    this.debris = new Debris(scene)
   }
 
   async init() {
@@ -552,11 +555,37 @@ export class CityBuilder {
    */
   animateNewFloor(tower, oldNumFloors) {
     const hoverColor = this.hoverColors[tower.colorIndex]
+    const center = tower.box.getCenter(this.towerCenter)
+    const newFloorY = (oldNumFloors + 1) * this.floorHeight
+
+    // Grid offset for converting to world coords (towerMesh is offset to center the city)
+    const gridOffsetX = -this.actualGridWidth * 0.5
+    const gridOffsetZ = -this.actualGridHeight * 0.5
+    const worldX = center.x + gridOffsetX
+    const worldZ = center.y + gridOffsetZ
+
+    // Get tower size for debris spawn radius
+    const size = tower.box.getSize(this.towerSize)
+    const radius = Math.max(size.x, size.y) / 2
+
+    // Callback to spawn debris when floor reaches max scale
+    const onFloorPop = () => {
+      this.debris.setupNearbyCollisions(tower, this.towers, this.floorHeight, gridOffsetX, gridOffsetZ)
+      this.debris.spawn(worldX, newFloorY, worldZ, radius, hoverColor)
+    }
+
     tower.animateNewFloor(this.towerMesh, this.floorHeight, oldNumFloors, hoverColor, () => {
       this.updateTowerMatrices(tower)
     }, () => {
       Sounds.play('stone', 1.0, 0.4, 0.2)
-    })
+    }, onFloorPop)
+  }
+
+  /**
+   * Update per-frame systems (debris physics)
+   */
+  update(dt) {
+    this.debris.update(dt)
   }
 
   /**
