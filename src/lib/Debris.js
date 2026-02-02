@@ -1,6 +1,5 @@
 import * as CANNON from 'cannon-es'
-import { Object3D, BoxGeometry, InstancedMesh, Color, DynamicDrawUsage, MeshPhysicalMaterial, Vector2 } from 'three/webgpu'
-import { randRange, randCentered } from './utils.js'
+import { Object3D, BoxGeometry, InstancedMesh, Color, DynamicDrawUsage, MeshPhysicalMaterial, Vector2, MathUtils } from 'three/webgpu'
 import { Sounds } from './Sounds.js'
 
 /**
@@ -152,7 +151,7 @@ export class Debris {
    */
   spawn(x, y, z, radius, color) {
     // Number of bricks based on tower size
-    const count = Math.floor(randRange(radius, radius * 3))
+    const count = Math.floor(MathUtils.randFloat(radius, radius * 3))
 
     for (let i = 0; i < count; i++) {
       // Find inactive particle
@@ -214,27 +213,27 @@ export class Debris {
       const spawnZ = z + Math.sin(angle) * radius
 
       particle.body.position.set(
-        spawnX + randCentered(0.1),
-        y + randRange(4, 5),
-        spawnZ + randCentered(0.1)
+        spawnX + MathUtils.randFloatSpread(0.1),
+        y + MathUtils.randFloat(4, 5),
+        spawnZ + MathUtils.randFloatSpread(0.1)
       )
 
       // Shoot outward from spawn position (same direction as spoke angle)
-      const hSpeed = randRange(3, 5)
+      const hSpeed = MathUtils.randFloat(3, 5)
       const vx = Math.cos(angle) * hSpeed
       const vz = Math.sin(angle) * hSpeed
 
       particle.body.velocity.set(
         vx,
-        randRange(6, 10),
+        MathUtils.randFloat(6, 10),
         vz
       )
 
       // Random spin (reduced)
       particle.body.angularVelocity.set(
-        randCentered(5),
-        randCentered(5),
-        randCentered(5)
+        MathUtils.randFloatSpread(5),
+        MathUtils.randFloatSpread(5),
+        MathUtils.randFloatSpread(5)
       )
 
       particle.body.wakeUp()

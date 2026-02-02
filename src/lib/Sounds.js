@@ -10,6 +10,7 @@ class SoundsManager {
       tick: new Howl({ src: ['assets/sfx/tick.mp3'] }),
       roll: new Howl({ src: ['assets/sfx/roll.mp3'] }),
       debris: new Howl({ src: ['assets/sfx/debris.mp3'] }),
+      good: new Howl({ src: ['assets/sfx/good.mp3'] }),
     }
     // Multiple stone sounds for random selection
     this.stoneSounds = [

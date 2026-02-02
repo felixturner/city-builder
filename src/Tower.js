@@ -1,7 +1,7 @@
-import { Box2, Color, Object3D, Vector2 } from 'three/webgpu'
+import { Box2, Color, Object3D, Vector2, MathUtils } from 'three/webgpu'
 import gsap from 'gsap'
 import { BlockGeometry } from './lib/BlockGeometry.js'
-import { randCentered, clampSym } from './lib/utils.js'
+import { Sounds } from './lib/Sounds.js'
 
 /**
  * Tower class - represents a building/stack of blocks
@@ -36,6 +36,7 @@ export class Tower {
     this.skipFactor = 0 // For realtime visibility toggle
     this.colorIndex = 0 // Hover color index
     this.visible = true
+
 
     // Instance IDs for BatchedMesh
     this.floorInstances = [] // Base block instance IDs
@@ -191,7 +192,7 @@ export class Tower {
   /**
    * Animate adding a new floor with roof pop-off effect
    */
-  animateNewFloor(mesh, floorHeight, oldNumFloors, hoverColor, onComplete, onRoofLand, onFloorPop) {
+  animateNewFloor(mesh, floorHeight, oldNumFloors, hoverColor, onComplete, onFloorPop) {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
@@ -219,9 +220,9 @@ export class Tower {
       baseOffset: floorHeight * 0.2
     }
     const tiltTarget = {
-      x: randCentered(0.2),
-      y: randCentered(0.4),
-      z: randCentered(0.2)
+      x: MathUtils.randFloatSpread(0.2),
+      y: MathUtils.randFloatSpread(0.4),
+      z: MathUtils.randFloatSpread(0.2)
     }
 
     const updateFloor = () => {
@@ -275,13 +276,13 @@ export class Tower {
     }, 0.11)
 
     // Roof animation (separate)
-    this.startRoofAnimation(mesh, center, size, floorHeight, finalRoofY, onRoofLand)
+    this.startRoofAnimation(mesh, center, size, floorHeight, finalRoofY)
   }
 
   /**
    * Animate roof pop-off (separate from floor timeline for fast-click support)
    */
-  startRoofAnimation(mesh, center, size, floorHeight, finalRoofY, onRoofLand) {
+  startRoofAnimation(mesh, center, size, floorHeight, finalRoofY) {
     if (this.roofTween) this.roofTween.kill()
     this.roofAnimating = true
 
@@ -289,9 +290,9 @@ export class Tower {
 
     // Pop up above final position (not current position, to prevent stacking on fast clicks)
     const popUpY = finalRoofY + floorHeight * 1.5
-    const tiltX = clampSym(this.roofAnim.tiltX + randCentered(0.6), maxTilt)
-    const tiltY = clampSym(this.roofAnim.tiltY + randCentered(0.96), maxTilt)
-    const tiltZ = clampSym(this.roofAnim.tiltZ + randCentered(0.6), maxTilt)
+    const tiltX = MathUtils.clamp(this.roofAnim.tiltX + MathUtils.randFloatSpread(0.6), -maxTilt, maxTilt)
+    const tiltY = MathUtils.clamp(this.roofAnim.tiltY + MathUtils.randFloatSpread(0.96), -maxTilt, maxTilt)
+    const tiltZ = MathUtils.clamp(this.roofAnim.tiltZ + MathUtils.randFloatSpread(0.6), -maxTilt, maxTilt)
 
     const self = this
     const render = () => {
@@ -324,16 +325,15 @@ export class Tower {
       onUpdate: render
     }, 0.18)
 
-    // Play sound when roof lands (delay from timeline start)
-    tl.call(onRoofLand, null, 0.35)
+    // Play sound when roof lands
+    tl.call(() => Sounds.play('stone', 1.0, 0.4, 0.4), null, 0.35)
   }
 
   /**
    * Animate deleting all floors except the base floor
    * Pop off roof, stagger-delete floors top-down, drop roof back
-   * @param {Function} onFloorHide - Called for each floor as it hides
    */
-  animateDelete(mesh, floorHeight, numFloors, onComplete, onFloorHide) {
+  animateDelete(mesh, floorHeight, numFloors, onComplete) {
     if (this.floorTween?.isActive()) this.floorTween.kill()
     if (this.roofTween) this.roofTween.kill()
 
@@ -382,9 +382,9 @@ export class Tower {
     this.floorTween = tl
 
     // Phase 1: Pop roof up with tilt
-    const tiltX = randCentered(0.4)
-    const tiltY = randCentered(0.6)
-    const tiltZ = randCentered(0.4)
+    const tiltX = MathUtils.randFloatSpread(0.4)
+    const tiltY = MathUtils.randFloatSpread(0.6)
+    const tiltZ = MathUtils.randFloatSpread(0.4)
 
     tl.to(this.roofAnim, {
       y: popUpY, tiltX, tiltY, tiltZ,
@@ -399,7 +399,8 @@ export class Tower {
       const anim = floorAnims[i]
       const floorY = anim.floorIdx * floorHeight + floorHalfHeight
       const instanceIdx = this.floorInstances[anim.floorIdx]
-
+      // Pitch decreases as floors go down (high pitch at top, low at bottom)
+      const pitch = 0.8 + (anim.floorIdx / numFloors) * 1.2
       const updateFloor = () => {
         dummy.position.set(center.x, floorY + anim.yOffset, center.y)
         dummy.scale.set(size.x * anim.scale, floorHeight * anim.scale, size.y * anim.scale)
@@ -413,15 +414,15 @@ export class Tower {
       tl.to(anim, {
         scale: 0,
         yOffset: -floorHeight * 0.5,
-        tiltX: randCentered(0.3),
-        tiltY: randCentered(0.5),
-        tiltZ: randCentered(0.3),
+        tiltX: MathUtils.randFloatSpread(0.3),
+        tiltY: MathUtils.randFloatSpread(0.5),
+        tiltZ: MathUtils.randFloatSpread(0.3),
         duration: 0.12,
         ease: 'power2.in',
         onUpdate: updateFloor,
         onComplete: () => {
           mesh.setVisibleAt(instanceIdx, false)
-          onFloorHide?.()
+          Sounds.play('tick', pitch, 0.4, 1.0)
         }
       }, delay)
     }
@@ -434,5 +435,113 @@ export class Tower {
       ease: 'bounce.out',
       onUpdate: renderRoof
     }, dropDelay)
+
+    // Play sound when roof lands
+    const roofLandDelay = dropDelay + 0.2
+    tl.call(() => Sounds.play('stone', 1.0, 0.4, 0.4), null, roofLandDelay)
+  }
+
+  /**
+   * Handle click on tower - add a floor with animation and sounds
+   * @param {BatchedMesh} mesh - The batched mesh
+   * @param {number} floorHeight - Height of each floor
+   * @param {number} maxFloors - Maximum number of floors
+   * @param {Debris} debris - Debris system for spawning particles
+   * @param {number} gridWidth - Actual grid width for world position calc
+   * @param {number} gridHeight - Actual grid height for world position calc
+   * @param {Tower[]} allTowers - All towers for debris collision
+   * @param {Function} onComplete - Called when animation completes
+   */
+  handleClick(mesh, floorHeight, maxFloors, debris, gridWidth, gridHeight, allTowers, onComplete) {
+    const numFloors = this.getNumFloors(floorHeight)
+
+    // Check if we can add another floor
+    if (numFloors >= maxFloors) {
+      return
+    }
+
+    // Play tick sound and push down animation, then release
+    Sounds.play('tick', 1.0, 0)
+
+    const pushAmount = floorHeight * 0.25
+    this.animateOffset(mesh, floorHeight, maxFloors, -pushAmount, 0.1, () => {
+      // Set height to exact floor count + 1 (align to floor boundaries)
+      this.height = (numFloors + 1) * floorHeight
+
+      // Pitch increases with floor height (0.8 at ground, 2.0 at top)
+      const pitch = 0.8 + (numFloors / maxFloors) * 1.2
+      Sounds.play('pop', pitch, 0.15)
+
+      // Animate the tower back up with the new floor emerging
+      this._animateNewFloorWithDebris(mesh, floorHeight, numFloors, debris, gridWidth, gridHeight, allTowers, onComplete)
+    })
+  }
+
+  /**
+   * Handle right-click on tower - delete all floors
+   * @param {BatchedMesh} mesh - The batched mesh
+   * @param {number} floorHeight - Height of each floor
+   * @param {Debris} debris - Debris system for spawning particles
+   * @param {number} gridWidth - Actual grid width for world position calc
+   * @param {number} gridHeight - Actual grid height for world position calc
+   * @param {Tower[]} allTowers - All towers for debris collision
+   * @param {Function} onComplete - Called when animation completes
+   */
+  handleRightClick(mesh, floorHeight, debris, gridWidth, gridHeight, allTowers, onComplete) {
+    const numFloors = this.getNumFloors(floorHeight)
+
+    // Only delete if tower has at least 1 floor
+    if (numFloors < 1) return
+
+    // Get tower info for debris
+    const baseColor = this.isLit && this.litColor ? this.litColor : this.baseColor
+    const debrisColor = Tower.lightenColor(baseColor)
+    const center = this.box.getCenter(new Vector2())
+    const gridOffsetX = -gridWidth * 0.5
+    const gridOffsetZ = -gridHeight * 0.5
+    const worldX = center.x + gridOffsetX
+    const worldZ = center.y + gridOffsetZ
+    const size = this.box.getSize(new Vector2())
+    const radius = Math.max(size.x, size.y) / 2
+
+    // Spawn debris immediately
+    debris.setupNearbyCollisions(this, allTowers, floorHeight, gridOffsetX, gridOffsetZ)
+    debris.spawn(worldX, numFloors * floorHeight, worldZ, radius, debrisColor)
+
+    // Animate the deletion
+    this.animateDelete(mesh, floorHeight, numFloors, () => {
+      this.height = 0 // No floors, just roof
+      onComplete?.()
+    })
+  }
+
+  /**
+   * Internal: Animate new floor with debris spawning
+   */
+  _animateNewFloorWithDebris(mesh, floorHeight, oldNumFloors, debris, gridWidth, gridHeight, allTowers, onComplete) {
+    // Use lightened version of tower's base color for new floor and debris
+    const baseColor = this.isLit && this.litColor ? this.litColor : this.baseColor
+    const newFloorColor = Tower.lightenColor(baseColor)
+    const debrisColor = newFloorColor.clone()
+    const center = this.box.getCenter(new Vector2())
+    const newFloorY = (oldNumFloors + 1) * floorHeight
+
+    // Grid offset for converting to world coords
+    const gridOffsetX = -gridWidth * 0.5
+    const gridOffsetZ = -gridHeight * 0.5
+    const worldX = center.x + gridOffsetX
+    const worldZ = center.y + gridOffsetZ
+
+    // Get tower size for debris spawn radius
+    const size = this.box.getSize(new Vector2())
+    const radius = Math.max(size.x, size.y) / 2
+
+    // Callback to spawn debris when floor reaches max scale
+    const onFloorPop = () => {
+      debris.setupNearbyCollisions(this, allTowers, floorHeight, gridOffsetX, gridOffsetZ)
+      debris.spawn(worldX, newFloorY, worldZ, radius, debrisColor)
+    }
+
+    this.animateNewFloor(mesh, floorHeight, oldNumFloors, newFloorColor, onComplete, onFloorPop)
   }
 }

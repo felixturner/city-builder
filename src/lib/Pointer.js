@@ -76,7 +76,7 @@ export class Pointer {
     this.updateScreenPointer(e)
 
     if (this.pointerDown && this.onPointerUpCallback) {
-      // For touch, pass the stored intersection so CityBuilder can handle tap
+      // For touch, pass the stored intersection so City can handle tap
       if (this.isTouch && this.pendingTouchIntersection !== undefined) {
         this.onPointerUpCallback(this.isTouch, this.pendingTouchIntersection)
         this.pendingTouchIntersection = undefined

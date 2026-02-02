@@ -4,8 +4,11 @@ a city builder toy.
 
 ## Instructions
 
+- Never git revert, commit, or push without asking for explicit permission first.
+- Do not make code changes unless I specifically ask you to.
+- Play audio notification when done with tasks or when asking for permission(use Glass.aiff)
+- Do not present guesses as facts. If you don't know something, say so.
 - Don't ask leading questions about next steps
-- Play audio voice notification when done with tasks
 
 ## TODO
 
@@ -15,7 +18,6 @@ a city builder toy.
 - [ ] Rotate some blocks?
 - [ ] Smooth camera zoom
 - [ ] add dynamic windows/lights
-- [ ] Fix FXAA on resize - use DPR approach from tsl-pills project (or remove FXAA)
 - [ ] Dynamic AO blur based on zoom - reduce blur when zoomed out, increase when zoomed in
 - [ ] Add three-point lighting? (key, fill, rim lights)
 - [ ] Update to latest threejs
@@ -23,7 +25,7 @@ a city builder toy.
 - [ ] Setup Netlify deploy (alternative to GitHub Pages)
 - [ ] day/night toggle (move dir light / fade between HDRs)
 - [ ] roads / cars
-- [ ] create my own roof tiles in blender or get from a pack.
+- [ ] create my own roof tiles in blender or get from a pack. (look at lego blocks)
 - [ ] add subtle noise grain etc?
 - [ ] click and drag to move buildings?
 

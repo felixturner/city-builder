@@ -39,7 +39,7 @@ import Stats from 'three/addons/libs/stats.module.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
 import { Pointer } from './lib/Pointer.js'
 import { GUIManager } from './GUI.js'
-import { CityBuilder } from './CityBuilder.js'
+import { City } from './City.js'
 import { Lighting } from './Lighting.js'
 import { Trails } from './lib/Trails.js'
 
@@ -83,8 +83,8 @@ export class Demo {
 
     this.renderer = new WebGPURenderer({ canvas: this.canvas, antialias: true })
     await this.renderer.init()
-    // DPR defaults to 1 for performance, adjustable via GUI
-    this.renderer.setPixelRatio(1)
+    // DPR 2 with half-res AO gives good quality/perf balance
+    this.renderer.setPixelRatio(2)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
     this.renderer.toneMapping = ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -109,7 +109,7 @@ export class Demo {
 
     // Initialize modules
     this.lighting = new Lighting(this.scene, this.renderer, this.params)
-    this.city = new CityBuilder(this.scene, this.params)
+    this.city = new City(this.scene, this.params)
 
     await this.lighting.init()
     await this.city.init()
@@ -315,6 +315,7 @@ export class Demo {
     const scenePassDepth = scenePass.getTextureNode('depth')
 
     this.aoPass = ao(scenePassDepth, scenePassNormal, this.camera)
+    this.aoPass.resolutionScale = 0.5 // Half-res AO for performance (gets blurred anyway)
     this.aoPass.distanceExponent.value = 1
     this.aoPass.distanceFallOff.value = 0.1
     this.aoPass.radius.value = 1.0

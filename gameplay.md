@@ -29,7 +29,7 @@ The Z-axis (height) and spatial layout determine efficiency through specific lim
 * **Energy Links:** Visual lines link towers across the city.
 * **Siphoning:** Players can draw links between different city blocks to balance resources. 
 * **The Skyline Puzzle:** Success involves using one block as a "sink" or "utility farm" (e.g., a block of tall cooling towers) to support a high-production industrial block nearby.
-* **Dynamic Balancing:** Players must constantly add and delete floors to maintain the correct height differentials for cooling and power distribution.
+* **Dynamic Balancing:** Players must constantly add and delete floors to maintain the correct height differentials for cooling and power distribution. Power flows from higher towers to lower?
 
 ---
 

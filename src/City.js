@@ -10,7 +10,6 @@ import {
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
-import { Sounds } from './lib/Sounds.js'
 import { Debris } from './lib/Debris.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 
@@ -25,7 +24,7 @@ const rotateY = (v, angle) => {
   )
 }
 
-export class CityBuilder {
+export class City {
   constructor(scene, params) {
     this.scene = scene
     this.params = params
@@ -73,7 +72,11 @@ export class CityBuilder {
     })
     this.instanceToTower = new Map() // Maps instance ID to tower
 
-    // Click state
+    // Floor stacking config
+    this.maxFloors = 10
+    this.floorHeight = 2
+
+    // Click state (for drag detection)
     this.pressedTower = null
     this.pointerDownPos = new Vector2()
     this.dragThreshold = 5 // pixels
@@ -235,10 +238,6 @@ export class CityBuilder {
       vCounts.push(g.attributes.position.count)
       iCounts.push(g.index.count)
     }
-
-    // Floor stacking: each tower needs up to maxFloors base instances + 1 roof
-    this.maxFloors = 10
-    this.floorHeight = 2
 
     // Calculate total geometry needed for all towers with max floors
     let totalV = 0
@@ -491,9 +490,7 @@ export class CityBuilder {
     let tower = null
 
     if (intersection && intersection.batchId !== undefined) {
-      // Get the instance ID from batchId (BatchedMesh uses batchId for instance index)
-      const instanceId = intersection.batchId
-      tower = this.instanceToTower.get(instanceId)
+      tower = this.instanceToTower.get(intersection.batchId)
     }
 
     // No change
@@ -501,27 +498,18 @@ export class CityBuilder {
 
     // Unhover previous tower
     if (this.hoveredTower) {
-      this.animateTowerColor(this.hoveredTower, false)
+      this.hoveredTower.animateHoverColor(this.towerMesh, false, this.floorHeight)
     }
 
     // Hover new tower
     this.hoveredTower = tower
     if (tower) {
-      this.animateTowerColor(tower, true)
+      tower.animateHoverColor(this.towerMesh, true, this.floorHeight)
     }
   }
 
   /**
-   * Animate tower color to/from hover state
-   * @param {Tower} tower - The tower to animate
-   * @param {boolean} isHovering - True to animate to hover color, false to restore
-   */
-  animateTowerColor(tower, isHovering) {
-    tower.animateHoverColor(this.towerMesh, isHovering, this.floorHeight)
-  }
-
-  /**
-   * Handle pointer down on a tower - push it down (mouse only)
+   * Handle pointer down on a tower - store for click detection
    * @param {Object|null} intersection - Three.js intersection object or null
    * @param {number} clientX - pointer X position
    * @param {number} clientY - pointer Y position
@@ -541,16 +529,7 @@ export class CityBuilder {
     this.pressedTower = tower
     this.pointerDownPos.set(clientX, clientY)
 
-    Sounds.play('tick', 1.0, 0)
-
-    // Push the tower down by 0.25 floor height (skip if 0 floors to avoid roof clipping through ground)
-    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
-    if (numFloors > 0) {
-      const pushAmount = this.floorHeight * 0.25
-      this.animateTowerOffset(tower, -pushAmount, 0.1)
-    }
-
-    return true // Event handled - stop propagation to OrbitControls
+    return false // Don't stop propagation - let OrbitControls handle drag
   }
 
   /**
@@ -566,22 +545,28 @@ export class CityBuilder {
     const dist = Math.sqrt(dx * dx + dy * dy)
 
     if (dist > this.dragThreshold) {
-      // Cancel the click - animate back to normal
-      const tower = this.pressedTower
+      // Cancel the click
       this.pressedTower = null
-      this.animateTowerOffset(tower, 0, 0.15)
     }
   }
 
   /**
-   * Handle pointer up - add a floor and animate it rising
+   * Handle pointer up - add a floor to the tower
    * @param {boolean} isTouch - true if this is a touch event
    * @param {Object|null} touchIntersection - intersection from touch start (touch only)
    */
   onPointerUp(isTouch, touchIntersection) {
     // For touch, handle the full tap sequence here
     if (isTouch) {
-      this.handleTouchTap(touchIntersection)
+      let tower = null
+      if (touchIntersection && touchIntersection.batchId !== undefined) {
+        tower = this.instanceToTower.get(touchIntersection.batchId)
+      }
+      if (tower && tower.visible) {
+        tower.handleClick(this.towerMesh, this.floorHeight, this.maxFloors, this.debris,
+          this.actualGridWidth, this.actualGridHeight, this.towers,
+          () => this.updateTowerMatrices(tower))
+      }
       return
     }
 
@@ -590,60 +575,13 @@ export class CityBuilder {
     const tower = this.pressedTower
     this.pressedTower = null
 
-    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
-
-    // Check if we can add another floor
-    if (numFloors >= this.maxFloors) {
-      // Just animate back to normal position
-      this.animateTowerOffset(tower, 0, 0.2)
-      return
-    }
-
-    // Set height to exact floor count + 1 (align to floor boundaries)
-    tower.height = (numFloors + 1) * this.floorHeight
-
-    Sounds.play('pop', 1.0, 0.3)
-
-    // Animate the tower back up with the new floor emerging
-    this.animateNewFloor(tower, numFloors)
+    tower.handleClick(this.towerMesh, this.floorHeight, this.maxFloors, this.debris,
+      this.actualGridWidth, this.actualGridHeight, this.towers,
+      () => this.updateTowerMatrices(tower))
   }
 
   /**
-   * Handle touch tap - play press down then release animation sequentially
-   * @param {Object|null} intersection - intersection from touch start
-   */
-  handleTouchTap(intersection) {
-    let tower = null
-    if (intersection && intersection.batchId !== undefined) {
-      tower = this.instanceToTower.get(intersection.batchId)
-    }
-
-    if (!tower || !tower.visible) return
-
-    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
-
-    // Check if we can add another floor
-    if (numFloors >= this.maxFloors) {
-      return // Can't add more floors, do nothing
-    }
-
-    Sounds.play('tick', 1.0, 0)
-
-    // Push the tower down, then on complete add the floor
-    const pushAmount = this.floorHeight * 0.25
-    this.animateTowerOffset(tower, -pushAmount, 0.1, () => {
-      // Set height to exact floor count + 1 (align to floor boundaries)
-      tower.height = (numFloors + 1) * this.floorHeight
-
-      Sounds.play('pop', 1.0, 0.3)
-
-      // Animate the tower back up with the new floor emerging
-      this.animateNewFloor(tower, numFloors)
-    })
-  }
-
-  /**
-   * Handle right-click - delete tower floors (keep only base floor)
+   * Handle right-click - delete tower floors
    * @param {Object} intersection - Three.js intersection object
    */
   onRightClick(intersection) {
@@ -654,79 +592,9 @@ export class CityBuilder {
 
     if (!tower || !tower.visible) return
 
-    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
-
-    // Only delete if tower has at least 1 floor
-    if (numFloors < 1) return
-
-    // Get tower info for debris - use lightened version of tower's base color
-    const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
-    const debrisColor = Tower.lightenColor(baseColor)
-    const center = tower.box.getCenter(this.towerCenter)
-    const gridOffsetX = -this.actualGridWidth * 0.5
-    const gridOffsetZ = -this.actualGridHeight * 0.5
-    const worldX = center.x + gridOffsetX
-    const worldZ = center.y + gridOffsetZ
-    const size = tower.box.getSize(this.towerSize)
-    const radius = Math.max(size.x, size.y) / 2
-
-    // Spawn debris immediately
-    this.debris.setupNearbyCollisions(tower, this.towers, this.floorHeight, gridOffsetX, gridOffsetZ)
-    this.debris.spawn(worldX, numFloors * this.floorHeight, worldZ, radius, debrisColor)
-
-    // Animate the deletion
-    tower.animateDelete(this.towerMesh, this.floorHeight, numFloors,
-      // onComplete
-      () => {
-        tower.height = 0 // No floors, just roof
-        this.updateTowerMatrices(tower)
-      },
-      // onFloorHide - called for each floor as it hides
-      () => {
-        Sounds.play('stone', 1.0, 0.4, 0.4)
-      }
-    )
-  }
-
-  /**
-   * Animate tower vertical offset (for press down effect)
-   */
-  animateTowerOffset(tower, offset, duration, onComplete) {
-    tower.animateOffset(this.towerMesh, this.floorHeight, this.maxFloors, offset, duration, onComplete)
-  }
-
-  /**
-   * Animate adding a new floor with roof pop-off effect
-   */
-  animateNewFloor(tower, oldNumFloors) {
-    // Use lightened version of tower's base color for new floor and debris
-    const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
-    const newFloorColor = Tower.lightenColor(baseColor)
-    const debrisColor = newFloorColor.clone()
-    const center = tower.box.getCenter(this.towerCenter)
-    const newFloorY = (oldNumFloors + 1) * this.floorHeight
-
-    // Grid offset for converting to world coords (towerMesh is offset to center the city)
-    const gridOffsetX = -this.actualGridWidth * 0.5
-    const gridOffsetZ = -this.actualGridHeight * 0.5
-    const worldX = center.x + gridOffsetX
-    const worldZ = center.y + gridOffsetZ
-
-    // Get tower size for debris spawn radius
-    const size = tower.box.getSize(this.towerSize)
-    const radius = Math.max(size.x, size.y) / 2
-
-    // Callback to spawn debris when floor reaches max scale
-    const onFloorPop = () => {
-      this.debris.setupNearbyCollisions(tower, this.towers, this.floorHeight, gridOffsetX, gridOffsetZ)
-      this.debris.spawn(worldX, newFloorY, worldZ, radius, debrisColor)
-    }
-
-    tower.animateNewFloor(this.towerMesh, this.floorHeight, oldNumFloors, newFloorColor, () => {
-      this.updateTowerMatrices(tower)
-    }, () => {
-      Sounds.play('stone', 1.0, 0.4, 0.2)
-    }, onFloorPop)
+    tower.handleRightClick(this.towerMesh, this.floorHeight, this.debris,
+      this.actualGridWidth, this.actualGridHeight, this.towers,
+      () => this.updateTowerMatrices(tower))
   }
 
   /**

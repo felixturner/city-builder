@@ -93,7 +93,7 @@ export class GUIManager {
       if (demo.dotMesh) demo.dotMesh.visible = v
     })
 
-    // DPR dropdown
+    // DPR dropdown (default 1)
     allParams.renderer.dpr = 1
     gui.add(allParams.renderer, 'dpr', [1, 1.5, 2]).name('DPR').onChange((v) => {
       demo.renderer.setPixelRatio(v)
@@ -312,5 +312,8 @@ export class GUIManager {
     // Camera
     demo.perspCamera.fov = params.camera.fov
     demo.perspCamera.updateProjectionMatrix()
+
+    // Renderer
+    demo.renderer.setPixelRatio(params.renderer.dpr)
   }
 }
