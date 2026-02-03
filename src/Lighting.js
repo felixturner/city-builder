@@ -43,10 +43,10 @@ export class Lighting {
     groundMesh.receiveShadow = true
     scene.add(groundMesh)
 
-    // Scene bounds for shadow calculation (grid is centered around origin, ~148x148, buildings up to ~50 height)
+    // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)
     this.sceneBounds = new Box3(
-      new Vector3(-74, 0, -74),
-      new Vector3(74, 50, 74)
+      new Vector3(-50, 0, -50),
+      new Vector3(55, 50, 55)
     )
 
     // Directional light for key shadows/highlights (values set by applyParams)

@@ -7,33 +7,10 @@ import {
   Scene,
   ACESFilmicToneMapping,
   Plane,
-  PostProcessing,
   WebGPURenderer,
   PCFSoftShadowMap,
-  GridHelper,
-  PlaneGeometry,
-  Mesh,
-  MeshBasicNodeMaterial,
+  AxesHelper,
 } from 'three/webgpu'
-import {
-  pass,
-  output,
-  mrt,
-  normalView,
-  viewportUV,
-  clamp,
-  uniform,
-  select,
-  mix,
-  float,
-  vec3,
-  uv,
-  fract,
-  step,
-  min,
-} from 'three/tsl'
-import { ao } from 'three/addons/tsl/display/GTAONode.js'
-import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js'
 import { OrbitControls } from 'three/examples/jsm/Addons.js'
 import Stats from 'three/addons/libs/stats.module.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
@@ -42,6 +19,7 @@ import { GUIManager } from './GUI.js'
 import { City } from './City.js'
 import { Lighting } from './Lighting.js'
 import { Trails } from './lib/Trails.js'
+import { PostFX } from './PostFX.js'
 
 export class Demo {
   static instance = null
@@ -53,7 +31,7 @@ export class Demo {
     this.perspCamera = new PerspectiveCamera(30, 1, 0.1, 1000)
     this.camera = this.perspCamera
     this.controls = null
-    this.post = null
+    this.postFX = null
     this.scene = new Scene()
     this.pointerHandler = null
     this.clock = new Clock(false)
@@ -126,62 +104,14 @@ export class Demo {
       }
     )
 
-    // Add grid lines - fine cell grid (light) and coarse lot grid (darker)
-    const gridSize = this.city.actualGridWidth
+    // Create grid helpers (cell grid, dots, lot grid)
+    this.city.createGrids()
 
-    // Fine cell grid (semi-transparent)
-    // Use integer division to ensure gridSize matches divisions exactly
-    const cellDivisions = Math.floor(gridSize)
-    const cellGrid = new GridHelper(cellDivisions, cellDivisions, 0x888888, 0x888888)
-    cellGrid.material.transparent = true
-    cellGrid.material.opacity = 0.5
-    cellGrid.position.y = 0.01
-    this.scene.add(cellGrid)
-
-    // Grid intersection dots using procedural plane shader
-    const dotPlaneGeometry = new PlaneGeometry(cellDivisions, cellDivisions)
-    dotPlaneGeometry.rotateX(-Math.PI / 2)
-    const dotMaterial = new MeshBasicNodeMaterial()
-    dotMaterial.transparent = true
-    dotMaterial.alphaTest = 0.5
-    dotMaterial.side = 2 // DoubleSide
-
-    // Procedural dots at grid intersections
-    // UV goes 0-1, scale to cell coordinates
-    const cellCoord = uv().mul(cellDivisions)
-    // Distance from nearest integer grid intersection
-    const fractCoord = fract(cellCoord)
-    const toGridX = min(fractCoord.x, float(1).sub(fractCoord.x))
-    const toGridY = min(fractCoord.y, float(1).sub(fractCoord.y))
-    const dist = toGridX.mul(toGridX).add(toGridY.mul(toGridY)).sqrt()
-    // Dot radius in cell units
-    const dotRadius = float(0.04)
-    // Alpha mask: 1 inside dot, 0 outside
-    const dotMask = float(1).sub(step(dotRadius, dist))
-
-    // Color 0x444444
-    const dotColor = vec3(0.267, 0.267, 0.267)
-    dotMaterial.colorNode = dotColor
-    dotMaterial.opacityNode = dotMask
-
-    // MRT output for post-processing
-    dotMaterial.mrtNode = mrt({
-      output: dotColor,
-      normal: vec3(0, 1, 0)
-    })
-
-    this.dotMesh = new Mesh(dotPlaneGeometry, dotMaterial)
-    this.dotMesh.position.y = 0.015
-    this.scene.add(this.dotMesh)
-
-    // Coarse lot grid (every 14 cells = lot + road)
-    // Offset by 2 cells so grid runs down middle of roads
-    const lotSpacing = 14 // lotSize (10) + roadWidth (4)
-    const lotDivisions = Math.floor(gridSize / lotSpacing)
-    const lotGridSize = lotDivisions * lotSpacing
-    const lotGrid = new GridHelper(lotGridSize, lotDivisions, 0x888888, 0x888888)
-    lotGrid.position.set(-2, 0.02, -2) // Offset to center on roads
-    this.scene.add(lotGrid)
+    // Origin helper (hidden by default, toggled via GUI)
+    this.axesHelper = new AxesHelper(5)
+    this.axesHelper.position.set(0, 1, 0)
+    this.axesHelper.visible = false
+    this.scene.add(this.axesHelper)
 
     // Glowing trails between towers
     this.trails = new Trails(this.scene, this.city)
@@ -226,8 +156,8 @@ export class Demo {
     this.updateOrthoFrustum()
 
     // Set up perspective camera (closer position for FOV 30)
-    // Initial camera position (values from params via applyParams)
-    this.perspCamera.position.set(-21.975, 51.205, -4.502)
+    // Initial camera position - same rotation but targeting origin
+    this.perspCamera.position.set(-18.574, 50.428, -12.617)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -254,7 +184,7 @@ export class Demo {
     this.controls.maxPolarAngle = 1.53  // ~88° - above horizon
     // Pan parallel to ground plane instead of screen
     this.controls.screenSpacePanning = false
-    this.controls.target.set(-3.401, 0.777, 8.115)
+    this.controls.target.set(0, 0, 0)
     this.controls.update()
   }
 
@@ -294,77 +224,16 @@ export class Demo {
   }
 
   initPostProcessing() {
-    this.post = new PostProcessing(this.renderer)
+    this.postFX = new PostFX(this.renderer, this.scene, this.camera)
+    this.postFX.fadeOpacity.value = 0 // Start black
 
-    // Effect toggle uniforms (values set by applyParams)
-    this.aoEnabled = uniform(1)
-    this.vignetteEnabled = uniform(1)
-    // Debug view: 0=final, 1=color, 2=depth, 3=normal, 4=AO
-    this.debugView = uniform(0)
-
-    const scenePass = pass(this.scene, this.camera)
-    scenePass.setMRT(
-      mrt({
-        output: output,
-        normal: normalView,
-      })
-    )
-
-    const scenePassColor = scenePass.getTextureNode('output')
-    const scenePassNormal = scenePass.getTextureNode('normal')
-    const scenePassDepth = scenePass.getTextureNode('depth')
-
-    this.aoPass = ao(scenePassDepth, scenePassNormal, this.camera)
-    this.aoPass.resolutionScale = 0.5 // Half-res AO for performance (gets blurred anyway)
-    this.aoPass.distanceExponent.value = 1
-    this.aoPass.distanceFallOff.value = 0.1
-    this.aoPass.radius.value = 1.0
-    this.aoPass.scale.value = 1.5
-    this.aoPass.thickness.value = 1
-    const aoPass = this.aoPass
-
-    // AO texture for debug view
-    const aoTexture = aoPass.getTextureNode()
-
-    // Blur the AO to reduce banding artifacts (value set by applyParams)
-    this.aoBlurAmount = uniform(1)
-    const blurredAO = gaussianBlur(aoTexture, this.aoBlurAmount, 4) // sigma, radius
-
-    // Soften AO: raise to power < 1 to reduce harshness, then blend
-    // pow(0.5) makes shadows less dark, mix with 1 to control intensity (value set by applyParams)
-    this.aoIntensity = uniform(1)
-    const softenedAO = blurredAO.pow(0.5) // Square root makes it softer
-    const blendedAO = mix(float(1), softenedAO, this.aoIntensity) // Mix with white based on intensity
-    const withAO = mix(scenePassColor, scenePassColor.mul(blendedAO), this.aoEnabled)
-
-    // Vignette: darken edges toward black
-    const vignetteFactor = float(1).sub(
-      clamp(viewportUV.sub(0.5).length().mul(1.4), 0.0, 1.0).pow(1.5)
-    )
-    const vignetteMultiplier = mix(float(1), vignetteFactor, this.vignetteEnabled)
-    const finalOutput = mix(vec3(0, 0, 0), withAO, vignetteMultiplier)
-
-    // Debug views
-    const depthViz = vec3(scenePassDepth)
-    const normalViz = scenePassNormal.mul(0.5).add(0.5)
-    const aoViz = vec3(blurredAO)
-
-    // Select output based on debug view
-    const debugOutput = select(
-      this.debugView.lessThan(0.5),
-      finalOutput,
-      select(
-        this.debugView.lessThan(1.5),
-        scenePassColor,
-        select(
-          this.debugView.lessThan(2.5),
-          depthViz,
-          select(this.debugView.lessThan(3.5), normalViz, aoViz)
-        )
-      )
-    )
-
-    this.post.outputNode = debugOutput
+    // Expose uniforms for GUI access (aliased from PostFX)
+    this.aoEnabled = this.postFX.aoEnabled
+    this.vignetteEnabled = this.postFX.vignetteEnabled
+    this.debugView = this.postFX.debugView
+    this.aoBlurAmount = this.postFX.aoBlurAmount
+    this.aoIntensity = this.postFX.aoIntensity
+    this.aoPass = this.postFX.aoPass
   }
 
   initStats() {
@@ -389,7 +258,7 @@ export class Demo {
   animate() {
     this.stats.begin()
 
-    const { controls, clock, post } = this
+    const { controls, clock, postFX } = this
 
     const dt = clock.getDelta()
 
@@ -404,14 +273,14 @@ export class Demo {
     // Update trails animation
     this.trails.update(dt)
 
-    post.render()
+    postFX.render()
 
     this.stats.end()
   }
 
   exportPNG() {
     // Render one frame to ensure canvas is up to date
-    this.post.render()
+    this.postFX.render()
 
     // Get canvas data
     const canvas = this.renderer.domElement
@@ -423,5 +292,16 @@ export class Demo {
       link.click()
       URL.revokeObjectURL(url)
     }, 'image/png')
+  }
+
+  fadeIn(duration = 1000) {
+    const start = performance.now()
+    const animate = () => {
+      const elapsed = performance.now() - start
+      const t = Math.min(elapsed / duration, 1)
+      this.postFX.fadeOpacity.value = t
+      if (t < 1) requestAnimationFrame(animate)
+    }
+    requestAnimationFrame(animate)
   }
 }

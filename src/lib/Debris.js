@@ -93,11 +93,10 @@ export class Debris {
    * @param {Tower} clickedTower - The tower that was clicked (exclude from collisions)
    * @param {Tower[]} allTowers - All towers in the scene
    * @param {number} floorHeight - Height of each floor
-   * @param {number} gridOffsetX - Grid X offset for world coords
-   * @param {number} gridOffsetZ - Grid Z offset for world coords
+   * @param {City} city - City instance for coordinate conversion
    * @param {number} radius - Radius to check for nearby towers
    */
-  setupNearbyCollisions(clickedTower, allTowers, floorHeight, gridOffsetX, gridOffsetZ, radius = 15) {
+  setupNearbyCollisions(clickedTower, allTowers, floorHeight, city, radius = 15) {
     // Remove old tower bodies
     for (const body of this.towerBodies) {
       this.world.removeBody(body)
@@ -114,27 +113,26 @@ export class Debris {
       if (!tower.visible || tower === clickedTower) continue
 
       const center = tower.box.getCenter(this.tempVec2)
-      const dx = center.x - clickedCenterX
-      const dz = center.y - clickedCenterY
+      const centerX = center.x
+      const centerY = center.y
+      const dx = centerX - clickedCenterX
+      const dz = centerY - clickedCenterY
       const dist = Math.sqrt(dx * dx + dz * dz)
 
       if (dist > radius) continue
 
-      const centerX = center.x
-      const centerY = center.y
       const size = tower.box.getSize(this.tempVec2)
       const numFloors = Math.max(0, Math.floor(tower.height / floorHeight))
       // Include roof height in collision body
       const height = numFloors * floorHeight + roofHeight
 
-      // Convert to world coordinates
-      const worldX = centerX + gridOffsetX
-      const worldZ = centerY + gridOffsetZ
+      // Convert to world coordinates using city helper
+      const world = city.gridToWorld(centerX, centerY)
 
       const body = new CANNON.Body({
         type: CANNON.Body.STATIC,
         shape: new CANNON.Box(new CANNON.Vec3(size.x / 2, height / 2, size.y / 2)),
-        position: new CANNON.Vec3(worldX, height / 2, worldZ)
+        position: new CANNON.Vec3(world.x, height / 2, world.z)
       })
       this.world.addBody(body)
       this.towerBodies.push(body)
@@ -148,10 +146,11 @@ export class Debris {
    * @param {number} z - World Z position (center)
    * @param {number} radius - Tower radius for spawning at perimeter
    * @param {Color} color - Color for debris (matches tower hover color)
+   * @param {number} [numParticles] - Optional override for number of particles
    */
-  spawn(x, y, z, radius, color) {
-    // Number of bricks based on tower size
-    const count = Math.floor(MathUtils.randFloat(radius, radius * 3))
+  spawn(x, y, z, radius, color, numParticles) {
+    // Number of bricks based on tower size, or use override
+    const count = numParticles ?? Math.floor(MathUtils.randFloat(radius, radius * 3)) + 2
 
     for (let i = 0; i < count; i++) {
       // Find inactive particle
@@ -214,18 +213,18 @@ export class Debris {
 
       particle.body.position.set(
         spawnX + MathUtils.randFloatSpread(0.1),
-        y + MathUtils.randFloat(4, 5),
+        y + MathUtils.randFloat(2, 4),
         spawnZ + MathUtils.randFloatSpread(0.1)
       )
 
       // Shoot outward from spawn position (same direction as spoke angle)
-      const hSpeed = MathUtils.randFloat(3, 5)
+      const hSpeed = MathUtils.randFloat(2, 4)
       const vx = Math.cos(angle) * hSpeed
       const vz = Math.sin(angle) * hSpeed
 
       particle.body.velocity.set(
         vx,
-        MathUtils.randFloat(6, 10),
+        MathUtils.randFloat(4, 8),
         vz
       )
 

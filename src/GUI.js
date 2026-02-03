@@ -54,6 +54,7 @@ export class GUIManager {
     },
     debug: {
       view: 'final',
+      originHelper: false,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
@@ -91,6 +92,9 @@ export class GUIManager {
     })
     gui.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
       if (demo.dotMesh) demo.dotMesh.visible = v
+    })
+    gui.add(allParams.debug, 'originHelper').name('Origin Helper').onChange((v) => {
+      if (demo.axesHelper) demo.axesHelper.visible = v
     })
 
     // DPR dropdown (default 1)

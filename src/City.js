@@ -1,13 +1,16 @@
 import {
-  Box2,
   MathUtils,
   Vector2,
   Object3D,
   BatchedMesh,
   MeshPhysicalNodeMaterial,
   Color,
+  GridHelper,
+  PlaneGeometry,
+  Mesh,
+  MeshBasicNodeMaterial,
 } from 'three/webgpu'
-import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture } from 'three/tsl'
+import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { Debris } from './lib/Debris.js'
@@ -25,12 +28,14 @@ const rotateY = (v, angle) => {
 }
 
 export class City {
+  // City size in lots (7x7 = 49 lots). Change this to resize the city.
+  static CITY_SIZE_LOTS = 7
+
   constructor(scene, params) {
     this.scene = scene
     this.params = params
 
     this.towers = []
-    this.gridZone = new Box2(new Vector2(0, 0), new Vector2(154, 154)) // 11x11 lots at 14 cells each
     this.towerMesh = null
     this.towerMaterial = null
     this.dummy = new Object3D()
@@ -95,26 +100,34 @@ export class City {
 
   initGrid() {
     // Lot layout: 10x10 building cells with 4-cell roads between lots
-    const lotSize = 10
-    const roadWidth = 4
-    const cellSize = lotSize + roadWidth // 14 cells per lot unit
+    this.lotSize = 10
+    this.roadWidth = 4
+    this.cellSize = this.lotSize + this.roadWidth // 14 cells per lot unit
 
-    // Calculate number of lots that fit in the grid
-    const numLotsX = Math.floor(this.gridZone.max.x / cellSize)
-    const numLotsY = Math.floor(this.gridZone.max.y / cellSize)
+    // City dimensions from static constant
+    this.numLotsX = City.CITY_SIZE_LOTS
+    this.numLotsY = City.CITY_SIZE_LOTS
 
     // Store actual grid dimensions for centering
-    this.actualGridWidth = numLotsX * cellSize
-    this.actualGridHeight = numLotsY * cellSize
+    this.actualGridWidth = this.numLotsX * this.cellSize
+    this.actualGridHeight = this.numLotsY * this.cellSize
+
+    // Calculate center lot for positioning
+    this.centerLotX = Math.floor(this.numLotsX / 2)
+    this.centerLotZ = Math.floor(this.numLotsY / 2)
+
+    // Grid offset: position mesh so center of center lot is at origin
+    this.gridOffsetX = -(this.centerLotX * this.cellSize + this.lotSize / 2)
+    this.gridOffsetZ = -(this.centerLotZ * this.cellSize + this.lotSize / 2)
 
     // Iterate over each lot and fill it with buildings
-    for (let lotY = 0; lotY < numLotsY; lotY++) {
-      for (let lotX = 0; lotX < numLotsX; lotX++) {
+    for (let lotY = 0; lotY < this.numLotsY; lotY++) {
+      for (let lotX = 0; lotX < this.numLotsX; lotX++) {
         // Calculate the bounds of this lot (excluding roads)
-        const startX = lotX * cellSize
-        const startY = lotY * cellSize
-        const endX = startX + lotSize
-        const endY = startY + lotSize
+        const startX = lotX * this.cellSize
+        const startY = lotY * this.cellSize
+        const endX = startX + this.lotSize
+        const endY = startY + this.lotSize
 
         // Fill this lot with buildings
         this.fillLot(startX, startY, endX, endY)
@@ -122,6 +135,21 @@ export class City {
     }
 
     this.finalizeGrid()
+  }
+
+  /**
+   * Convert grid coordinates to world coordinates
+   * Grid coords: 0 to actualGridWidth/Height
+   * World coords: centered at origin
+   * @param {number} gridX - X position in grid space
+   * @param {number} gridZ - Z position in grid space (note: grid uses Y, world uses Z)
+   * @returns {{x: number, z: number}} World position
+   */
+  gridToWorld(gridX, gridZ) {
+    return {
+      x: gridX + this.gridOffsetX,
+      z: gridZ + this.gridOffsetZ
+    }
   }
 
   fillLot(startX, startY, endX, endY) {
@@ -256,8 +284,9 @@ export class City {
     this.towerMesh.sortObjects = false
     this.towerMesh.castShadow = true
     this.towerMesh.receiveShadow = true
-    this.towerMesh.position.x = -this.actualGridWidth * 0.5
-    this.towerMesh.position.z = -this.actualGridHeight * 0.5
+    // Center the middle lot at the origin (use pre-calculated offset)
+    this.towerMesh.position.x = this.gridOffsetX
+    this.towerMesh.position.z = this.gridOffsetZ
     this.scene.add(this.towerMesh)
 
     const geomIds = []
@@ -563,9 +592,8 @@ export class City {
         tower = this.instanceToTower.get(touchIntersection.batchId)
       }
       if (tower && tower.visible) {
-        tower.handleClick(this.towerMesh, this.floorHeight, this.maxFloors, this.debris,
-          this.actualGridWidth, this.actualGridHeight, this.towers,
-          () => this.updateTowerMatrices(tower))
+        tower.handleClick(this, this.floorHeight, this.maxFloors, this.debris,
+          this.towers, () => this.updateTowerMatrices(tower))
       }
       return
     }
@@ -575,9 +603,8 @@ export class City {
     const tower = this.pressedTower
     this.pressedTower = null
 
-    tower.handleClick(this.towerMesh, this.floorHeight, this.maxFloors, this.debris,
-      this.actualGridWidth, this.actualGridHeight, this.towers,
-      () => this.updateTowerMatrices(tower))
+    tower.handleClick(this, this.floorHeight, this.maxFloors, this.debris,
+      this.towers, () => this.updateTowerMatrices(tower))
   }
 
   /**
@@ -592,9 +619,8 @@ export class City {
 
     if (!tower || !tower.visible) return
 
-    tower.handleRightClick(this.towerMesh, this.floorHeight, this.debris,
-      this.actualGridWidth, this.actualGridHeight, this.towers,
-      () => this.updateTowerMatrices(tower))
+    tower.handleRightClick(this, this.floorHeight, this.debris,
+      this.towers, () => this.updateTowerMatrices(tower))
   }
 
   /**
@@ -640,5 +666,53 @@ export class City {
     dummy.rotation.y = tower.rotation
     dummy.updateMatrix()
     towerMesh.setMatrixAt(tower.roofInstance, dummy.matrix)
+  }
+
+  /**
+   * Create debug grid helpers aligned with the city
+   */
+  createGrids() {
+    // Fine cell grid - centered at origin (same as lot grid)
+    const cellGrid = new GridHelper(this.actualGridWidth, this.actualGridWidth, 0x888888, 0x888888)
+    cellGrid.material.transparent = true
+    cellGrid.material.opacity = 0.5
+    cellGrid.position.set(0, 0.01, 0)
+    this.scene.add(cellGrid)
+    this.cellGrid = cellGrid
+
+    // Grid intersection dots using procedural plane shader
+    const dotPlaneGeometry = new PlaneGeometry(this.actualGridWidth, this.actualGridHeight)
+    dotPlaneGeometry.rotateX(-Math.PI / 2)
+    const dotMaterial = new MeshBasicNodeMaterial()
+    dotMaterial.transparent = true
+    dotMaterial.alphaTest = 0.5
+    dotMaterial.side = 2 // DoubleSide
+
+    // Procedural dots at grid intersections
+    const cellCoord = uv().mul(this.actualGridWidth)
+    const fractCoord = fract(cellCoord)
+    const toGridX = min(fractCoord.x, float(1).sub(fractCoord.x))
+    const toGridY = min(fractCoord.y, float(1).sub(fractCoord.y))
+    const dist = toGridX.mul(toGridX).add(toGridY.mul(toGridY)).sqrt()
+    const dotRadius = float(0.04)
+    const dotMask = float(1).sub(step(dotRadius, dist))
+
+    const dotColor = vec3(0.267, 0.267, 0.267)
+    dotMaterial.colorNode = dotColor
+    dotMaterial.opacityNode = dotMask
+    dotMaterial.mrtNode = mrt({
+      output: dotColor,
+      normal: vec3(0, 1, 0)
+    })
+
+    this.dotMesh = new Mesh(dotPlaneGeometry, dotMaterial)
+    this.dotMesh.position.set(0, 0.015, 0)
+    this.scene.add(this.dotMesh)
+
+    // Coarse lot grid - centered at origin, lines at lot spacing intervals
+    const lotGrid = new GridHelper(this.actualGridWidth, this.numLotsX, 0x888888, 0x888888)
+    lotGrid.position.set(0, 0.02, 0)
+    this.scene.add(lotGrid)
+    this.lotGrid = lotGrid
   }
 }

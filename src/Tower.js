@@ -443,16 +443,15 @@ export class Tower {
 
   /**
    * Handle click on tower - add a floor with animation and sounds
-   * @param {BatchedMesh} mesh - The batched mesh
+   * @param {City} city - The city instance (for towerMesh and gridToWorld)
    * @param {number} floorHeight - Height of each floor
    * @param {number} maxFloors - Maximum number of floors
    * @param {Debris} debris - Debris system for spawning particles
-   * @param {number} gridWidth - Actual grid width for world position calc
-   * @param {number} gridHeight - Actual grid height for world position calc
    * @param {Tower[]} allTowers - All towers for debris collision
    * @param {Function} onComplete - Called when animation completes
    */
-  handleClick(mesh, floorHeight, maxFloors, debris, gridWidth, gridHeight, allTowers, onComplete) {
+  handleClick(city, floorHeight, maxFloors, debris, allTowers, onComplete) {
+    const mesh = city.towerMesh
     const numFloors = this.getNumFloors(floorHeight)
 
     // Check if we can add another floor
@@ -473,40 +472,36 @@ export class Tower {
       Sounds.play('pop', pitch, 0.15)
 
       // Animate the tower back up with the new floor emerging
-      this._animateNewFloorWithDebris(mesh, floorHeight, numFloors, debris, gridWidth, gridHeight, allTowers, onComplete)
+      this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers, onComplete)
     })
   }
 
   /**
    * Handle right-click on tower - delete all floors
-   * @param {BatchedMesh} mesh - The batched mesh
+   * @param {City} city - The city instance (for towerMesh and gridToWorld)
    * @param {number} floorHeight - Height of each floor
    * @param {Debris} debris - Debris system for spawning particles
-   * @param {number} gridWidth - Actual grid width for world position calc
-   * @param {number} gridHeight - Actual grid height for world position calc
    * @param {Tower[]} allTowers - All towers for debris collision
    * @param {Function} onComplete - Called when animation completes
    */
-  handleRightClick(mesh, floorHeight, debris, gridWidth, gridHeight, allTowers, onComplete) {
+  handleRightClick(city, floorHeight, debris, allTowers, onComplete) {
+    const mesh = city.towerMesh
     const numFloors = this.getNumFloors(floorHeight)
 
     // Only delete if tower has at least 1 floor
     if (numFloors < 1) return
 
-    // Get tower info for debris
+    // Get tower info for debris - convert grid coords to world coords
     const baseColor = this.isLit && this.litColor ? this.litColor : this.baseColor
     const debrisColor = Tower.lightenColor(baseColor)
     const center = this.box.getCenter(new Vector2())
-    const gridOffsetX = -gridWidth * 0.5
-    const gridOffsetZ = -gridHeight * 0.5
-    const worldX = center.x + gridOffsetX
-    const worldZ = center.y + gridOffsetZ
+    const world = city.gridToWorld(center.x, center.y)
     const size = this.box.getSize(new Vector2())
     const radius = Math.max(size.x, size.y) / 2
 
     // Spawn debris immediately
-    debris.setupNearbyCollisions(this, allTowers, floorHeight, gridOffsetX, gridOffsetZ)
-    debris.spawn(worldX, numFloors * floorHeight, worldZ, radius, debrisColor)
+    debris.setupNearbyCollisions(this, allTowers, floorHeight, city)
+    debris.spawn(world.x, numFloors * floorHeight, world.z, radius, debrisColor)
 
     // Animate the deletion
     this.animateDelete(mesh, floorHeight, numFloors, () => {
@@ -518,7 +513,8 @@ export class Tower {
   /**
    * Internal: Animate new floor with debris spawning
    */
-  _animateNewFloorWithDebris(mesh, floorHeight, oldNumFloors, debris, gridWidth, gridHeight, allTowers, onComplete) {
+  _animateNewFloorWithDebris(city, floorHeight, oldNumFloors, debris, allTowers, onComplete) {
+    const mesh = city.towerMesh
     // Use lightened version of tower's base color for new floor and debris
     const baseColor = this.isLit && this.litColor ? this.litColor : this.baseColor
     const newFloorColor = Tower.lightenColor(baseColor)
@@ -526,11 +522,8 @@ export class Tower {
     const center = this.box.getCenter(new Vector2())
     const newFloorY = (oldNumFloors + 1) * floorHeight
 
-    // Grid offset for converting to world coords
-    const gridOffsetX = -gridWidth * 0.5
-    const gridOffsetZ = -gridHeight * 0.5
-    const worldX = center.x + gridOffsetX
-    const worldZ = center.y + gridOffsetZ
+    // Convert grid coords to world coords
+    const world = city.gridToWorld(center.x, center.y)
 
     // Get tower size for debris spawn radius
     const size = this.box.getSize(new Vector2())
@@ -538,8 +531,8 @@ export class Tower {
 
     // Callback to spawn debris when floor reaches max scale
     const onFloorPop = () => {
-      debris.setupNearbyCollisions(this, allTowers, floorHeight, gridOffsetX, gridOffsetZ)
-      debris.spawn(worldX, newFloorY, worldZ, radius, debrisColor)
+      debris.setupNearbyCollisions(this, allTowers, floorHeight, city)
+      debris.spawn(world.x, newFloorY, world.z, radius, debrisColor)
     }
 
     this.animateNewFloor(mesh, floorHeight, oldNumFloors, newFloorColor, onComplete, onFloorPop)

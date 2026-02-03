@@ -1,20 +1,38 @@
 import { Demo } from './Demo.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
+import { Sounds } from './lib/Sounds.js'
 
 const loadingEl = document.getElementById('loading')
+const loaderGif = document.getElementById('loader-gif')
+const startBtn = document.getElementById('start-btn')
 const canvas = document.getElementById('canvas')
+
+let demo = null
 
 async function init() {
   if (!WebGPU.isAvailable()) {
-    loadingEl.textContent = 'WebGPU is not available on your device or browser.'
+    loadingEl.innerHTML = '<p style="color:#fff">WebGPU is not available on your device or browser.</p>'
     return
   }
 
-  const demo = new Demo(canvas)
+  demo = new Demo(canvas)
   await demo.init()
 
-  // Hide loading indicator once first render is done
-  loadingEl.style.display = 'none'
+  // WebGPU ready - hide loader gif, show start button
+  loaderGif.style.display = 'none'
+  startBtn.style.display = 'block'
 }
 
+function start() {
+  // Play intro sound (also unlocks AudioContext on user gesture)
+  Sounds.play('intro')
+
+  // Hide loading overlay
+  loadingEl.style.display = 'none'
+
+  // Fade in scene
+  demo.fadeIn()
+}
+
+startBtn.addEventListener('click', start)
 init()

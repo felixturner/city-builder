@@ -207,8 +207,7 @@ export class Trails {
    * Check if a path intersects any towers (except start/end towers)
    */
   pathIntersectsTowers(path, startTower, endTower) {
-    const gridOffsetX = -this.city.actualGridWidth * 0.5
-    const gridOffsetZ = -this.city.actualGridHeight * 0.5
+    const { gridOffsetX, gridOffsetZ } = this.city
 
     // Check each segment of the path
     for (let i = 0; i < path.length - 1; i++) {
@@ -249,8 +248,7 @@ export class Trails {
    * Ensures the path exits perpendicular from tower edge by at least 1 cell
    */
   findPath(tower1, tower2) {
-    const gridOffsetX = -this.city.actualGridWidth * 0.5
-    const gridOffsetZ = -this.city.actualGridHeight * 0.5
+    const { gridOffsetX, gridOffsetZ } = this.city
 
     // Get tower centers and sizes in grid coords
     const center1 = tower1.box.getCenter(new Vector2())
