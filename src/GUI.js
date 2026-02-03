@@ -1,4 +1,5 @@
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
+import { Sounds } from './lib/Sounds.js'
 
 export class GUIManager {
   constructor(demo) {
@@ -51,6 +52,7 @@ export class GUIManager {
       vignette: true,
       trails: true,
       dots: true,
+      debris: true,
     },
     debug: {
       view: 'final',
@@ -93,6 +95,9 @@ export class GUIManager {
     gui.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
       if (demo.dotMesh) demo.dotMesh.visible = v
     })
+    gui.add(allParams.fx, 'debris').name('Debris').onChange((v) => {
+      if (demo.city.debris) demo.city.debris.enabled = v
+    })
     gui.add(allParams.debug, 'originHelper').name('Origin Helper').onChange((v) => {
       if (demo.axesHelper) demo.axesHelper.visible = v
     })
@@ -109,6 +114,14 @@ export class GUIManager {
       demo.city.regenerate()
       demo.trails.generatePaths(30)
     } }, 'regenCity').name('Regen City')
+    gui.add({ replayBuild: () => {
+      demo.city.recalculateHeights()
+      demo.city.recalculateVisibility()
+      demo.postFX.fadeOpacity.value = 0
+      demo.fadeIn(1000)
+      Sounds.play('intro')
+      demo.city.startIntroAnimation(demo.camera, demo.controls, 4)
+    } }, 'replayBuild').name('Replay Build')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
 
     gui.add({

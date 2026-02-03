@@ -25,7 +25,7 @@ export class Tower {
     this.typeBottom = 0 // Base block geometry type
     this.typeTop = 0    // Top block geometry type
     this.box = new Box2()
-    this.height = 1
+    this.numFloors = 0  // Primary height variable (integer floor count)
     this.rotation = 0
     this.topColorIndex = 0
     this.topColor = Tower.COLORS[this.topColorIndex]
@@ -60,13 +60,6 @@ export class Tower {
   }
 
   /**
-   * Get the number of floors based on height and floor height
-   */
-  getNumFloors(floorHeight) {
-    return Math.max(0, Math.floor(this.height / floorHeight))
-  }
-
-  /**
    * Lighten a color by increasing its HSL lightness
    */
   static lightenColor(color, amount = 0.15) {
@@ -81,13 +74,13 @@ export class Tower {
    * @param {boolean} isHovering - True to lighten colors, false to restore original
    * @param {number} floorHeight - Height of each floor for calculating visible floors
    */
-  animateHoverColor(mesh, isHovering, floorHeight) {
+  animateHoverColor(mesh, isHovering) {
     // Kill any existing hover tween
     if (this.hoverTween) {
       this.hoverTween.kill()
     }
 
-    const numFloors = this.getNumFloors(floorHeight)
+    const numFloors = this.numFloors
     const floorInstances = this.floorInstances
     const roofInstance = this.roofInstance
 
@@ -154,7 +147,7 @@ export class Tower {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
-    const numFloors = Math.max(0, Math.floor(this.height / floorHeight))
+    const numFloors = this.numFloors
 
     // Half-heights for centered geometries
     const floorHalfHeight = floorHeight / 2
@@ -452,7 +445,7 @@ export class Tower {
    */
   handleClick(city, floorHeight, maxFloors, debris, allTowers, onComplete) {
     const mesh = city.towerMesh
-    const numFloors = this.getNumFloors(floorHeight)
+    const numFloors = this.numFloors
 
     // Check if we can add another floor
     if (numFloors >= maxFloors) {
@@ -464,8 +457,8 @@ export class Tower {
 
     const pushAmount = floorHeight * 0.25
     this.animateOffset(mesh, floorHeight, maxFloors, -pushAmount, 0.1, () => {
-      // Set height to exact floor count + 1 (align to floor boundaries)
-      this.height = (numFloors + 1) * floorHeight
+      // Increment floor count
+      this.numFloors = numFloors + 1
 
       // Pitch increases with floor height (0.8 at ground, 2.0 at top)
       const pitch = 0.8 + (numFloors / maxFloors) * 1.2
@@ -486,7 +479,7 @@ export class Tower {
    */
   handleRightClick(city, floorHeight, debris, allTowers, onComplete) {
     const mesh = city.towerMesh
-    const numFloors = this.getNumFloors(floorHeight)
+    const numFloors = this.numFloors
 
     // Only delete if tower has at least 1 floor
     if (numFloors < 1) return
@@ -505,7 +498,7 @@ export class Tower {
 
     // Animate the deletion
     this.animateDelete(mesh, floorHeight, numFloors, () => {
-      this.height = 0 // No floors, just roof
+      this.numFloors = 0 // No floors, just roof
       onComplete?.()
     })
   }

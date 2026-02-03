@@ -5,6 +5,7 @@ import { Howl } from 'howler'
  */
 class SoundsManager {
   constructor() {
+    this.mutedSounds = new Set() // Sounds to mute (by name)
     this.sounds = {
       pop: new Howl({ src: ['assets/sfx/pop.mp3'] }),
       tick: new Howl({ src: ['assets/sfx/tick.mp3'] }),
@@ -42,6 +43,9 @@ class SoundsManager {
    * @param {number} volume - Volume 0-1 (default 1.0)
    */
   play(name, baseRate = 1.0, variation = 0.2, volume = 1.0) {
+    // Skip muted sounds
+    if (this.mutedSounds.has(name)) return
+
     let sound
     if (name === 'stone') {
       // Randomly select one of the stone sounds
@@ -60,6 +64,22 @@ class SoundsManager {
     sound.rate(baseRate - variation / 2 + Math.random() * variation, id)
     sound.volume(volume, id)
     return id
+  }
+
+  /**
+   * Mute specific sounds by name
+   * @param {string[]} names - Array of sound names to mute
+   */
+  mute(names) {
+    names.forEach(name => this.mutedSounds.add(name))
+  }
+
+  /**
+   * Unmute specific sounds by name
+   * @param {string[]} names - Array of sound names to unmute
+   */
+  unmute(names) {
+    names.forEach(name => this.mutedSounds.delete(name))
   }
 }
 

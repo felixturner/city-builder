@@ -1,6 +1,7 @@
 import {
   MathUtils,
   Vector2,
+  Vector3,
   Object3D,
   BatchedMesh,
   MeshPhysicalNodeMaterial,
@@ -10,10 +11,12 @@ import {
   Mesh,
   MeshBasicNodeMaterial,
 } from 'three/webgpu'
+import gsap from 'gsap'
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { Debris } from './lib/Debris.js'
+import { Sounds } from './lib/Sounds.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 
 // Rotate a vec3 around Y axis by angle (in radians)
@@ -364,9 +367,104 @@ export class City {
       const noiseHeight = Math.pow(adjustedNoise, 3) * this.heightNoiseScale
       // Power > 1 skews distribution: most towers short, few tall outliers
       const randHeight = Math.pow(tower.randFactor, this.randHeightPower) * this.randHeightAmount
-      tower.height = (noiseHeight + randHeight) * distFactor
+      const height = (noiseHeight + randHeight) * distFactor
+      // Floor to discrete floor count
+      tower.numFloors = Math.floor(height / this.floorHeight)
     }
     this.updateMatrices()
+  }
+
+  /**
+   * Intro animation: build all towers from ground up, staggered from center outward
+   * @param {Camera} camera - The camera to animate
+   * @param {OrbitControls} controls - OrbitControls instance
+   * @param {number} duration - Total animation duration in seconds
+   */
+  startIntroAnimation(camera, controls, duration = 4) {
+    const gridCenterX = this.actualGridWidth / 2
+    const gridCenterY = this.actualGridHeight / 2
+
+    // Mute build sounds during intro (except pop) and disable debris
+    Sounds.mute(['stone', 'tick', 'clink'])
+    const debrisWasEnabled = this.debris.enabled
+    this.debris.enabled = false
+
+    // 1. Store target floor counts, set all to 0
+    const towerData = this.towers.map(tower => {
+      const targetFloors = tower.numFloors
+      const center = tower.box.getCenter(new Vector2())
+      const dist = Math.hypot(center.x - gridCenterX, center.y - gridCenterY)
+      tower.numFloors = 0
+      return { tower, targetFloors, dist }
+    })
+    this.updateMatrices()
+
+    // 2. Sort by distance (center first)
+    towerData.sort((a, b) => a.dist - b.dist)
+    const maxDist = towerData[towerData.length - 1]?.dist || 1
+
+    // 3. Animate each tower's floors with stagger
+    const staggerDuration = duration * 0.85 // 85% of duration for stagger spread
+    const floorDelay = 0.12 // 120ms between floors of same tower
+
+    let maxDelay = 0
+    towerData.forEach(({ tower, targetFloors, dist }) => {
+      if (targetFloors === 0) return
+
+      const staggerDelay = (dist / maxDist) * staggerDuration
+
+      // Animate each floor sequentially (no debris during intro)
+      const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
+      const newFloorColor = Tower.lightenColor(baseColor)
+      // Volume fades based on distance (0 at 3 lots away)
+      const maxSoundDist = this.cellSize * 3 // 3 lots
+      const volume = Math.max(0, 1 - dist / maxSoundDist) * 0.5
+      for (let f = 0; f < targetFloors; f++) {
+        const delay = staggerDelay + f * floorDelay
+        maxDelay = Math.max(maxDelay, delay)
+        setTimeout(() => {
+          tower.numFloors = f + 1
+          // Play pop sound with pitch based on floor height, volume based on distance
+          const pitch = 0.8 + (f / this.maxFloors) * 1.2
+          if (volume > 0) Sounds.play('pop', pitch, 0.15, volume)
+          tower.animateNewFloor(
+            this.towerMesh,
+            this.floorHeight,
+            f,
+            newFloorColor,
+            () => this.updateTowerMatrices(tower),
+            null // no debris
+          )
+        }, delay * 1000)
+      }
+    })
+
+    // Unmute sounds and restore debris after intro completes
+    setTimeout(() => {
+      Sounds.unmute(['stone', 'tick', 'clink'])
+      this.debris.enabled = debrisWasEnabled
+    }, (maxDelay + 1) * 1000)
+
+    // 4. Camera zoom animation (angle-based distance)
+    const target = controls.target.clone()
+    const direction = camera.position.clone().sub(target).normalize()
+    const endDist = camera.position.distanceTo(target)
+    const startDist = endDist * 3
+
+    // Set initial zoomed-out position
+    camera.position.copy(target).addScaledVector(direction, startDist)
+
+    // Animate distance only
+    const animState = { dist: startDist }
+    gsap.to(animState, {
+      dist: endDist,
+      duration: duration,
+      ease: 'power2.out',
+      onUpdate: () => {
+        camera.position.copy(target).addScaledVector(direction, animState.dist)
+        controls.update()
+      }
+    })
   }
 
   updateMatrices() {
@@ -387,9 +485,7 @@ export class City {
 
       const center = tower.box.getCenter(this.towerCenter)
       const size = tower.box.getSize(this.towerSize)
-
-      // Calculate number of floors based on height
-      const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
+      const numFloors = tower.numFloors
 
       // Half-heights for centered geometries
       const floorHalfHeight = this.floorHeight / 2 // Base geom is 1 unit, scaled to floorHeight
@@ -527,13 +623,13 @@ export class City {
 
     // Unhover previous tower
     if (this.hoveredTower) {
-      this.hoveredTower.animateHoverColor(this.towerMesh, false, this.floorHeight)
+      this.hoveredTower.animateHoverColor(this.towerMesh, false)
     }
 
     // Hover new tower
     this.hoveredTower = tower
     if (tower) {
-      tower.animateHoverColor(this.towerMesh, true, this.floorHeight)
+      tower.animateHoverColor(this.towerMesh, true)
     }
   }
 
@@ -637,7 +733,7 @@ export class City {
     const { dummy, towerMesh } = this
     const center = tower.box.getCenter(this.towerCenter)
     const size = tower.box.getSize(this.towerSize)
-    const numFloors = Math.max(0, Math.floor(tower.height / this.floorHeight))
+    const numFloors = tower.numFloors
 
     // Half-heights for centered geometries
     const floorHalfHeight = this.floorHeight / 2

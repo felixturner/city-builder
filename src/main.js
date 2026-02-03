@@ -31,7 +31,10 @@ function start() {
   loadingEl.style.display = 'none'
 
   // Fade in scene
-  demo.fadeIn()
+  demo.fadeIn(1000)
+
+  // Start intro build animation
+  demo.city.startIntroAnimation(demo.camera, demo.controls, 4)
 }
 
 startBtn.addEventListener('click', start)

@@ -14,6 +14,7 @@ export class Debris {
 
   constructor(scene, materialParams) {
     this.scene = scene
+    this.enabled = true
 
     // Physics world
     this.world = new CANNON.World({
@@ -149,6 +150,8 @@ export class Debris {
    * @param {number} [numParticles] - Optional override for number of particles
    */
   spawn(x, y, z, radius, color, numParticles) {
+    if (!this.enabled) return
+
     // Number of bricks based on tower size, or use override
     const count = numParticles ?? Math.floor(MathUtils.randFloat(radius, radius * 3)) + 2
 

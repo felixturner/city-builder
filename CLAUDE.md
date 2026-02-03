@@ -2,11 +2,14 @@
 
 a city builder toy.
 
-## Instructions
+## Critical Rules (ALWAYS follow)
 
-- Never git revert, commit, or push without asking for explicit permission first.
-- Do not make code changes unless I specifically ask you to.
-- Play audio notification when done with tasks or when asking for permission(use Glass.aiff)
+1. **NEVER** git revert, commit, or push without asking for explicit permission first. No exceptions.
+2. **NEVER** make code changes unless I specifically ask you to. If I ask a question, just answer it.
+3. **ALWAYS** play audio notification (`afplay /System/Library/Sounds/Glass.aiff`) after completing ANY task or before asking ANY question. Every single response.
+
+## Other Instructions
+
 - Do not present guesses as facts. If you don't know something, say so.
 - Don't ask leading questions about next steps
 
