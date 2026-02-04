@@ -26,7 +26,7 @@ export class GUIManager {
     },
     lighting: {
       exposure: 1.7,
-      envIntensity: 0.7,
+      envIntensity: 0.95,
       hdr: 'venice_sunset_1k.hdr',
       dirLight: 2.15,
       hemiLight: 0.25,
@@ -36,13 +36,13 @@ export class GUIManager {
       lightZ: 50,
       showHelper: false,
       hdrRotation: 191,
-      hdrTilt: -2,
+      hdrTilt: -90,
     },
     material: {
       color: '#ffffff',
       roughness: 1,
-      metalness: 0.39,
-      clearcoat: 0,
+      metalness: 0.03,
+      clearcoat: 0.53,
       clearcoatRoughness: 0,
       iridescence: 0.21,
       useBlenderTexture: true,
@@ -70,6 +70,8 @@ export class GUIManager {
       cumulativeWeights: false,
       maxTiles: 150,
       layers: 1,
+      useWFC: true,
+      wfcSeed: 0,
     },
   }
 
@@ -171,6 +173,8 @@ export class GUIManager {
     roadsFolder.add(allParams.roads, 'layers', 1, 5, 1).name('Layers').onChange((v) => {
       demo.city.numLayers = v
     })
+    roadsFolder.add(allParams.roads, 'useWFC').name('Use WFC')
+    roadsFolder.add(allParams.roads, 'wfcSeed', 0, 9999, 1).name('WFC Seed')
     roadsFolder.add(allParams.roads, 'cumulativeWeights').name('Cumulative Weights')
     roadsFolder.add(allParams.roads, 'maxTiles', 50, 300, 10).name('Max Tiles')
 

@@ -10,6 +10,8 @@ import {
 } from 'three/webgpu'
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, texture } from 'three/tsl'
 import { Tile, TileGeometry, TileDefinitions, TileType, rotateExits } from './Tiles.js'
+import { WFCSolver, WFCAdjacencyRules } from './WFC.js'
+import { Demo } from './Demo.js'
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -115,12 +117,19 @@ export class City {
     // Alias for backwards compatibility (ground layer)
     this.zoneGrid = this.zoneGrids[0]
 
-    const maxTiles = this.params?.roads?.maxTiles ?? 150
+    // Use Demo.instance.params for fresh GUI values (this.params may be stale)
+    const params = Demo.instance?.params ?? this.params
+    const maxTiles = params?.roads?.maxTiles ?? 150
+    const useWFC = params?.roads?.useWFC ?? false
 
     // Generate roads for each layer
     for (let layer = 0; layer < this.numLayers; layer++) {
       this.currentLayer = layer
-      this.generateRandomRoads(Math.floor(maxTiles / this.numLayers), layer)
+      if (useWFC) {
+        this.generateRoadsWFC(layer)
+      } else {
+        this.generateRandomRoads(Math.floor(maxTiles / this.numLayers), layer)
+      }
     }
     this.currentLayer = 0
   }
@@ -221,6 +230,58 @@ export class City {
     this.capOpenExits(layer)
 
     console.log(`Generated ${this.tiles.length - startTileCount} road tiles on layer ${layer}`)
+  }
+
+  /**
+   * Generate roads using Wave Function Collapse algorithm
+   * @param {number} layer - Layer to generate roads on (0 = ground)
+   * @param {Object} options - WFC options (seed, weights)
+   */
+  generateRoadsWFC(layer = 0, options = {}) {
+    const size = this.zoneGridSize
+    const startTileCount = this.tiles.length
+
+    // Build adjacency rules (cache for reuse)
+    if (!this.wfcRules) {
+      this.wfcRules = WFCAdjacencyRules.fromTileDefinitions()
+    }
+
+    // Configure tile weights (favor certain types)
+    const weights = {
+      [TileType.FORWARD]: 60,
+      [TileType.TURN_90]: 20,
+      [TileType.T]: 15,
+      [TileType.X]: 5,
+      [TileType.END]: 10,
+      [TileType.ANGLE]: 10,
+      ...options.weights
+    }
+
+    // Get seed from params or options (use Demo.instance for fresh GUI values)
+    const params = Demo.instance?.params ?? this.params
+    const seed = options.seed ?? params?.roads?.wfcSeed ?? null
+
+    // Create and run solver
+    const solver = new WFCSolver(size, size, this.wfcRules, {
+      weights,
+      seed,
+      maxRestarts: options.maxRestarts ?? 10,
+    })
+
+    const result = solver.solve()
+
+    if (!result) {
+      console.warn('WFC failed to generate valid road layout, falling back to random')
+      return this.generateRandomRoads(150, layer)
+    }
+
+    // Place tiles from WFC result
+    const grid = this.zoneGrids[layer]
+    for (const placement of result) {
+      this.placeRoadTile(placement.gridX, placement.gridZ, placement.type, placement.rotation, layer)
+    }
+
+    console.log(`WFC generated ${this.tiles.length - startTileCount} road tiles on layer ${layer} (restarts: ${solver.restartCount})`)
   }
 
   /**
