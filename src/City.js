@@ -1,23 +1,15 @@
 import {
-  MathUtils,
-  Vector2,
-  Vector3,
   Object3D,
   BatchedMesh,
   MeshPhysicalNodeMaterial,
-  Color,
   GridHelper,
   PlaneGeometry,
   Mesh,
   MeshBasicNodeMaterial,
+  MeshStandardMaterial,
 } from 'three/webgpu'
-import gsap from 'gsap'
-import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float } from 'three/tsl'
-import { Tower } from './Tower.js'
-import { BlockGeometry } from './lib/BlockGeometry.js'
-import { Debris } from './lib/Debris.js'
-import { Sounds } from './lib/Sounds.js'
-import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
+import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, texture } from 'three/tsl'
+import { Tile, TileGeometry, TileDefinitions, TileType, rotateExits } from './Tiles.js'
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -30,562 +22,678 @@ const rotateY = (v, angle) => {
   )
 }
 
-export class City {
-  // City size in lots (7x7 = 49 lots). Change this to resize the city.
-  static CITY_SIZE_LOTS = 7
+// Rotate a vec3 around X axis by angle (in radians)
+const rotateX = (v, angle) => {
+  const c = cos(angle)
+  const s = sin(angle)
+  return vec3(
+    v.x,
+    v.y.mul(c).sub(v.z.mul(s)),
+    v.y.mul(s).add(v.z.mul(c))
+  )
+}
 
+export class City {
   constructor(scene, params) {
     this.scene = scene
     this.params = params
 
-    this.towers = []
-    this.towerMesh = null
-    this.towerMaterial = null
+    // Road tile system (zone-based: each zone is 2x2 cells)
+    this.zoneGrids = [] // Array of 2D grids, one per layer [layer][x][z]
+    this.maxLayers = 5 // Max layers for BatchedMesh allocation
+    this.numLayers = 1 // Actual layers to generate (set by GUI)
+    this.zoneGridSize = 15 // 15 zones = 30 cells
+    this.zoneSize = 2 // Each zone is 2x2 cells
+    this.roadMesh = null
+    this.roadMaterial = null
+    this.tiles = []
     this.dummy = new Object3D()
-    this.towerSize = new Vector2(1, 1)
-    this.towerCenter = new Vector2()
 
-    // City height distribution noise - lower frequency for larger "neighborhoods"
-    this.noiseFrequency = params.scene.noiseScale
-    this.cityNoise = new FastSimplexNoise({
-      frequency: this.noiseFrequency,
-      octaves: 3,
-      min: 0,
-      max: 1,
-      persistence: 0.6,
-    })
-    this.heightNoiseScale = params.scene.noiseHeight
-    this.randHeightAmount = params.scene.randHeight
-    this.randHeightPower = params.scene.randHeightPower
-    this.noiseSubtract = params.scene.noiseSubtract
-    this.centerFalloff = params.scene.centerFalloff
-    this.skipChance = params.scene.skipChance
+    // Alias for Demo.js compatibility (raycasting)
+    this.towerMesh = null
 
-    this.actualGridWidth = 0
-    this.actualGridHeight = 0
+    // Environment rotation uniforms
+    this.envRotation = uniform(0)  // Y axis (horizontal spin)
+    this.envRotationX = uniform(0) // X axis (vertical tilt)
 
-    // Hover state
-    this.hoveredTower = null
-    // Accent colors for lit towers, trails, and new floors
-    const baseAccentColors = [
-      new Color('#FC238D'),
-      new Color('#D2E253'),
-      new Color('#1BB3F6'),
-    ]
-    // Transform colors: boost saturation slightly, increase lightness
-    this.accentColors = baseAccentColors.map(c => {
-      const hsl = {}
-      c.getHSL(hsl)
-      return new Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(1, hsl.l + 0.2))
-    })
-    this.instanceToTower = new Map() // Maps instance ID to tower
-
-    // Floor stacking config
-    this.maxFloors = 10
-    this.floorHeight = 2
-
-    // Click state (for drag detection)
-    this.pressedTower = null
-    this.pointerDownPos = new Vector2()
-    this.dragThreshold = 5 // pixels
-
-    // Debris system
-    this.debris = new Debris(scene, params.material)
+    // Grid dimensions for other systems (in cells, not zones)
+    this.actualGridWidth = 30
+    this.actualGridHeight = 30
   }
 
   async init() {
-    await BlockGeometry.init()
-    this.initGrid()
-    await this.initTowers()
-    this.updateMatrices()
-    this.recalculateVisibility()
-  }
+    await TileGeometry.init()
+    this.createFloor()
+    await this.initRoads()
+    this.initRoadGrid()
+    this.updateRoadMatrices()
 
-  initGrid() {
-    // Lot layout: 10x10 building cells with 4-cell roads between lots
-    this.lotSize = 10
-    this.roadWidth = 4
-    this.cellSize = this.lotSize + this.roadWidth // 14 cells per lot unit
-
-    // City dimensions from static constant
-    this.numLotsX = City.CITY_SIZE_LOTS
-    this.numLotsY = City.CITY_SIZE_LOTS
-
-    // Store actual grid dimensions for centering
-    this.actualGridWidth = this.numLotsX * this.cellSize
-    this.actualGridHeight = this.numLotsY * this.cellSize
-
-    // Calculate center lot for positioning
-    this.centerLotX = Math.floor(this.numLotsX / 2)
-    this.centerLotZ = Math.floor(this.numLotsY / 2)
-
-    // Grid offset: position mesh so center of center lot is at origin
-    this.gridOffsetX = -(this.centerLotX * this.cellSize + this.lotSize / 2)
-    this.gridOffsetZ = -(this.centerLotZ * this.cellSize + this.lotSize / 2)
-
-    // Iterate over each lot and fill it with buildings
-    for (let lotY = 0; lotY < this.numLotsY; lotY++) {
-      for (let lotX = 0; lotX < this.numLotsX; lotX++) {
-        // Calculate the bounds of this lot (excluding roads)
-        const startX = lotX * this.cellSize
-        const startY = lotY * this.cellSize
-        const endX = startX + this.lotSize
-        const endY = startY + this.lotSize
-
-        // Fill this lot with buildings
-        this.fillLot(startX, startY, endX, endY)
-      }
-    }
-
-    this.finalizeGrid()
+    // Set towerMesh alias for raycasting compatibility
+    this.towerMesh = this.roadMesh
   }
 
   /**
-   * Convert grid coordinates to world coordinates
-   * Grid coords: 0 to actualGridWidth/Height
-   * World coords: centered at origin
-   * @param {number} gridX - X position in grid space
-   * @param {number} gridZ - Z position in grid space (note: grid uses Y, world uses Z)
-   * @returns {{x: number, z: number}} World position
+   * Create a floor plane under the grid
    */
-  gridToWorld(gridX, gridZ) {
-    return {
-      x: gridX + this.gridOffsetX,
-      z: gridZ + this.gridOffsetZ
-    }
+  createFloor() {
+    const floorSize = this.zoneGridSize * this.zoneSize + 20
+    const floorGeometry = new PlaneGeometry(floorSize, floorSize)
+    floorGeometry.rotateX(-Math.PI / 2)
+
+    const floorMaterial = new MeshStandardMaterial({
+      color: 0x333333,
+      roughness: 0.9,
+      metalness: 0.0
+    })
+
+    this.floor = new Mesh(floorGeometry, floorMaterial)
+    this.floor.position.y = -0.01 // Slightly below tiles
+    this.floor.receiveShadow = true
+    this.scene.add(this.floor)
   }
 
-  fillLot(startX, startY, endX, endY) {
-    const width = endX - startX
-    const height = endY - startY
+  /**
+   * Initialize the zone grids with random road generation for each layer
+   */
+  initRoadGrid() {
+    const size = this.zoneGridSize
+    this.tiles = []
 
-    // Occupied grid for this city block
-    const occupied = Array.from({ length: width }, () => Array(height).fill(-1))
+    // numLayers is set directly by GUI, fallback to default if not set
+    if (this.numLayers < 1) this.numLayers = 3
 
-    const maxBlockSize = new Vector2(5, 5)
-    maxBlockSize.x = MathUtils.randInt(2, 5)
-    maxBlockSize.y = maxBlockSize.x
+    // Create grid for each layer
+    this.zoneGrids = []
+    this.layerOffsets = [] // Random XZ offsets per layer
+    for (let layer = 0; layer < this.numLayers; layer++) {
+      this.zoneGrids[layer] = Array.from({ length: size }, () => Array(size).fill(null))
+      // Random offset in range 3-8 cells, positive or negative
+      const randOffset = () => (3 + Math.random() * 5) * (Math.random() < 0.5 ? -1 : 1)
+      this.layerOffsets[layer] = layer === 0 ? { x: 0, z: 0 } : { x: randOffset(), z: randOffset() }
+    }
 
-    const squareChance = 0.5
-    let px = 0
-    let py = 0
+    // Alias for backwards compatibility (ground layer)
+    this.zoneGrid = this.zoneGrids[0]
 
-    while (py < height) {
-      while (px < width) {
-        // Find available width
-        let maxW = 0
-        const end = Math.min(width, px + maxBlockSize.x)
-        for (let i = px; i < end; i++) {
-          if (occupied[i][py] != -1) break
-          maxW++
-        }
-        // Skip if not enough room for minimum 2x2 tower
-        if (maxW < 2) {
-          px++
+    const maxTiles = this.params?.roads?.maxTiles ?? 150
+
+    // Generate roads for each layer
+    for (let layer = 0; layer < this.numLayers; layer++) {
+      this.currentLayer = layer
+      this.generateRandomRoads(Math.floor(maxTiles / this.numLayers), layer)
+    }
+    this.currentLayer = 0
+  }
+
+  // Direction offsets for N/E/S/W
+  static DIR_OFFSET = {
+    N: { dx: 0, dz: -1 },
+    E: { dx: 1, dz: 0 },
+    S: { dx: 0, dz: 1 },
+    W: { dx: -1, dz: 0 },
+  }
+  static OPPOSITE_DIR = { N: 'S', E: 'W', S: 'N', W: 'E' }
+
+  /**
+   * Generate connected roads by extending from open exits
+   * @param {number} maxTiles - Maximum number of tiles to place
+   * @param {number} layer - Layer to generate roads on (0 = ground)
+   */
+  generateRandomRoads(maxTiles, layer = 0) {
+    const center = Math.floor(this.zoneGridSize / 2)
+    const grid = this.zoneGrids[layer]
+    const startTileCount = this.tiles.length
+
+    // Track open exits: { zoneX, zoneZ, direction, straightStreak }
+    this.openExits = []
+    // Track exits that are blocked (can't extend, need END cap)
+    const blockedExits = []
+
+    // 1. Place starting tile (X intersection at center)
+    this.placeRoadTile(center, center, TileType.X, 0, layer)
+
+    // 2. Add its 4 open exits
+    this.addOpenExits(center, center, TileType.X, 0, null)
+
+    // 3. Process open exits until done
+    while ((this.tiles.length - startTileCount) < maxTiles && this.openExits.length > 0) {
+      // Find a random exit that can extend (target is empty)
+      let foundValid = false
+      const shuffled = [...this.openExits].sort(() => Math.random() - 0.5)
+
+      for (const exit of shuffled) {
+        const offset = City.DIR_OFFSET[exit.direction]
+        const targetX = exit.zoneX + offset.dx
+        const targetZ = exit.zoneZ + offset.dz
+
+        // Check if out of bounds - try to downgrade source tile to remove this exit
+        if (!this.isValidZone(targetX, targetZ)) {
+          this.openExits = this.openExits.filter(e => e !== exit)
+          // Try to replace source tile with one that doesn't have this exit
+          this.tryDowngradeTile(exit.zoneX, exit.zoneZ, exit.direction, layer)
           continue
         }
 
-        const tower = new Tower()
-        const isSquare = MathUtils.randFloat(0, 1) < squareChance
-        tower.typeTop = isSquare ? MathUtils.randInt(0, 5) : 0
-        tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
-        tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
-
-        const sx = MathUtils.randInt(2, maxW)
-        const sy = isSquare ? sx : MathUtils.randInt(2, Math.min(maxBlockSize.y, height - py))
-
-        // Skip towers that extend outside the lot bounds (creates empty areas)
-        if (px + sx > width || py + sy > height) {
-          px++
+        // Check if occupied - try to upgrade the existing tile to create a loop
+        if (grid[targetX][targetZ] !== null) {
+          const upgraded = this.tryUpgradeTile(targetX, targetZ, exit.direction, layer)
+          if (upgraded) {
+            // Successfully created a loop! Remove this exit (now connected)
+            this.openExits = this.openExits.filter(e => e !== exit)
+            foundValid = true
+            break
+          }
+          // Can't upgrade - move to blocked
+          this.openExits = this.openExits.filter(e => e !== exit)
+          blockedExits.push(exit)
           continue
         }
 
-        // Convert local coords to global grid coords
-        const globalX = startX + px
-        const globalY = startY + py
-        tower.box.min.set(globalX, globalY)
-        tower.box.max.set(globalX + sx, globalY + sy)
+        // Found valid exit - extend it
+        this.openExits = this.openExits.filter(e => e !== exit)
 
-        // Store noise and random values
-        const centerX = globalX + sx / 2
-        const centerY = globalY + sy / 2
-        tower.cityNoiseVal = this.cityNoise.scaled2D(centerX, centerY)
-        tower.randFactor = MathUtils.randFloat(0, 1)
-        tower.skipFactor = MathUtils.randFloat(0, 1) // For realtime visibility
-        tower.rotation = isSquare
-          ? (MathUtils.randInt(0, 4) * Math.PI) / 2
-          : MathUtils.randInt(0, 2) * Math.PI
-        tower.colorIndex = MathUtils.randInt(0, 2)
+        // Choose what tile to place (weighted random, validated)
+        const straightStreak = exit.straightStreak || 0
+        const tileChoice = this.chooseTileForExit(exit.direction, targetX, targetZ, straightStreak, layer)
 
-        this.towers.push(tower)
+        // Place the tile
+        this.placeRoadTile(targetX, targetZ, tileChoice.type, tileChoice.rotation, layer)
 
-        // Mark cells as occupied (local coords)
-        const localEndX = Math.min(width, px + sx)
-        const localEndY = Math.min(height, py + sy)
-        for (let i = px; i < localEndX; i++) {
-          for (let j = py; j < localEndY; j++) {
-            occupied[i][j] = tower.id
+        // Track streak: increment if FORWARD, reset otherwise
+        const newStreak = (tileChoice.type === TileType.FORWARD) ? straightStreak + 1 : 0
+
+        // Add new open exits from this tile (excluding the entry direction)
+        const entryDir = City.OPPOSITE_DIR[exit.direction]
+        this.addOpenExits(targetX, targetZ, tileChoice.type, tileChoice.rotation, entryDir, newStreak)
+
+        foundValid = true
+        break
+      }
+
+      // If no valid exits found, we're stuck
+      if (!foundValid) break
+    }
+
+    // 4. Cap remaining open exits with END tiles
+    // Combine remaining open exits with blocked ones
+    const allUncapped = [...this.openExits, ...blockedExits]
+    this.openExits = allUncapped
+    this.capOpenExits(layer)
+
+    console.log(`Generated ${this.tiles.length - startTileCount} road tiles on layer ${layer}`)
+  }
+
+  /**
+   * Check if zone coordinates are valid
+   */
+  isValidZone(zoneX, zoneZ) {
+    return zoneX >= 0 && zoneX < this.zoneGridSize &&
+           zoneZ >= 0 && zoneZ < this.zoneGridSize
+  }
+
+  /**
+   * Try to upgrade an existing tile to add a new exit (creates loops)
+   * @param {number} zoneX - Zone X of existing tile
+   * @param {number} zoneZ - Zone Z of existing tile
+   * @param {string} incomingDir - Direction the new road is coming FROM
+   * @param {number} layer - Layer index
+   * @returns {boolean} True if upgrade succeeded
+   */
+  tryUpgradeTile(zoneX, zoneZ, incomingDir, layer = 0) {
+    const grid = this.zoneGrids[layer]
+    const existingTile = grid[zoneX][zoneZ]
+    if (!existingTile) return false
+
+    // The new exit we need to add (opposite of incoming direction)
+    const newExitDir = City.OPPOSITE_DIR[incomingDir]
+
+    // Get current exits of the existing tile
+    const currentExits = rotateExits(TileDefinitions[existingTile.type].exits, existingTile.rotation)
+
+    // If tile already has this exit, no upgrade needed (already connected)
+    if (currentExits[newExitDir]) return true
+
+    // Build required exits: current exits + new exit
+    const requiredExits = { ...currentExits }
+    requiredExits[newExitDir] = true
+
+    // Count required exits
+    const requiredCount = Object.values(requiredExits).filter(v => v).length
+
+    // Find a tile type that has exactly these exits (or more)
+    // Prefer tiles with fewer extra exits
+    const upgradeCandidates = []
+
+    for (const [typeKey, def] of Object.entries(TileDefinitions)) {
+      const type = parseInt(typeKey)
+      if (type === TileType.END) continue // END can't be an upgrade target
+
+      // Try all 4 rotations
+      for (let rot = 0; rot < 4; rot++) {
+        const exits = rotateExits(def.exits, rot)
+
+        // Check if this tile has all required exits
+        let hasAllRequired = true
+        for (const dir of ['N', 'E', 'S', 'W']) {
+          if (requiredExits[dir] && !exits[dir]) {
+            hasAllRequired = false
+            break
           }
         }
-        px += sx
-      }
-      py++
-      px = 0
 
-      // Randomly vary max block size within city block
-      if (MathUtils.randFloat(0, 1) > 0.8) {
-        maxBlockSize.x = MathUtils.randFloat(0, 1) > 0.5 ? 2 : 5
-        maxBlockSize.y = MathUtils.randFloat(0, 1) > 0.5 ? 2 : 5
+        if (hasAllRequired) {
+          // Count total exits
+          const totalExits = Object.values(exits).filter(v => v).length
+          upgradeCandidates.push({ type, rotation: rot, extraExits: totalExits - requiredCount })
+        }
+      }
+    }
+
+    if (upgradeCandidates.length === 0) return false
+
+    // Sort by fewest extra exits (prefer minimal upgrade)
+    upgradeCandidates.sort((a, b) => a.extraExits - b.extraExits)
+    const upgrade = upgradeCandidates[0]
+
+    // Replace the tile
+    this.replaceTile(zoneX, zoneZ, upgrade.type, upgrade.rotation, layer)
+
+    return true
+  }
+
+  /**
+   * Try to downgrade a tile to remove an exit (for edge-of-map cases)
+   * @param {number} zoneX - Zone X of tile to downgrade
+   * @param {number} zoneZ - Zone Z of tile to downgrade
+   * @param {string} exitToRemove - Direction of exit to remove
+   * @param {number} layer - Layer index
+   * @returns {boolean} True if downgrade succeeded
+   */
+  tryDowngradeTile(zoneX, zoneZ, exitToRemove, layer = 0) {
+    const grid = this.zoneGrids[layer]
+    const existingTile = grid[zoneX][zoneZ]
+    if (!existingTile) return false
+
+    // Get current exits
+    const currentExits = rotateExits(TileDefinitions[existingTile.type].exits, existingTile.rotation)
+
+    // If tile doesn't have this exit, nothing to do
+    if (!currentExits[exitToRemove]) return true
+
+    // Find required exits: exits that connect to existing neighbors (must keep)
+    const requiredExits = { N: false, E: false, S: false, W: false }
+    for (const dir of ['N', 'E', 'S', 'W']) {
+      if (!currentExits[dir]) continue
+      if (dir === exitToRemove) continue // This is the one we want to remove
+
+      const offset = City.DIR_OFFSET[dir]
+      const nx = zoneX + offset.dx
+      const nz = zoneZ + offset.dz
+
+      // Check if neighbor exists and connects back
+      if (this.isValidZone(nx, nz)) {
+        const neighbor = grid[nx][nz]
+        if (neighbor) {
+          const neighborExits = rotateExits(TileDefinitions[neighbor.type].exits, neighbor.rotation)
+          const oppositeDir = City.OPPOSITE_DIR[dir]
+          if (neighborExits[oppositeDir]) {
+            // Neighbor connects to us - must keep this exit
+            requiredExits[dir] = true
+          }
+        }
+      }
+    }
+
+    // Find a tile that has all required exits but NOT the exit to remove
+    const downgradeCandidates = []
+
+    for (const [typeKey, def] of Object.entries(TileDefinitions)) {
+      const type = parseInt(typeKey)
+
+      for (let rot = 0; rot < 4; rot++) {
+        const exits = rotateExits(def.exits, rot)
+
+        // Must NOT have the exit we want to remove
+        if (exits[exitToRemove]) continue
+
+        // Must have all required exits
+        let hasAllRequired = true
+        for (const dir of ['N', 'E', 'S', 'W']) {
+          if (requiredExits[dir] && !exits[dir]) {
+            hasAllRequired = false
+            break
+          }
+        }
+
+        if (hasAllRequired) {
+          // Count extra exits (prefer fewer)
+          const requiredCount = Object.values(requiredExits).filter(v => v).length
+          const totalExits = Object.values(exits).filter(v => v).length
+          downgradeCandidates.push({ type, rotation: rot, extraExits: totalExits - requiredCount })
+        }
+      }
+    }
+
+    if (downgradeCandidates.length === 0) return false
+
+    // Sort by fewest extra exits
+    downgradeCandidates.sort((a, b) => a.extraExits - b.extraExits)
+    const downgrade = downgradeCandidates[0]
+
+    // Replace the tile
+    this.replaceTile(zoneX, zoneZ, downgrade.type, downgrade.rotation, layer)
+
+    return true
+  }
+
+  /**
+   * Replace an existing tile with a new type/rotation
+   */
+  replaceTile(zoneX, zoneZ, newType, newRotation, layer = 0) {
+    const grid = this.zoneGrids[layer]
+    const existingTile = grid[zoneX][zoneZ]
+    if (!existingTile) return
+
+    // Remove old instance from mesh
+    if (this.roadMesh && existingTile.instanceId !== null) {
+      this.roadMesh.deleteInstance(existingTile.instanceId)
+    }
+
+    // Remove from tiles array
+    this.tiles = this.tiles.filter(t => t !== existingTile)
+
+    // Place new tile
+    this.placeRoadTile(zoneX, zoneZ, newType, newRotation, layer)
+  }
+
+  /**
+   * Place a road tile directly (no validation, used during generation)
+   */
+  placeRoadTile(zoneX, zoneZ, type, rotation, layer = 0) {
+    const grid = this.zoneGrids[layer]
+    const tile = new Tile(zoneX, zoneZ, type, rotation, layer)
+    grid[zoneX][zoneZ] = tile
+    this.tiles.push(tile)
+
+    // Add instance to BatchedMesh if available
+    if (this.roadMesh && type < TileGeometry.geoms.length && TileGeometry.geoms[type]) {
+      tile.instanceId = this.roadMesh.addInstance(type)
+      this.roadMesh.setColorAt(tile.instanceId, tile.color)
+    }
+
+    return tile
+  }
+
+  /**
+   * Add open exits from a placed tile to the queue
+   * @param {string|null} excludeDir - Direction to exclude (entry point)
+   * @param {number} straightStreak - How many straights in a row (for weight adjustment)
+   */
+  addOpenExits(zoneX, zoneZ, type, rotation, excludeDir, straightStreak = 0) {
+    const exits = rotateExits(TileDefinitions[type].exits, rotation)
+
+    for (const dir of ['N', 'E', 'S', 'W']) {
+      if (exits[dir] && dir !== excludeDir) {
+        this.openExits.push({ zoneX, zoneZ, direction: dir, straightStreak })
       }
     }
   }
 
-  finalizeGrid() {
-    console.log('Tower count:', this.towers.length, 'instances:', this.towers.length * 2)
-    this.recalculateHeights()
+  /**
+   * Check if a tile placement would create valid exits
+   * All new exits must either point to empty zones OR connect to matching neighbor exits
+   */
+  validateTileExits(type, zoneX, zoneZ, rotation, entryDir, layer = 0) {
+    const grid = this.zoneGrids[layer]
+    const exits = rotateExits(TileDefinitions[type].exits, rotation)
+
+    for (const dir of ['N', 'E', 'S', 'W']) {
+      if (!exits[dir]) continue // No exit in this direction
+      if (dir === entryDir) continue // Entry direction is fine (connects back)
+
+      const offset = City.DIR_OFFSET[dir]
+      const nx = zoneX + offset.dx
+      const nz = zoneZ + offset.dz
+
+      // Out of bounds = blocked (will need END later, but OK for now)
+      if (!this.isValidZone(nx, nz)) continue
+
+      const neighbor = grid[nx][nz]
+      if (neighbor === null) continue // Empty = can extend later, OK
+
+      // Neighbor exists - check if it has a matching exit pointing back
+      const neighborExits = rotateExits(TileDefinitions[neighbor.type].exits, neighbor.rotation)
+      const oppositeDir = City.OPPOSITE_DIR[dir]
+      if (!neighborExits[oppositeDir]) {
+        // Neighbor doesn't have matching exit - this would create a visual clash
+        return false
+      }
+    }
+    return true
   }
 
-  async initTowers() {
-    // Material values set by applyParams
+  /**
+   * Choose tile type and rotation for extending from an open exit
+   * Validates that the choice won't create dead-end clashes
+   * @param {string} incomingDir - Direction the road is heading (N/E/S/W)
+   * @param {number} targetX - Target zone X
+   * @param {number} targetZ - Target zone Z
+   * @param {number} straightStreak - How many straights in a row (increases turn chance)
+   * @param {number} layer - Layer index
+   */
+  chooseTileForExit(incomingDir, targetX, targetZ, straightStreak = 0, layer = 0) {
+    const entryDir = City.OPPOSITE_DIR[incomingDir]
+
+    // Adjust weights based on straight streak (if cumulative weights enabled)
+    const useCumulative = this.params?.roads?.cumulativeWeights ?? true
+    const streakPenalty = useCumulative ? straightStreak * 15 : 0
+    const streakBonus = useCumulative ? straightStreak * 5 : 0
+
+    const forwardWeight = Math.max(10, 60 - streakPenalty)
+    const turnWeight = 15 + streakBonus
+
+    // Build list of possible tiles with weights
+    const candidates = [
+      { type: TileType.FORWARD, rotation: this.getRotationForForward(entryDir), weight: forwardWeight },
+      { type: TileType.TURN_90, rotation: this.getRotationForTurn(entryDir, true), weight: turnWeight },
+      { type: TileType.TURN_90, rotation: this.getRotationForTurn(entryDir, false), weight: turnWeight },
+      { type: TileType.T, rotation: this.getRotationForT(entryDir), weight: 22 },
+    ]
+
+    // Filter to only valid candidates
+    const valid = candidates.filter(c =>
+      this.validateTileExits(c.type, targetX, targetZ, c.rotation, entryDir, layer)
+    )
+
+    if (valid.length === 0) {
+      // No valid options - must use END
+      return { type: TileType.END, rotation: this.getRotationForEnd(entryDir) }
+    }
+
+    // Weighted random selection from valid options
+    const totalWeight = valid.reduce((sum, c) => sum + c.weight, 0)
+    let roll = Math.random() * totalWeight
+    for (const c of valid) {
+      roll -= c.weight
+      if (roll <= 0) return { type: c.type, rotation: c.rotation }
+    }
+    return valid[valid.length - 1]
+  }
+
+  /**
+   * Get rotation for FORWARD tile entering from entryDir
+   * FORWARD has exits N and S at rotation 0
+   */
+  getRotationForForward(entryDir) {
+    const rotations = { S: 0, W: 1, N: 2, E: 3 }
+    return rotations[entryDir]
+  }
+
+  /**
+   * Get rotation for ANGLE/TURN_90 tile entering from entryDir
+   * ANGLE/TURN_90 has exits S and E at rotation 0
+   * After rotation: 0=S,E  1=N,E  2=N,W  3=S,W
+   */
+  getRotationForTurn(entryDir, turnLeft) {
+    const map = {
+      'S-left': 3,   // Enter S, exit W (rot 3: S,W)
+      'S-right': 0,  // Enter S, exit E (rot 0: S,E)
+      'W-left': 2,   // Enter W, exit N (rot 2: N,W)
+      'W-right': 3,  // Enter W, exit S (rot 3: S,W)
+      'N-left': 1,   // Enter N, exit E (rot 1: N,E)
+      'N-right': 2,  // Enter N, exit W (rot 2: N,W)
+      'E-left': 0,   // Enter E, exit S (rot 0: S,E)
+      'E-right': 1,  // Enter E, exit N (rot 1: N,E)
+    }
+    return map[`${entryDir}-${turnLeft ? 'left' : 'right'}`]
+  }
+
+  /**
+   * Get rotation for T tile entering from entryDir
+   * T has exits E, S, W at rotation 0 (NOT N)
+   * After rotation: 0=E,S,W  1=S,W,N  2=W,N,E  3=N,E,S
+   */
+  getRotationForT(entryDir) {
+    const rotations = { S: 1, W: 2, N: 3, E: 0 }
+    return rotations[entryDir]
+  }
+
+  /**
+   * Get rotation for END tile entering from entryDir
+   * END has exit S at rotation 0 (cap at N)
+   * After rotation: 0=S  1=E  2=N  3=W
+   */
+  getRotationForEnd(entryDir) {
+    const rotations = { S: 0, E: 1, N: 2, W: 3 }
+    return rotations[entryDir]
+  }
+
+  /**
+   * Cap all remaining open exits with END tiles
+   */
+  capOpenExits(layer = 0) {
+    const grid = this.zoneGrids[layer]
+    for (const exit of this.openExits) {
+      const offset = City.DIR_OFFSET[exit.direction]
+      const targetX = exit.zoneX + offset.dx
+      const targetZ = exit.zoneZ + offset.dz
+
+      // Skip if out of bounds or occupied
+      if (!this.isValidZone(targetX, targetZ)) continue
+      if (grid[targetX][targetZ] !== null) continue
+
+      // Place END tile
+      const entryDir = City.OPPOSITE_DIR[exit.direction]
+      const rotation = this.getRotationForEnd(entryDir)
+      this.placeRoadTile(targetX, targetZ, TileType.END, rotation, layer)
+    }
+    this.openExits = []
+  }
+
+  /**
+   * Initialize road tile BatchedMesh
+   */
+  async initRoads() {
+    if (TileGeometry.geoms.length === 0) {
+      console.warn('TileGeometry not loaded, skipping road init')
+      return
+    }
+
+    // Material for roads - grey material
     const mat = new MeshPhysicalNodeMaterial()
-    this.towerMaterial = mat
+    mat.color.setHex(0x888888)
+    mat.roughness = 0.8
+    mat.metalness = 0.1
+    this.roadMaterial = mat
+    this.towerMaterial = mat // Alias for GUI compatibility
 
-    // Environment rotation uniform (radians)
-    this.envRotation = uniform(0)
-
-    // Custom environment node with rotation support
-    // We'll set this up after the scene environment is loaded
+    // Setup environment rotation for material
     this.setupEnvRotation()
 
-    const geoms = []
-    for (let i = 0; i < BlockGeometry.geoms.length; i++) {
-      geoms.push(BlockGeometry.geoms[i])
-    }
-
-    const vCounts = []
-    const iCounts = []
-    for (let i = 0; i < geoms.length; i++) {
-      const g = geoms[i]
-      vCounts.push(g.attributes.position.count)
-      iCounts.push(g.index.count)
-    }
-
-    // Calculate total geometry needed for all towers with max floors
+    // Calculate geometry requirements
+    const geoms = TileGeometry.geoms
     let totalV = 0
     let totalI = 0
-    for (let i = 0; i < this.towers.length; i++) {
-      const tower = this.towers[i]
-      // maxFloors base instances + 1 roof instance per tower
-      totalV += vCounts[tower.typeBottom] * this.maxFloors
-      totalV += vCounts[tower.typeTop]
-      totalI += iCounts[tower.typeBottom] * this.maxFloors
-      totalI += iCounts[tower.typeTop]
+    for (const g of geoms) {
+      if (!g) continue
+      totalV += g.attributes.position.count
+      totalI += g.index ? g.index.count : 0
     }
 
-    const maxInstances = this.towers.length * (this.maxFloors + 1) + 10 // +10 for debug instances
-    this.towerMesh = new BatchedMesh(maxInstances, totalV, totalI, mat)
-    this.towerMesh.sortObjects = false
-    this.towerMesh.castShadow = true
-    this.towerMesh.receiveShadow = true
-    // Center the middle lot at the origin (use pre-calculated offset)
-    this.towerMesh.position.x = this.gridOffsetX
-    this.towerMesh.position.z = this.gridOffsetZ
-    this.scene.add(this.towerMesh)
+    // Max instances = zone grid size squared * max layers (pre-allocate for GUI changes)
+    const maxInstances = this.zoneGridSize * this.zoneGridSize * this.maxLayers
 
+    // Create BatchedMesh with enough capacity
+    this.roadMesh = new BatchedMesh(maxInstances, totalV * 2, totalI * 2, mat)
+    this.roadMesh.sortObjects = false
+    this.roadMesh.receiveShadow = true
+    this.roadMesh.castShadow = true
+
+    // Position road mesh centered (offset so grid center is at origin)
+    // Total grid size in cells = zoneGridSize * zoneSize
+    const totalCells = this.zoneGridSize * this.zoneSize
+    const roadGridOffset = -totalCells / 2
+    this.roadMesh.position.x = roadGridOffset
+    this.roadMesh.position.z = roadGridOffset
+    this.scene.add(this.roadMesh)
+
+    // Add geometries to BatchedMesh
     const geomIds = []
-    for (let i = 0; i < geoms.length; i++) {
-      geomIds.push(this.towerMesh.addGeometry(geoms[i]))
-    }
-
-    // Create instances for each tower: maxFloors base + 1 roof
-    for (let i = 0; i < this.towers.length; i++) {
-      const tower = this.towers[i]
-      tower.floorInstances = []
-
-      // Create floor instances (base geometry)
-      for (let f = 0; f < this.maxFloors; f++) {
-        const idx = this.towerMesh.addInstance(geomIds[tower.typeBottom])
-        this.towerMesh.setColorAt(idx, tower.baseColor)
-        this.towerMesh.setVisibleAt(idx, false)
-        tower.floorInstances.push(idx)
-        this.instanceToTower.set(idx, tower)
-      }
-
-      // Create roof instance (top geometry)
-      tower.roofInstance = this.towerMesh.addInstance(geomIds[tower.typeTop])
-      this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
-      this.towerMesh.setVisibleAt(tower.roofInstance, false)
-      this.instanceToTower.set(tower.roofInstance, tower)
-    }
-
-    console.log('Tower count:', this.towers.length, 'Max instances:', maxInstances)
-
-    // Light up all plus/cross towers with hover colors
-    this.applyLitTowers()
-  }
-
-  /**
-   * Light up all plus/cross shaped towers (typeTop === 5) with hover colors
-   */
-  applyLitTowers() {
-    // Cross_Top is index 5 in BlockGeometry.geoms
-    const CROSS_TYPE = 5
-    for (const tower of this.towers) {
-      tower.isLit = tower.typeTop === CROSS_TYPE
-      if (tower.isLit) {
-        const accentColor = this.accentColors[tower.colorIndex]
-        // Store the lit color on the tower for hover restore
-        tower.litColor = accentColor.clone()
-        // Apply accent color to all floor instances
-        for (const idx of tower.floorInstances) {
-          this.towerMesh.setColorAt(idx, accentColor)
-        }
-        // Apply to roof too
-        this.towerMesh.setColorAt(tower.roofInstance, accentColor)
+    for (const g of geoms) {
+      if (g) {
+        geomIds.push(this.roadMesh.addGeometry(g))
       } else {
-        tower.litColor = null
+        geomIds.push(-1)
       }
     }
-  }
 
-  recalculateHeights() {
-    const gridCenterX = this.actualGridWidth / 2
-    const gridCenterY = this.actualGridHeight / 2
-
-    for (let i = 0; i < this.towers.length; i++) {
-      const tower = this.towers[i]
-      const center = tower.box.getCenter(this.towerCenter)
-
-      // Distance from center falloff using max axis distance (0 at center, 1 at any edge)
-      const dx = Math.abs(center.x - gridCenterX)
-      const dy = Math.abs(center.y - gridCenterY)
-      const normalizedDist = Math.max(dx / gridCenterX, dy / gridCenterY)
-      const distFactor = 1 - Math.pow(normalizedDist, 2) * this.centerFalloff
-
-      // Subtract from noise, clamp to 0, then cube for contrast
-      const adjustedNoise = Math.max(0, tower.cityNoiseVal - this.noiseSubtract)
-      const noiseHeight = Math.pow(adjustedNoise, 3) * this.heightNoiseScale
-      // Power > 1 skews distribution: most towers short, few tall outliers
-      const randHeight = Math.pow(tower.randFactor, this.randHeightPower) * this.randHeightAmount
-      const height = (noiseHeight + randHeight) * distFactor
-      // Floor to discrete floor count
-      tower.numFloors = Math.floor(height / this.floorHeight)
+    // Create instances for each tile
+    for (const tile of this.tiles) {
+      if (geomIds[tile.type] === -1) continue
+      tile.instanceId = this.roadMesh.addInstance(geomIds[tile.type])
+      this.roadMesh.setColorAt(tile.instanceId, tile.color)
     }
-    this.updateMatrices()
+
+    console.log(`Road mesh: ${this.tiles.length} instances created`)
   }
 
   /**
-   * Intro animation: build all towers from ground up, staggered from center outward
-   * @param {Camera} camera - The camera to animate
-   * @param {OrbitControls} controls - OrbitControls instance
-   * @param {number} duration - Total animation duration in seconds
+   * Update road tile matrices (position and rotation)
    */
-  startIntroAnimation(camera, controls, duration = 4) {
-    const gridCenterX = this.actualGridWidth / 2
-    const gridCenterY = this.actualGridHeight / 2
+  updateRoadMatrices() {
+    if (!this.roadMesh || !this.tiles) return
 
-    // Mute build sounds during intro (except pop) and disable debris
-    Sounds.mute(['stone', 'tick', 'clink'])
-    const debrisWasEnabled = this.debris.enabled
-    this.debris.enabled = false
+    const dummy = this.dummy
+    // Simple rotations: 0°, 90°, 180°, 270° CCW
+    const rotations = [0, Math.PI / 2, Math.PI, Math.PI * 1.5]
+    const zoneSize = this.zoneSize
 
-    // 1. Store target floor counts, set all to 0
-    const towerData = this.towers.map(tower => {
-      const targetFloors = tower.numFloors
-      const center = tower.box.getCenter(new Vector2())
-      const dist = Math.hypot(center.x - gridCenterX, center.y - gridCenterY)
-      tower.numFloors = 0
-      return { tower, targetFloors, dist }
-    })
-    this.updateMatrices()
+    for (const tile of this.tiles) {
+      if (tile.instanceId === null) continue
 
-    // 2. Sort by distance (center first)
-    towerData.sort((a, b) => a.dist - b.dist)
-    const maxDist = towerData[towerData.length - 1]?.dist || 1
-
-    // 3. Animate each tower's floors with stagger
-    const staggerDuration = duration * 0.85 // 85% of duration for stagger spread
-    const floorDelay = 0.12 // 120ms between floors of same tower
-
-    let maxDelay = 0
-    towerData.forEach(({ tower, targetFloors, dist }) => {
-      if (targetFloors === 0) return
-
-      const staggerDelay = (dist / maxDist) * staggerDuration
-
-      // Animate each floor sequentially (no debris during intro)
-      const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
-      const newFloorColor = Tower.lightenColor(baseColor)
-      // Volume fades based on distance (0 at 3 lots away)
-      const maxSoundDist = this.cellSize * 3 // 3 lots
-      const volume = Math.max(0, 1 - dist / maxSoundDist) * 0.5
-      for (let f = 0; f < targetFloors; f++) {
-        const delay = staggerDelay + f * floorDelay
-        maxDelay = Math.max(maxDelay, delay)
-        setTimeout(() => {
-          tower.numFloors = f + 1
-          // Play pop sound with pitch based on floor height, volume based on distance
-          const pitch = 0.8 + (f / this.maxFloors) * 1.2
-          if (volume > 0) Sounds.play('pop', pitch, 0.15, volume)
-          tower.animateNewFloor(
-            this.towerMesh,
-            this.floorHeight,
-            f,
-            newFloorColor,
-            () => this.updateTowerMatrices(tower),
-            null // no debris
-          )
-        }, delay * 1000)
-      }
-    })
-
-    // Unmute sounds and restore debris after intro completes
-    setTimeout(() => {
-      Sounds.unmute(['stone', 'tick', 'clink'])
-      this.debris.enabled = debrisWasEnabled
-    }, (maxDelay + 1) * 1000)
-
-    // 4. Camera zoom animation (angle-based distance)
-    const target = controls.target.clone()
-    const direction = camera.position.clone().sub(target).normalize()
-    const endDist = camera.position.distanceTo(target)
-    const startDist = endDist * 3
-
-    // Set initial zoomed-out position
-    camera.position.copy(target).addScaledVector(direction, startDist)
-
-    // Animate distance only
-    const animState = { dist: startDist }
-    gsap.to(animState, {
-      dist: endDist,
-      duration: duration,
-      ease: 'power2.out',
-      onUpdate: () => {
-        camera.position.copy(target).addScaledVector(direction, animState.dist)
-        controls.update()
-      }
-    })
-  }
-
-  updateMatrices() {
-    if (!this.towerMesh) return
-    const { dummy, towerMesh, towers } = this
-
-    for (let i = 0; i < towers.length; i++) {
-      const tower = towers[i]
-
-      // Hide all instances if tower is not visible
-      if (tower.visible === false) {
-        for (let f = 0; f < this.maxFloors; f++) {
-          towerMesh.setVisibleAt(tower.floorInstances[f], false)
-        }
-        towerMesh.setVisibleAt(tower.roofInstance, false)
-        continue
-      }
-
-      const center = tower.box.getCenter(this.towerCenter)
-      const size = tower.box.getSize(this.towerSize)
-      const numFloors = tower.numFloors
-
-      // Half-heights for centered geometries
-      const floorHalfHeight = this.floorHeight / 2 // Base geom is 1 unit, scaled to floorHeight
-      const roofHalfHeight = BlockGeometry.halfHeights[tower.typeTop]
-
-      // Position and show floor instances (geometry centered, so add halfHeight)
-      for (let f = 0; f < this.maxFloors; f++) {
-        const idx = tower.floorInstances[f]
-        if (f < numFloors) {
-          dummy.position.set(center.x, f * this.floorHeight + floorHalfHeight, center.y)
-          dummy.scale.set(size.x, this.floorHeight, size.y)
-          dummy.rotation.y = tower.rotation
-          dummy.updateMatrix()
-          towerMesh.setMatrixAt(idx, dummy.matrix)
-          towerMesh.setVisibleAt(idx, true)
-        } else {
-          towerMesh.setVisibleAt(idx, false)
-        }
-      }
-
-      // Position roof on top (geometry centered, so add halfHeight)
-      dummy.position.set(center.x, numFloors * this.floorHeight + roofHalfHeight, center.y)
-      dummy.scale.set(size.x, 1, size.y)
-      dummy.rotation.y = tower.rotation
+      // Place tiles at their grid positions (centered at world origin)
+      // Each zone is zoneSize cells, meshOffset compensates for roadMesh.position
+      const layerOffset = this.layerOffsets?.[tile.layer] || { x: 0, z: 0 }
+      const worldX = tile.gridX * zoneSize + zoneSize / 2 + layerOffset.x
+      const worldZ = tile.gridZ * zoneSize + zoneSize / 2 + layerOffset.z
+      const worldY = tile.layer * Tile.LAYER_HEIGHT // Elevated layers at 1.0 per layer
+      dummy.position.set(worldX, worldY, worldZ)
+      dummy.scale.set(1, 1, 1)
+      dummy.rotation.y = rotations[tile.rotation]
       dummy.updateMatrix()
-      towerMesh.setMatrixAt(tower.roofInstance, dummy.matrix)
-      towerMesh.setVisibleAt(tower.roofInstance, true)
+
+      this.roadMesh.setMatrixAt(tile.instanceId, dummy.matrix)
+      this.roadMesh.setVisibleAt(tile.instanceId, true)
     }
   }
 
-  recalculateVisibility() {
-    if (!this.towerMesh) return
-    const gridCenterX = this.actualGridWidth / 2
-    const gridCenterY = this.actualGridHeight / 2
-    const maxDist = Math.sqrt(gridCenterX * gridCenterX + gridCenterY * gridCenterY)
-
-    for (let i = 0; i < this.towers.length; i++) {
-      const tower = this.towers[i]
-      const center = tower.box.getCenter(this.towerCenter)
-
-      // Increase skip chance based on distance from center
-      const dx = center.x - gridCenterX
-      const dy = center.y - gridCenterY
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      const distFactor = Math.pow(dist / maxDist, 2) // 0 at center, 1 at corners, squared
-      const effectiveSkipChance = this.skipChance + distFactor * 1.2 // adds up to 1.2 at edges
-
-      tower.visible = tower.skipFactor >= effectiveSkipChance
-    }
-    // Visibility is applied in updateMatrices based on tower.visible
-    this.updateMatrices()
-  }
-
-  regenerate() {
-    // Re-randomize all tower properties and recalculate the city
-    for (const tower of this.towers) {
-      tower.randFactor = MathUtils.randFloat(0, 1)
-      tower.skipFactor = MathUtils.randFloat(0, 1)
-      tower.colorIndex = MathUtils.randInt(0, 2)
-      tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
-      // Reset to base colors first
-      tower.isLit = false
-      for (const idx of tower.floorInstances) {
-        this.towerMesh.setColorAt(idx, tower.baseColor)
-      }
-      this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
-    }
-    // Regenerate noise with new seed
-    this.recalculateNoise()
-    this.recalculateVisibility()
-    // Re-apply lit towers
-    this.applyLitTowers()
-  }
-
-  recalculateNoise() {
-    // Recreate noise with new frequency
-    this.cityNoise = new FastSimplexNoise({
-      frequency: this.noiseFrequency,
-      octaves: 3,
-      min: 0,
-      max: 1,
-      persistence: 0.6,
-    })
-    // Recalculate noise values for all towers
-    let minNoise = Infinity
-    let maxNoise = -Infinity
-    for (let i = 0; i < this.towers.length; i++) {
-      const tower = this.towers[i]
-      const center = tower.box.getCenter(this.towerCenter)
-      tower.cityNoiseVal = this.cityNoise.scaled2D(center.x, center.y)
-      minNoise = Math.min(minNoise, tower.cityNoiseVal)
-      maxNoise = Math.max(maxNoise, tower.cityNoiseVal)
-    }
-    console.log('Noise range:', minNoise, '-', maxNoise)
-    this.recalculateHeights()
-  }
-
+  /**
+   * Setup environment rotation for the material
+   */
   setupEnvRotation() {
-    const mat = this.towerMaterial
-    const angle = this.envRotation
+    const mat = this.roadMaterial
+    const angleY = this.envRotation
+    const angleX = this.envRotationX
 
     // Get the environment texture from scene
     const envTexture = this.scene.environment
@@ -595,10 +703,11 @@ export class City {
     }
 
     // Create rotated reflection vector for specular
-    // Reflection is computed in view space, transform to world, then rotate
     const reflectView = positionViewDirection.negate().reflect(normalWorld)
     const reflectWorld = reflectView.transformDirection(cameraViewMatrix)
-    const rotatedReflectWorld = rotateY(reflectWorld, angle)
+    // Apply both rotations: first Y (horizontal), then X (vertical tilt)
+    const rotatedY = rotateY(reflectWorld, angleY)
+    const rotatedReflectWorld = rotateX(rotatedY, angleX)
 
     // Create PMREM texture node with rotated UV direction
     const envMapNode = pmremTexture(envTexture, rotatedReflectWorld, roughness)
@@ -608,184 +717,146 @@ export class City {
   }
 
   /**
-   * Handle hover from raycast intersection
-   * @param {Object|null} intersection - Three.js intersection object or null if no hit
+   * Regenerate the road grid with new random placement
    */
-  onHover(intersection) {
-    let tower = null
-
-    if (intersection && intersection.batchId !== undefined) {
-      tower = this.instanceToTower.get(intersection.batchId)
-    }
-
-    // No change
-    if (tower === this.hoveredTower) return
-
-    // Unhover previous tower
-    if (this.hoveredTower) {
-      this.hoveredTower.animateHoverColor(this.towerMesh, false)
-    }
-
-    // Hover new tower
-    this.hoveredTower = tower
-    if (tower) {
-      tower.animateHoverColor(this.towerMesh, true)
-    }
-  }
-
-  /**
-   * Handle pointer down on a tower - store for click detection
-   * @param {Object|null} intersection - Three.js intersection object or null
-   * @param {number} clientX - pointer X position
-   * @param {number} clientY - pointer Y position
-   * @param {boolean} isTouch - true if this is a touch event
-   */
-  onPointerDown(intersection, clientX, clientY, isTouch) {
-    // For touch, we handle everything on pointerup to avoid interfering with pan
-    if (isTouch) return false
-
-    let tower = null
-    if (intersection && intersection.batchId !== undefined) {
-      tower = this.instanceToTower.get(intersection.batchId)
-    }
-
-    if (!tower || !tower.visible) return false
-
-    this.pressedTower = tower
-    this.pointerDownPos.set(clientX, clientY)
-
-    return false // Don't stop propagation - let OrbitControls handle drag
-  }
-
-  /**
-   * Handle pointer move - cancel click if dragged
-   * @param {number} clientX - pointer X position
-   * @param {number} clientY - pointer Y position
-   */
-  onPointerMove(clientX, clientY) {
-    if (!this.pressedTower) return
-
-    const dx = clientX - this.pointerDownPos.x
-    const dy = clientY - this.pointerDownPos.y
-    const dist = Math.sqrt(dx * dx + dy * dy)
-
-    if (dist > this.dragThreshold) {
-      // Cancel the click
-      this.pressedTower = null
-    }
-  }
-
-  /**
-   * Handle pointer up - add a floor to the tower
-   * @param {boolean} isTouch - true if this is a touch event
-   * @param {Object|null} touchIntersection - intersection from touch start (touch only)
-   */
-  onPointerUp(isTouch, touchIntersection) {
-    // For touch, handle the full tap sequence here
-    if (isTouch) {
-      let tower = null
-      if (touchIntersection && touchIntersection.batchId !== undefined) {
-        tower = this.instanceToTower.get(touchIntersection.batchId)
+  regenerate() {
+    // Delete existing instances from mesh (not just hide)
+    if (this.roadMesh) {
+      for (const tile of this.tiles) {
+        if (tile.instanceId !== null) {
+          this.roadMesh.deleteInstance(tile.instanceId)
+        }
       }
-      if (tower && tower.visible) {
-        tower.handleClick(this, this.floorHeight, this.maxFloors, this.debris,
-          this.towers, () => this.updateTowerMatrices(tower))
-      }
-      return
     }
 
-    if (!this.pressedTower) return
+    // Re-init the grid (this also creates new instances via placeRoadTile)
+    this.initRoadGrid()
 
-    const tower = this.pressedTower
-    this.pressedTower = null
-
-    tower.handleClick(this, this.floorHeight, this.maxFloors, this.debris,
-      this.towers, () => this.updateTowerMatrices(tower))
+    this.updateRoadMatrices()
   }
 
   /**
-   * Handle right-click - delete tower floors
-   * @param {Object} intersection - Three.js intersection object
+   * Check if a tile can be placed at the given zone position
+   * Validates bounds, empty zone, and edge connections with neighbors
    */
-  onRightClick(intersection) {
-    let tower = null
-    if (intersection && intersection.batchId !== undefined) {
-      tower = this.instanceToTower.get(intersection.batchId)
+  canPlaceTile(type, zoneX, zoneZ, rotation) {
+    const size = this.zoneGridSize
+
+    // Check bounds
+    if (zoneX < 0 || zoneX >= size || zoneZ < 0 || zoneZ >= size) {
+      return false
     }
 
-    if (!tower || !tower.visible) return
+    // Check zone is empty
+    if (this.zoneGrid[zoneX][zoneZ] !== null) {
+      return false
+    }
 
-    tower.handleRightClick(this, this.floorHeight, this.debris,
-      this.towers, () => this.updateTowerMatrices(tower))
+    // Check edge connections with neighbors
+    return this.checkConnections(type, zoneX, zoneZ, rotation)
   }
 
   /**
-   * Update per-frame systems (debris physics)
+   * Validate that tile edges match with adjacent tiles
+   * Road exits must connect to road exits, empty edges to empty edges
+   */
+  checkConnections(type, zoneX, zoneZ, rotation) {
+    const exits = rotateExits(TileDefinitions[type].exits, rotation)
+
+    // Check each neighbor (4 directions)
+    const neighbors = [
+      { dir: 'N', dx: 0, dz: -1, opposite: 'S' },
+      { dir: 'E', dx: 1, dz: 0, opposite: 'W' },
+      { dir: 'S', dx: 0, dz: 1, opposite: 'N' },
+      { dir: 'W', dx: -1, dz: 0, opposite: 'E' },
+    ]
+
+    for (const { dir, dx, dz, opposite } of neighbors) {
+      const nx = zoneX + dx
+      const nz = zoneZ + dz
+
+      // Skip out of bounds neighbors
+      if (nx < 0 || nx >= this.zoneGridSize || nz < 0 || nz >= this.zoneGridSize) {
+        continue
+      }
+
+      const neighbor = this.zoneGrid[nx][nz]
+      if (neighbor) {
+        const neighborExits = rotateExits(TileDefinitions[neighbor.type].exits, neighbor.rotation)
+        // Road must connect to road, empty to empty
+        if (exits[dir] !== neighborExits[opposite]) {
+          return false
+        }
+      }
+    }
+
+    return true
+  }
+
+  /**
+   * Place a tile at the given zone position (with validation)
+   * Returns the tile if placed, null if invalid
+   */
+  placeTile(type, zoneX, zoneZ, rotation) {
+    if (!this.canPlaceTile(type, zoneX, zoneZ, rotation)) {
+      return null
+    }
+
+    const tile = new Tile(zoneX, zoneZ, type, rotation)
+    this.zoneGrid[zoneX][zoneZ] = tile
+    this.tiles.push(tile)
+
+    // Add instance to BatchedMesh if available
+    if (this.roadMesh && type < TileGeometry.geoms.length && TileGeometry.geoms[type]) {
+      tile.instanceId = this.roadMesh.addInstance(type)
+      this.roadMesh.setColorAt(tile.instanceId, tile.color)
+
+      // Update matrix for this tile (geometry already baked at import)
+      const rotations = [0, -Math.PI / 2, -Math.PI, -Math.PI * 1.5]
+      const zoneSize = this.zoneSize
+      const worldX = tile.gridX * zoneSize + zoneSize / 2
+      const worldZ = tile.gridZ * zoneSize + zoneSize / 2
+      this.dummy.position.set(worldX, 0, worldZ)
+      this.dummy.scale.set(1, 1, 1)
+      this.dummy.rotation.y = rotations[tile.rotation]
+      this.dummy.updateMatrix()
+      this.roadMesh.setMatrixAt(tile.instanceId, this.dummy.matrix)
+      this.roadMesh.setVisibleAt(tile.instanceId, true)
+    }
+
+    return tile
+  }
+
+  /**
+   * Update per-frame (placeholder for future animations)
    */
   update(dt) {
-    this.debris.update(dt)
+    // Future: animate tiles, etc.
   }
 
   /**
-   * Update matrices for a single tower
-   */
-  updateTowerMatrices(tower) {
-    const { dummy, towerMesh } = this
-    const center = tower.box.getCenter(this.towerCenter)
-    const size = tower.box.getSize(this.towerSize)
-    const numFloors = tower.numFloors
-
-    // Half-heights for centered geometries
-    const floorHalfHeight = this.floorHeight / 2
-    const roofHalfHeight = BlockGeometry.halfHeights[tower.typeTop]
-
-    for (let f = 0; f < this.maxFloors; f++) {
-      const idx = tower.floorInstances[f]
-      if (f < numFloors) {
-        dummy.position.set(center.x, f * this.floorHeight + floorHalfHeight, center.y)
-        dummy.scale.set(size.x, this.floorHeight, size.y)
-        dummy.rotation.y = tower.rotation
-        dummy.updateMatrix()
-        towerMesh.setMatrixAt(idx, dummy.matrix)
-        towerMesh.setVisibleAt(idx, true)
-      } else {
-        towerMesh.setVisibleAt(idx, false)
-      }
-    }
-
-    // Skip roof update if animation is in progress (roof is being controlled by GSAP)
-    if (tower.roofAnimating) return
-
-    // Roof on top
-    dummy.position.set(center.x, numFloors * this.floorHeight + roofHalfHeight, center.y)
-    dummy.scale.set(size.x, 1, size.y)
-    dummy.rotation.y = tower.rotation
-    dummy.updateMatrix()
-    towerMesh.setMatrixAt(tower.roofInstance, dummy.matrix)
-  }
-
-  /**
-   * Create debug grid helpers aligned with the city
+   * Create debug grid helpers
    */
   createGrids() {
-    // Fine cell grid - centered at origin (same as lot grid)
-    const cellGrid = new GridHelper(this.actualGridWidth, this.actualGridWidth, 0x888888, 0x888888)
+    const gridSize = this.zoneGridSize * this.zoneSize // Total cells
+
+    // Fine cell grid
+    const cellGrid = new GridHelper(gridSize, gridSize, 0x888888, 0x888888)
     cellGrid.material.transparent = true
     cellGrid.material.opacity = 0.5
     cellGrid.position.set(0, 0.01, 0)
     this.scene.add(cellGrid)
     this.cellGrid = cellGrid
 
-    // Grid intersection dots using procedural plane shader
-    const dotPlaneGeometry = new PlaneGeometry(this.actualGridWidth, this.actualGridHeight)
+    // Grid intersection dots
+    const dotPlaneGeometry = new PlaneGeometry(gridSize, gridSize)
     dotPlaneGeometry.rotateX(-Math.PI / 2)
     const dotMaterial = new MeshBasicNodeMaterial()
     dotMaterial.transparent = true
     dotMaterial.alphaTest = 0.5
-    dotMaterial.side = 2 // DoubleSide
+    dotMaterial.side = 2
 
-    // Procedural dots at grid intersections
-    const cellCoord = uv().mul(this.actualGridWidth)
+    const cellCoord = uv().mul(gridSize)
     const fractCoord = fract(cellCoord)
     const toGridX = min(fractCoord.x, float(1).sub(fractCoord.x))
     const toGridY = min(fractCoord.y, float(1).sub(fractCoord.y))
@@ -804,11 +875,13 @@ export class City {
     this.dotMesh = new Mesh(dotPlaneGeometry, dotMaterial)
     this.dotMesh.position.set(0, 0.015, 0)
     this.scene.add(this.dotMesh)
-
-    // Coarse lot grid - centered at origin, lines at lot spacing intervals
-    const lotGrid = new GridHelper(this.actualGridWidth, this.numLotsX, 0x888888, 0x888888)
-    lotGrid.position.set(0, 0.02, 0)
-    this.scene.add(lotGrid)
-    this.lotGrid = lotGrid
   }
+
+  // Stub methods for Demo.js compatibility
+  onHover() {}
+  onPointerDown() { return false }
+  onPointerMove() {}
+  onPointerUp() {}
+  onRightClick() {}
+  startIntroAnimation() {}
 }

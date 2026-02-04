@@ -45,6 +45,36 @@ a city builder toy.
 - [x] click to destroy / build buildings (like townscaper)
 - [x] subtle sound effects
 
+## Current Work: Road Extension Algorithm
+
+Implementing a road tile system that grows outward from a central X intersection. Simpler than full WFC.
+
+### Debug Setup
+- Single TURN_90 tile at world origin (0,0,0) with rotation 0
+- Camera at standard Three.js angle: position (-28, 40, 26) targeting (0,0,0)
+- Axes: +X = right (East), +Z = toward viewer (South), +Y = up
+
+### Key Files
+- **src/Tiles.js** - TileType enum, TileDefinitions (exits per type), rotateExits(), TileGeometry loader
+- **src/City.js** - Road generation, placeRoadTile(), updateRoadMatrices(), rotation helpers
+
+### Tile Definitions (rotation 0)
+- FORWARD: exits N, S (straight road)
+- END: exit S (cap at N)
+- T: exits E, S, W (no N)
+- X: exits N, E, S, W
+- ANGLE: exits S, E
+- TURN_90: exits S, E
+
+### Rotation System
+- rotation 0-3 = 0°, 90°, 180°, 270° clockwise when viewed from above
+- Mesh rotation: `[0, -Math.PI/2, -Math.PI, -Math.PI*1.5]`
+- rotateExits() rotates exit data to match mesh rotation
+- Geometry baked with -90° at import to align FORWARD tile N-S
+
+### Current Issue
+Debugging tile rotation - verifying that visual mesh rotation matches data layer (TileDefinitions + rotateExits).
+
 ## Naming Conventions
 
 - **City** - The entire grid, comprised of 11x11 lots

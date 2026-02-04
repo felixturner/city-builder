@@ -1,5 +1,6 @@
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
 import { Sounds } from './lib/Sounds.js'
+import { TileGeometry } from './Tiles.js'
 
 export class GUIManager {
   constructor(demo) {
@@ -24,24 +25,27 @@ export class GUIManager {
       skipChance: 0.1,
     },
     lighting: {
-      exposure: 1.0,
-      envIntensity: 0.9,
-      hdr: 'solitude_interior_1k.hdr',
-      dirLight: 1.8,
-      hemiLight: 0.3,
+      exposure: 1.7,
+      envIntensity: 0.7,
+      hdr: 'venice_sunset_1k.hdr',
+      dirLight: 2.15,
+      hemiLight: 0.25,
       shadowIntensity: 1.0,
       lightX: 50,
       lightY: 100,
       lightZ: 50,
       showHelper: false,
-      hdrRotation: 180,
+      hdrRotation: 191,
+      hdrTilt: -2,
     },
     material: {
-      roughness: 0.75,
-      metalness: 0.35,
-      clearcoat: 0.48,
-      clearcoatRoughness: 0.47,
+      color: '#ffffff',
+      roughness: 1,
+      metalness: 0.39,
+      clearcoat: 0,
+      clearcoatRoughness: 0,
       iridescence: 0.21,
+      useBlenderTexture: true,
     },
     fx: {
       ao: true,
@@ -56,10 +60,16 @@ export class GUIManager {
     },
     debug: {
       view: 'final',
-      originHelper: false,
+      originHelper: true,
+      debugCam: true,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
+    },
+    roads: {
+      cumulativeWeights: false,
+      maxTiles: 150,
+      layers: 1,
     },
   }
 
@@ -101,6 +111,11 @@ export class GUIManager {
     gui.add(allParams.debug, 'originHelper').name('Origin Helper').onChange((v) => {
       if (demo.axesHelper) demo.axesHelper.visible = v
     })
+    gui.add(allParams.debug, 'debugCam').name('Debug Cam').onChange((v) => {
+      demo.controls.maxPolarAngle = v ? Math.PI : 1.53
+      demo.controls.minDistance = v ? 0 : 40
+      demo.controls.maxDistance = v ? Infinity : 470
+    })
 
     // DPR dropdown (default 1)
     allParams.renderer.dpr = 1
@@ -112,7 +127,7 @@ export class GUIManager {
     // Action buttons
     gui.add({ regenCity: () => {
       demo.city.regenerate()
-      demo.trails.generatePaths(30)
+      if (demo.trails) demo.trails.generatePaths(30)
     } }, 'regenCity').name('Regen City')
     gui.add({ replayBuild: () => {
       demo.city.recalculateHeights()
@@ -151,36 +166,13 @@ export class GUIManager {
       }
     }, 'logControls').name('Log Orbit State')
 
-    // City folder
-    const cityFolder = gui.addFolder('City').close()
-    cityFolder.add(allParams.scene, 'noiseScale', 0.005, 0.05, 0.005).name('Noise Scale').onChange((v) => {
-      demo.city.noiseFrequency = v
-      demo.city.recalculateNoise()
+    // Roads folder
+    const roadsFolder = gui.addFolder('Roads').close()
+    roadsFolder.add(allParams.roads, 'layers', 1, 5, 1).name('Layers').onChange((v) => {
+      demo.city.numLayers = v
     })
-    cityFolder.add(allParams.scene, 'noiseSubtract', 0, 0.5, 0.05).name('Noise Subtract').onChange((v) => {
-      demo.city.noiseSubtract = v
-      demo.city.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'noiseHeight', 0, 50, 1).name('Noise Height').onChange((v) => {
-      demo.city.heightNoiseScale = v
-      demo.city.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'randHeight', 0, 25, 1).name('Rand Height').onChange((v) => {
-      demo.city.randHeightAmount = v
-      demo.city.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'randHeightPower', 1, 10, 0.5).name('Rand Height Pow').onChange((v) => {
-      demo.city.randHeightPower = v
-      demo.city.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'centerFalloff', 0, 1, 0.05).name('Center Falloff').onChange((v) => {
-      demo.city.centerFalloff = v
-      demo.city.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'skipChance', 0, 1, 0.05).name('Skip Chance').onChange((v) => {
-      demo.city.skipChance = v
-      demo.city.recalculateVisibility()
-    })
+    roadsFolder.add(allParams.roads, 'cumulativeWeights').name('Cumulative Weights')
+    roadsFolder.add(allParams.roads, 'maxTiles', 50, 300, 10).name('Max Tiles')
 
     // Lights folder
     const lightsFolder = gui.addFolder('Lights').close()
@@ -200,6 +192,13 @@ export class GUIManager {
       demo.scene.backgroundRotation.y = rad
       if (demo.city.envRotation) {
         demo.city.envRotation.value = rad
+      }
+    })
+    lightsFolder.add(allParams.lighting, 'hdrTilt', -90, 90, 1).name('HDR Tilt').onChange((v) => {
+      const rad = v * Math.PI / 180
+      demo.scene.backgroundRotation.x = rad
+      if (demo.city.envRotationX) {
+        demo.city.envRotationX.value = rad
       }
     })
     lightsFolder.add(allParams.lighting, 'exposure', 0, 2, 0.05).name('Exposure').onChange((v) => {
@@ -241,6 +240,9 @@ export class GUIManager {
 
     // Material folder
     const matFolder = gui.addFolder('Material').close()
+    matFolder.addColor(allParams.material, 'color').name('Color').onChange((v) => {
+      if (demo.city.towerMaterial) demo.city.towerMaterial.color.set(v)
+    })
     matFolder.add(allParams.material, 'roughness', 0, 1, 0.01).name('Roughness').onChange((v) => {
       if (demo.city.towerMaterial) demo.city.towerMaterial.roughness = v
     })
@@ -255,6 +257,12 @@ export class GUIManager {
     })
     matFolder.add(allParams.material, 'iridescence', 0, 1, 0.01).name('Iridescence').onChange((v) => {
       if (demo.city.towerMaterial) demo.city.towerMaterial.iridescence = v
+    })
+    matFolder.add(allParams.material, 'useBlenderTexture').name('Blender Texture').onChange((v) => {
+      if (demo.city.towerMaterial) {
+        demo.city.towerMaterial.map = v ? TileGeometry.roadTexture : null
+        demo.city.towerMaterial.needsUpdate = true
+      }
     })
 
     // Effects folder
@@ -306,14 +314,22 @@ export class GUIManager {
     if (demo.city.envRotation) {
       demo.city.envRotation.value = hdrRad
     }
+    const hdrTiltRad = params.lighting.hdrTilt * Math.PI / 180
+    demo.scene.backgroundRotation.x = hdrTiltRad
+    if (demo.city.envRotationX) {
+      demo.city.envRotationX.value = hdrTiltRad
+    }
 
     // Material
     if (demo.city.towerMaterial) {
+      demo.city.towerMaterial.color.set(params.material.color)
       demo.city.towerMaterial.roughness = params.material.roughness
       demo.city.towerMaterial.metalness = params.material.metalness
       demo.city.towerMaterial.clearcoat = params.material.clearcoat
       demo.city.towerMaterial.clearcoatRoughness = params.material.clearcoatRoughness
       demo.city.towerMaterial.iridescence = params.material.iridescence
+      demo.city.towerMaterial.map = params.material.useBlenderTexture ? TileGeometry.roadTexture : null
+      demo.city.towerMaterial.needsUpdate = true
     }
 
     // Post processing
@@ -329,6 +345,10 @@ export class GUIManager {
     // Camera
     demo.perspCamera.fov = params.camera.fov
     demo.perspCamera.updateProjectionMatrix()
+    demo.controls.maxPolarAngle = params.debug.debugCam ? Math.PI : 1.53
+    demo.controls.minDistance = params.debug.debugCam ? 0 : 40
+    demo.controls.maxDistance = params.debug.debugCam ? Infinity : 470
+    if (demo.axesHelper) demo.axesHelper.visible = params.debug.originHelper
 
     // Renderer
     demo.renderer.setPixelRatio(params.renderer.dpr)
