@@ -5,7 +5,7 @@ import {
   Vector2,
   Vector3,
   Scene,
-  ACESFilmicToneMapping,
+  NoToneMapping,
   Plane,
   WebGPURenderer,
   PCFSoftShadowMap,
@@ -28,7 +28,7 @@ export class Demo {
     this.canvas = canvas
     this.renderer = null
     this.orthoCamera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1000)
-    this.perspCamera = new PerspectiveCamera(30, 1, 0.1, 1000)
+    this.perspCamera = new PerspectiveCamera(30, 1, 1, 1000)
     this.camera = this.perspCamera
     this.controls = null
     this.postFX = null
@@ -64,7 +64,7 @@ export class Demo {
     // DPR 2 with half-res AO gives good quality/perf balance
     this.renderer.setPixelRatio(2)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
-    this.renderer.toneMapping = ACESFilmicToneMapping
+    this.renderer.toneMapping = NoToneMapping
     this.renderer.toneMappingExposure = 1.0
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = PCFSoftShadowMap
@@ -92,9 +92,9 @@ export class Demo {
     await this.lighting.init()
     await this.city.init()
 
-    // Set up hover and click detection on city blocks
+    // Set up hover and click detection on hex tiles
     this.pointerHandler.setRaycastTargets(
-      [this.city.towerMesh],
+      [this.city.hexMesh],
       {
         onHover: (intersection) => this.city.onHover(intersection),
         onPointerDown: (intersection, x, y, isTouch) => this.city.onPointerDown(intersection, x, y, isTouch),
@@ -104,12 +104,9 @@ export class Demo {
       }
     )
 
-    // Create grid helpers (cell grid, dots, lot grid)
-    this.city.createGrids()
-
     // Origin helper (hidden by default, toggled via GUI)
     this.axesHelper = new AxesHelper(5)
-    this.axesHelper.position.set(0, 1, 0)
+    this.axesHelper.position.set(0, 2, 0)
     this.axesHelper.visible = false
     this.scene.add(this.axesHelper)
 
@@ -157,9 +154,8 @@ export class Demo {
     this.updateOrthoFrustum()
 
     // Set up perspective camera - standard Three.js view for debugging
-    // Spherical coords: polar=0.762rad (43.6°), azimuth=-0.827rad (-47.4°), dist=55.2
-    // Position in -X, +Y, +Z quadrant: +X right, +Y up, +Z toward viewer
-    this.perspCamera.position.set(-28, 40, 26)
+    // Straight down view for debugging hex tiles
+    this.perspCamera.position.set(0, 57, 0)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
