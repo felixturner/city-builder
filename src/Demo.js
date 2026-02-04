@@ -113,9 +113,10 @@ export class Demo {
     this.axesHelper.visible = false
     this.scene.add(this.axesHelper)
 
-    // Glowing trails between towers
-    this.trails = new Trails(this.scene, this.city)
-    this.trails.generatePaths(30)
+    // Trails disabled (requires towers)
+    this.trails = null
+    // this.trails = new Trails(this.scene, this.city)
+    // this.trails.generatePaths(30)
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
@@ -155,9 +156,10 @@ export class Demo {
     this.orthoCamera.position.copy(camPos)
     this.updateOrthoFrustum()
 
-    // Set up perspective camera (closer position for FOV 30)
-    // Initial camera position - same rotation but targeting origin
-    this.perspCamera.position.set(-18.574, 50.428, -12.617)
+    // Set up perspective camera - standard Three.js view for debugging
+    // Spherical coords: polar=0.762rad (43.6°), azimuth=-0.827rad (-47.4°), dist=55.2
+    // Position in -X, +Y, +Z quadrant: +X right, +Y up, +Z toward viewer
+    this.perspCamera.position.set(-28, 40, 26)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -177,11 +179,10 @@ export class Demo {
       ONE: 1,  // TOUCH.PAN
       TWO: 3   // TOUCH.DOLLY_ROTATE
     }
-    // Zoom limits (distance from target)
-    this.controls.minDistance = 40
-    this.controls.maxDistance = 470
-    // Polar angle limits (vertical tilt) - prevent going below horizon
-    this.controls.maxPolarAngle = 1.53  // ~88° - above horizon
+    // Zoom/rotation limits - defaults allow unlimited (debugCam: true)
+    this.controls.minDistance = 0
+    this.controls.maxDistance = Infinity
+    this.controls.maxPolarAngle = Math.PI
     // Pan parallel to ground plane instead of screen
     this.controls.screenSpacePanning = false
     this.controls.target.set(0, 0, 0)
@@ -270,8 +271,8 @@ export class Demo {
     // Update debris physics
     this.city.update(dt)
 
-    // Update trails animation
-    this.trails.update(dt)
+    // Update trails animation (if enabled)
+    if (this.trails) this.trails.update(dt)
 
     postFX.render()
 
