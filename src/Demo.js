@@ -155,7 +155,7 @@ export class Demo {
 
     // Set up perspective camera - standard Three.js view for debugging
     // Straight down view for debugging hex tiles
-    this.perspCamera.position.set(0, 57, 0)
+    this.perspCamera.position.set(-13.111, 69.959, 52.146)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -181,7 +181,7 @@ export class Demo {
     this.controls.maxPolarAngle = Math.PI
     // Pan parallel to ground plane instead of screen
     this.controls.screenSpacePanning = false
-    this.controls.target.set(0, 0, 0)
+    this.controls.target.set(0.139, 0, -0.740)
     this.controls.update()
   }
 

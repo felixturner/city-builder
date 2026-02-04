@@ -26,7 +26,7 @@ export class City {
     // Hex grid state
     this.hexTiles = []
     this.hexGrid = null
-    this.hexGridRadius = 6
+    this.hexGridRadius = 8
     this.hexMesh = null
     this.roadMaterial = null
 
@@ -36,7 +36,7 @@ export class City {
   }
 
   async init() {
-    await HexTileGeometry.init('./assets/models/hex-roads.glb')
+    await HexTileGeometry.init('./assets/models/hex-terrain.glb')
     this.createFloor()
     await this.initHexRoads()
     this.generateHexRoadsWFC()
@@ -84,7 +84,9 @@ export class City {
     this.hexGrid = Array.from({ length: size }, () => Array(size).fill(null))
 
     const tileTypes = options.tileTypes ?? [
+      // Base
       HexTileType.GRASS,
+      // Roads
       HexTileType.ROAD_A,
       HexTileType.ROAD_B,
       HexTileType.ROAD_C,
@@ -98,6 +100,30 @@ export class City {
       HexTileType.ROAD_K,
       HexTileType.ROAD_L,
       HexTileType.ROAD_M,
+      // Rivers
+      HexTileType.RIVER_A,
+      HexTileType.RIVER_A_CURVY,
+      HexTileType.RIVER_B,
+      HexTileType.RIVER_C,
+      HexTileType.RIVER_D,
+      HexTileType.RIVER_E,
+      HexTileType.RIVER_F,
+      HexTileType.RIVER_G,
+      HexTileType.RIVER_H,
+      HexTileType.RIVER_I,
+      HexTileType.RIVER_J,
+      HexTileType.RIVER_K,
+      HexTileType.RIVER_L,
+      // Crossings
+      HexTileType.RIVER_CROSSING_A,
+      HexTileType.RIVER_CROSSING_B,
+      // Coasts & Water
+      HexTileType.WATER,
+      HexTileType.COAST_A,
+      HexTileType.COAST_B,
+      HexTileType.COAST_C,
+      HexTileType.COAST_D,
+      HexTileType.COAST_E,
     ]
 
     if (!this.hexWfcRules) {
@@ -116,12 +142,16 @@ export class City {
       tileTypes,
     })
 
+    const startTime = performance.now()
     const result = solver.solve()
+    const elapsed = performance.now() - startTime
 
     if (!result) {
-      console.warn('Hex WFC failed to generate valid layout')
+      console.warn(`Hex WFC failed after ${solver.restartCount} retries (${elapsed.toFixed(1)}ms)`)
       return
     }
+
+    console.log(`Hex WFC: ${solver.restartCount} retries, ${elapsed.toFixed(1)}ms`)
 
     for (const placement of result) {
       if (!this.isInHexRadius(placement.gridX - gridRadius, placement.gridZ - gridRadius, gridRadius)) continue
@@ -243,7 +273,7 @@ export class City {
 
     const hexLineGeom = new BufferGeometry()
     hexLineGeom.setAttribute('position', new Float32BufferAttribute(allHexVerts, 3))
-    const hexLineMat = new LineBasicNodeMaterial({ color: 0xff0000 })
+    const hexLineMat = new LineBasicNodeMaterial({ color: 0x666666 })
     hexLineMat.depthTest = false
     this.hexGridLines = new LineSegments(hexLineGeom, hexLineMat)
     this.hexGridLines.renderOrder = 999

@@ -62,6 +62,8 @@ export class GUIManager {
       view: 'final',
       originHelper: true,
       debugCam: true,
+      squareGrid: true,
+      hexGrid: false,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
@@ -72,6 +74,8 @@ export class GUIManager {
       layers: 1,
       useWFC: true,
       wfcSeed: 0,
+      useHex: true,
+      hexGridRadius: 6,
     },
   }
 
@@ -99,17 +103,6 @@ export class GUIManager {
     })
 
     // Visual toggles at top level
-    gui.add(allParams.fx, 'trails').name('Trails').onChange((v) => {
-      if (demo.trails && demo.trails.meshes) {
-        for (const mesh of demo.trails.meshes) mesh.visible = v
-      }
-    })
-    gui.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
-      if (demo.dotMesh) demo.dotMesh.visible = v
-    })
-    gui.add(allParams.fx, 'debris').name('Debris').onChange((v) => {
-      if (demo.city.debris) demo.city.debris.enabled = v
-    })
     gui.add(allParams.debug, 'originHelper').name('Origin Helper').onChange((v) => {
       if (demo.axesHelper) demo.axesHelper.visible = v
     })
@@ -117,6 +110,14 @@ export class GUIManager {
       demo.controls.maxPolarAngle = v ? Math.PI : 1.53
       demo.controls.minDistance = v ? 0 : 40
       demo.controls.maxDistance = v ? Infinity : 470
+    })
+    gui.add(allParams.debug, 'squareGrid').name('Square Grid').onChange((v) => {
+      if (demo.city.cellGrid) demo.city.cellGrid.visible = v
+      if (demo.city.dotMesh) demo.city.dotMesh.visible = v
+    })
+    gui.add(allParams.debug, 'hexGrid').name('Hex Grid').onChange((v) => {
+      if (demo.city.hexGridLines) demo.city.hexGridLines.visible = v
+      if (demo.city.hexGridDots) demo.city.hexGridDots.visible = v
     })
 
     // DPR dropdown (default 1)
@@ -127,18 +128,13 @@ export class GUIManager {
     })
 
     // Action buttons
-    gui.add({ regenCity: () => {
+    gui.add({ regen: () => {
       demo.city.regenerate()
       if (demo.trails) demo.trails.generatePaths(30)
-    } }, 'regenCity').name('Regen City')
-    gui.add({ replayBuild: () => {
-      demo.city.recalculateHeights()
-      demo.city.recalculateVisibility()
-      demo.postFX.fadeOpacity.value = 0
-      demo.fadeIn(1000)
-      Sounds.play('intro')
-      demo.city.startIntroAnimation(demo.camera, demo.controls, 4)
-    } }, 'replayBuild').name('Replay Build')
+      // Restore hex grid visibility from GUI state
+      if (demo.city.hexGridLines) demo.city.hexGridLines.visible = allParams.debug.hexGrid
+      if (demo.city.hexGridDots) demo.city.hexGridDots.visible = allParams.debug.hexGrid
+    } }, 'regen').name('Regen')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
 
     gui.add({
@@ -169,14 +165,8 @@ export class GUIManager {
     }, 'logControls').name('Log Orbit State')
 
     // Roads folder
-    const roadsFolder = gui.addFolder('Roads').close()
-    roadsFolder.add(allParams.roads, 'layers', 1, 5, 1).name('Layers').onChange((v) => {
-      demo.city.numLayers = v
-    })
-    roadsFolder.add(allParams.roads, 'useWFC').name('Use WFC')
-    roadsFolder.add(allParams.roads, 'wfcSeed', 0, 9999, 1).name('WFC Seed')
-    roadsFolder.add(allParams.roads, 'cumulativeWeights').name('Cumulative Weights')
-    roadsFolder.add(allParams.roads, 'maxTiles', 50, 300, 10).name('Max Tiles')
+    const mapFolder = gui.addFolder('Map').close()
+    mapFolder.add(allParams.roads, 'wfcSeed', 0, 9999, 1).name('WFC Seed')
 
     // Lights folder
     const lightsFolder = gui.addFolder('Lights').close()
@@ -242,32 +232,7 @@ export class GUIManager {
       if (demo.lighting.dirLightHelper) demo.lighting.dirLightHelper.visible = v
     })
 
-    // Material folder
-    const matFolder = gui.addFolder('Material').close()
-    matFolder.addColor(allParams.material, 'color').name('Color').onChange((v) => {
-      if (demo.city.towerMaterial) demo.city.towerMaterial.color.set(v)
-    })
-    matFolder.add(allParams.material, 'roughness', 0, 1, 0.01).name('Roughness').onChange((v) => {
-      if (demo.city.towerMaterial) demo.city.towerMaterial.roughness = v
-    })
-    matFolder.add(allParams.material, 'metalness', 0, 1, 0.01).name('Metalness').onChange((v) => {
-      if (demo.city.towerMaterial) demo.city.towerMaterial.metalness = v
-    })
-    matFolder.add(allParams.material, 'clearcoat', 0, 1, 0.01).name('Clearcoat').onChange((v) => {
-      if (demo.city.towerMaterial) demo.city.towerMaterial.clearcoat = v
-    })
-    matFolder.add(allParams.material, 'clearcoatRoughness', 0, 1, 0.01).name('Clearcoat Rough').onChange((v) => {
-      if (demo.city.towerMaterial) demo.city.towerMaterial.clearcoatRoughness = v
-    })
-    matFolder.add(allParams.material, 'iridescence', 0, 1, 0.01).name('Iridescence').onChange((v) => {
-      if (demo.city.towerMaterial) demo.city.towerMaterial.iridescence = v
-    })
-    matFolder.add(allParams.material, 'useBlenderTexture').name('Blender Texture').onChange((v) => {
-      if (demo.city.towerMaterial) {
-        demo.city.towerMaterial.map = v ? TileGeometry.roadTexture : null
-        demo.city.towerMaterial.needsUpdate = true
-      }
-    })
+    // Material folder removed - using GLB material directly for hex tiles
 
     // Effects folder
     const fxFolder = gui.addFolder('Post Processing').close()
@@ -324,17 +289,7 @@ export class GUIManager {
       demo.city.envRotationX.value = hdrTiltRad
     }
 
-    // Material
-    if (demo.city.towerMaterial) {
-      demo.city.towerMaterial.color.set(params.material.color)
-      demo.city.towerMaterial.roughness = params.material.roughness
-      demo.city.towerMaterial.metalness = params.material.metalness
-      demo.city.towerMaterial.clearcoat = params.material.clearcoat
-      demo.city.towerMaterial.clearcoatRoughness = params.material.clearcoatRoughness
-      demo.city.towerMaterial.iridescence = params.material.iridescence
-      demo.city.towerMaterial.map = params.material.useBlenderTexture ? TileGeometry.roadTexture : null
-      demo.city.towerMaterial.needsUpdate = true
-    }
+    // Material override removed - using GLB material directly for hex tiles
 
     // Post processing
     demo.aoEnabled.value = params.fx.ao ? 1 : 0
