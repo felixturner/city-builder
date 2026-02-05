@@ -18,7 +18,6 @@ import { Pointer } from './lib/Pointer.js'
 import { GUIManager } from './GUI.js'
 import { City } from './City.js'
 import { Lighting } from './Lighting.js'
-import { Trails } from './lib/Trails.js'
 import { PostFX } from './PostFX.js'
 
 export class Demo {
@@ -44,7 +43,6 @@ export class Demo {
     this.gui = null
     this.city = null
     this.lighting = null
-    this.trails = null
     this.params = null
 
     if (Demo.instance != null) {
@@ -110,10 +108,6 @@ export class Demo {
     this.axesHelper.visible = false
     this.scene.add(this.axesHelper)
 
-    // Trails disabled (requires towers)
-    this.trails = null
-    // this.trails = new Trails(this.scene, this.city)
-    // this.trails.generatePaths(30)
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
@@ -267,8 +261,6 @@ export class Demo {
     // Update debris physics
     this.city.update(dt)
 
-    // Update trails animation (if enabled)
-    if (this.trails) this.trails.update(dt)
 
     postFX.render()
 

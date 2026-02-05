@@ -54,7 +54,6 @@ export class GUIManager {
       aoBlur: 0.3,
       aoIntensity: 0.95,
       vignette: true,
-      trails: true,
       dots: true,
       debris: true,
     },
@@ -76,6 +75,8 @@ export class GUIManager {
       wfcSeed: 0,
       useHex: true,
       hexGridRadius: 6,
+      animateWFC: false,
+      animateDelay: 10,
     },
   }
 
@@ -129,8 +130,10 @@ export class GUIManager {
 
     // Action buttons
     gui.add({ regen: () => {
-      demo.city.regenerate()
-      if (demo.trails) demo.trails.generatePaths(30)
+      demo.city.regenerate({
+        animate: allParams.roads.animateWFC,
+        animateDelay: allParams.roads.animateDelay,
+      })
       // Restore hex grid visibility from GUI state
       if (demo.city.hexGridLines) demo.city.hexGridLines.visible = allParams.debug.hexGrid
       if (demo.city.hexGridDots) demo.city.hexGridDots.visible = allParams.debug.hexGrid
@@ -167,6 +170,8 @@ export class GUIManager {
     // Roads folder
     const mapFolder = gui.addFolder('Map').close()
     mapFolder.add(allParams.roads, 'wfcSeed', 0, 9999, 1).name('WFC Seed')
+    mapFolder.add(allParams.roads, 'animateWFC').name('Animate WFC')
+    mapFolder.add(allParams.roads, 'animateDelay', 5, 40).name('Anim Delay (ms)')
 
     // Lights folder
     const lightsFolder = gui.addFolder('Lights').close()

@@ -176,12 +176,14 @@ export class HexWFCSolver {
     this.neighbors = []  // Precomputed neighbor relationships
     this.propagationStack = []
     this.restartCount = 0
+    this.collapseOrder = []  // Track order of tile placements for visualization
   }
 
   /**
    * Initialize grid with all possibilities and precompute neighbors
    */
   init() {
+    this.collapseOrder = []  // Reset on each attempt
     // Get tile types to use
     const types = this.options.tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
 
@@ -305,8 +307,12 @@ export class HexWFCSolver {
       }
     }
 
-    cell.collapse(HexWFCCell.parseKey(selectedKey))
+    const state = HexWFCCell.parseKey(selectedKey)
+    cell.collapse(state)
     this.propagationStack.push({ x, z })
+
+    // Record collapse order for visualization
+    this.collapseOrder.push({ gridX: x, gridZ: z, type: state.type, rotation: state.rotation })
 
     return true
   }
@@ -374,8 +380,24 @@ export class HexWFCSolver {
    * Main solve loop
    * @returns {Array|null} Array of { gridX, gridZ, type, rotation } or null on failure
    */
-  solve() {
+  solve(seedTiles = []) {
     this.init()
+
+    // Pre-collapse seeded tiles
+    for (const seed of seedTiles) {
+      const cell = this.grid[seed.x]?.[seed.z]
+      if (cell && !cell.collapsed) {
+        const state = { type: seed.type, rotation: seed.rotation ?? 0 }
+        cell.collapse(state)
+        this.collapseOrder.push({ gridX: seed.x, gridZ: seed.z, type: state.type, rotation: state.rotation })
+        this.propagationStack.push({ x: seed.x, z: seed.z })
+      }
+    }
+    // Propagate seed constraints
+    if (seedTiles.length > 0 && !this.propagate()) {
+      console.warn('HexWFC: seed tiles caused contradiction')
+      return null
+    }
 
     while (true) {
       const target = this.findLowestEntropyCell()

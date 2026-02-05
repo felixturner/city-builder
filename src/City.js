@@ -10,8 +10,10 @@ import {
   Float32BufferAttribute,
   LineSegments,
   LineBasicNodeMaterial,
+  Matrix4,
 } from 'three/webgpu'
 import { uniform, vec3, uv, step, min, float } from 'three/tsl'
+import gsap from 'gsap'
 import { HexWFCSolver, HexWFCAdjacencyRules } from './HexWFC.js'
 import { HexTile, HexTileGeometry, HexTileType } from './HexTiles.js'
 import { Demo } from './Demo.js'
@@ -142,8 +144,13 @@ export class City {
       tileTypes,
     })
 
+    // Seed center tile with grass
+    const centerX = Math.floor(size / 2)
+    const centerZ = Math.floor(size / 2)
+    const seedTiles = [{ x: centerX, z: centerZ, type: HexTileType.GRASS, rotation: 0 }]
+
     const startTime = performance.now()
-    const result = solver.solve()
+    const result = solver.solve(seedTiles)
     const elapsed = performance.now() - startTime
 
     if (!result) {
@@ -153,20 +160,82 @@ export class City {
 
     console.log(`Hex WFC: ${solver.restartCount} retries, ${elapsed.toFixed(1)}ms`)
 
-    for (const placement of result) {
-      if (!this.isInHexRadius(placement.gridX - gridRadius, placement.gridZ - gridRadius, gridRadius)) continue
+    // Use collapse order for visualization, or result for instant placement
+    const animate = options.animate ?? false
+    const animateDelay = options.animateDelay ?? 20
+    const placements = animate ? solver.collapseOrder : result
 
-      const tile = new HexTile(placement.gridX, placement.gridZ, placement.type, placement.rotation)
-      this.hexGrid[placement.gridX][placement.gridZ] = tile
-      this.hexTiles.push(tile)
-
-      if (this.hexMesh && HexTileGeometry.geomIds.has(placement.type)) {
-        const geomId = HexTileGeometry.geomIds.get(placement.type)
-        tile.instanceId = this.hexMesh.addInstance(geomId)
-        this.hexMesh.setColorAt(tile.instanceId, tile.color)
+    if (animate) {
+      this.animatePlacements(placements, gridRadius, animateDelay)
+    } else {
+      for (const placement of placements) {
+        this.placeTile(placement, gridRadius)
       }
+      this.updateHexMatrices()
     }
+  }
 
+  placeTile(placement, gridRadius) {
+    if (!this.isInHexRadius(placement.gridX - gridRadius, placement.gridZ - gridRadius, gridRadius)) return null
+
+    const tile = new HexTile(placement.gridX, placement.gridZ, placement.type, placement.rotation)
+    this.hexGrid[placement.gridX][placement.gridZ] = tile
+    this.hexTiles.push(tile)
+
+    if (this.hexMesh && HexTileGeometry.geomIds.has(placement.type)) {
+      const geomId = HexTileGeometry.geomIds.get(placement.type)
+      tile.instanceId = this.hexMesh.addInstance(geomId)
+      this.hexMesh.setColorAt(tile.instanceId, tile.color)
+      // Hide initially (will be shown by animation or updateHexMatrices)
+      this.dummy.scale.setScalar(0)
+      this.dummy.updateMatrix()
+      this.hexMesh.setMatrixAt(tile.instanceId, this.dummy.matrix)
+    }
+    return tile
+  }
+
+  animatePlacements(placements, gridRadius, delay) {
+    let i = 0
+    const dropHeight = 5
+    const animDuration = 0.4
+
+    const step = () => {
+      if (i >= placements.length) {
+        return
+      }
+      const tile = this.placeTile(placements[i], gridRadius)
+      if (tile && tile.instanceId !== null) {
+        // Get world position for tile
+        const pos = HexTileGeometry.getWorldPosition(
+          tile.gridX - gridRadius,
+          tile.gridZ - gridRadius
+        )
+        const rotation = -tile.rotation * Math.PI / 3  // Negative to match updateHexMatrices
+
+        // Start above and animate down
+        const anim = { y: dropHeight, scale: 0.5 }
+        const dummy = this.dummy
+        const mesh = this.hexMesh
+        const instanceId = tile.instanceId
+
+        gsap.to(anim, {
+          y: 0,
+          scale: 1,
+          duration: animDuration,
+          ease: 'power2.out',
+          onUpdate: () => {
+            dummy.position.set(pos.x, anim.y, pos.z)
+            dummy.rotation.y = rotation
+            dummy.scale.setScalar(anim.scale)
+            dummy.updateMatrix()
+            mesh.setMatrixAt(instanceId, dummy.matrix)
+          }
+        })
+      }
+      i++
+      setTimeout(step, delay)
+    }
+    step()
   }
 
   async initHexRoads() {
@@ -330,11 +399,11 @@ export class City {
     this.scene.add(this.hexGridDots)
   }
 
-  regenerate() {
-    this.regenerateHex()
+  regenerate(options = {}) {
+    this.regenerateHex(options)
   }
 
-  async regenerateHex() {
+  async regenerateHex(options = {}) {
     if (this.hexMesh) {
       for (const tile of this.hexTiles) {
         if (tile.instanceId !== null) {
@@ -362,8 +431,11 @@ export class City {
     // Clear cached rules to pick up any changes
     this.hexWfcRules = null
 
-    this.generateHexRoadsWFC()
-    this.updateHexMatrices()
+    this.generateHexRoadsWFC(options)
+    // Only update immediately if not animating (animation handles its own updates)
+    if (!options.animate) {
+      this.updateHexMatrices()
+    }
     this.createHexGridHelper()
   }
 
