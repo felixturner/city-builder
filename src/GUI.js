@@ -138,7 +138,7 @@ export class GUIManager {
       demo.city.regenerate({
         animate: allParams.roads.animateWFC,
         animateDelay: allParams.roads.animateDelay,
-        maxLevel: allParams.roads.useLevels ? 2 : 0,
+        levelsCount: allParams.roads.useLevels ? 3 : 1,
       })
       // Restore hex grid visibility from GUI state
       if (demo.city.hexGridLines) demo.city.hexGridLines.visible = allParams.debug.hexGrid

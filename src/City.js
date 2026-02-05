@@ -132,18 +132,24 @@ export class City {
       HexTileType.COAST_C,
       HexTileType.COAST_D,
       HexTileType.COAST_E,
-      // Slopes
+      // High slopes (1u rise)
       HexTileType.GRASS_SLOPE_HIGH,
       HexTileType.ROAD_A_SLOPE_HIGH,
       HexTileType.GRASS_CLIFF,
-      HexTileType.GRASS_CLIFF_B,
+      // HexTileType.GRASS_CLIFF_B,
       HexTileType.GRASS_CLIFF_C,
+      // Low slopes (0.5u rise)
+      HexTileType.GRASS_SLOPE_LOW,
+      HexTileType.ROAD_A_SLOPE_LOW,
+      HexTileType.GRASS_CLIFF_LOW,
+      // HexTileType.GRASS_CLIFF_LOW_B,
+      // HexTileType.GRASS_CLIFF_LOW_C,
     ]
 
-    const maxLevel = options.maxLevel ?? 1
+    const levelsCount = options.levelsCount ?? 2
 
     if (!this.hexWfcRules) {
-      this.hexWfcRules = HexWFCAdjacencyRules.fromTileDefinitions(tileTypes, maxLevel)
+      this.hexWfcRules = HexWFCAdjacencyRules.fromTileDefinitions(tileTypes, levelsCount)
     }
 
     const weights = { ...options.weights }
@@ -156,7 +162,7 @@ export class City {
       seed,
       maxRestarts: options.maxRestarts ?? 10,
       tileTypes,
-      maxLevel,
+      levelsCount,
     })
 
     // Seed center tile with grass at level 0
@@ -215,7 +221,7 @@ export class City {
     let i = 0
     const dropHeight = 5
     const animDuration = 0.4
-    const LEVEL_HEIGHT = 1
+    const LEVEL_HEIGHT = 0.5
 
     const step = () => {
       if (i >= placements.length) {
@@ -310,7 +316,7 @@ export class City {
     const dummy = this.dummy
     const rotationAngles = [0, 1, 2, 3, 4, 5].map(r => -r * Math.PI / 3)
     const gridRadius = this.wfcGridRadius ?? 0
-    const LEVEL_HEIGHT = 1  // Height per level (slopes go from Y=1 to Y=2)
+    const LEVEL_HEIGHT = 0.5  // Height per level (0.5 world units)
 
     for (const tile of this.hexTiles) {
       if (tile.instanceId === null) continue
@@ -540,7 +546,7 @@ export class City {
   createTileLabels() {
     this.clearTileLabels()
     const gridRadius = this.wfcGridRadius ?? this.hexGridRadius
-    const LEVEL_HEIGHT = 1
+    const LEVEL_HEIGHT = 0.5
     const TILE_SURFACE = 1  // Height of tile mesh surface
 
     // Create reverse map: type number -> name

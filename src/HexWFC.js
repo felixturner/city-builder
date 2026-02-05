@@ -26,6 +26,7 @@ const highEdgeCache = new Map()
 /**
  * Get the level for a specific edge of a tile
  * Slopes have different levels on high vs low edges
+ * Uses levelIncrement from tile definition (default 1)
  */
 function getEdgeLevel(tileType, rotation, dir, baseLevel) {
   const def = HexTileDefinitions[tileType]
@@ -49,8 +50,9 @@ function getEdgeLevel(tileType, rotation, dir, baseLevel) {
     highEdgeCache.set(cacheKey, highEdges)
   }
 
-  // High edges are at baseLevel + 1, low edges at baseLevel
-  return highEdges.has(dir) ? baseLevel + 1 : baseLevel
+  // High edges are at baseLevel + levelIncrement, low edges at baseLevel
+  const levelIncrement = def.levelIncrement ?? 1
+  return highEdges.has(dir) ? baseLevel + levelIncrement : baseLevel
 }
 
 /**
@@ -116,8 +118,10 @@ export class HexWFCAdjacencyRules {
    * Build adjacency rules from HexTileDefinitions
    * Two tiles are compatible if their edge types AND levels match
    * Only builds byEdge index - propagation uses this directly (O(n) instead of O(n²))
+   * @param {number[]} tileTypes - Tile types to include
+   * @param {number} levelsCount - Total number of levels (e.g., 3 means levels 0, 1, 2)
    */
-  static fromTileDefinitions(tileTypes = null, maxLevel = 1) {
+  static fromTileDefinitions(tileTypes = null, levelsCount = 2) {
     const rules = new HexWFCAdjacencyRules()
 
     // Use provided tile types or all defined types
@@ -133,13 +137,16 @@ export class HexWFCAdjacencyRules {
 
       for (let rotation = 0; rotation < 6; rotation++) {
         if (isSlope) {
-          // Slopes connect level N to N+1
-          for (let level = 0; level < maxLevel; level++) {
+          // Slopes connect level N to N + levelIncrement
+          // Max base level = levelsCount - 1 - increment
+          const increment = def.levelIncrement ?? 1
+          const maxBaseLevel = levelsCount - 1 - increment
+          for (let level = 0; level <= maxBaseLevel; level++) {
             allStates.push({ type, rotation, level })
           }
         } else {
           // Flat tiles at all levels
-          for (let level = 0; level <= maxLevel; level++) {
+          for (let level = 0; level < levelsCount; level++) {
             allStates.push({ type, rotation, level })
           }
         }
@@ -209,7 +216,7 @@ export class HexWFCSolver {
       seed: options.seed ?? null,
       maxRestarts: options.maxRestarts ?? 10,
       tileTypes: options.tileTypes ?? null,  // Restrict to certain tile types
-      maxLevel: options.maxLevel ?? 1,  // Maximum elevation level
+      levelsCount: options.levelsCount ?? 2,  // Total number of levels (e.g., 3 means 0, 1, 2)
       ...options
     }
 
@@ -232,7 +239,7 @@ export class HexWFCSolver {
     this.collapseOrder = []  // Reset on each attempt
     // Get tile types to use
     const types = this.options.tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
-    const maxLevel = this.options.maxLevel
+    const levelsCount = this.options.levelsCount
 
     // Generate all states (type × 6 rotations × levels)
     const allStates = []
@@ -244,13 +251,16 @@ export class HexWFCSolver {
 
       for (let rotation = 0; rotation < 6; rotation++) {
         if (isSlope) {
-          // Slopes connect level N to N+1
-          for (let level = 0; level < maxLevel; level++) {
+          // Slopes connect level N to N + levelIncrement
+          // Max base level = levelsCount - 1 - increment
+          const increment = def.levelIncrement ?? 1
+          const maxBaseLevel = levelsCount - 1 - increment
+          for (let level = 0; level <= maxBaseLevel; level++) {
             allStates.push({ type, rotation, level })
           }
         } else {
           // Flat tiles at all levels
-          for (let level = 0; level <= maxLevel; level++) {
+          for (let level = 0; level < levelsCount; level++) {
             allStates.push({ type, rotation, level })
           }
         }

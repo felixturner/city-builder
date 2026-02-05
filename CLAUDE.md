@@ -31,6 +31,7 @@ a city builder toy.
 - [ ] create my own roof tiles in blender or get from a pack. (look at lego blocks)
 - [ ] add subtle noise grain etc?
 - [ ] click and drag to move buildings?
+- [ ] Consider preventing road slopes from meeting (use 'road_slope' edge type instead of 'road')
 
 ## Done
 

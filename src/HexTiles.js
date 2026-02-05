@@ -50,12 +50,17 @@ export const HexTileType = {
   RIVER_CROSSING_A: 60,
   RIVER_CROSSING_B: 61,
 
-  // Slopes (70-79)
+  // Slopes (70-89)
   GRASS_SLOPE_HIGH: 70,
   ROAD_A_SLOPE_HIGH: 71,
   GRASS_CLIFF: 72,
   GRASS_CLIFF_B: 73,
   GRASS_CLIFF_C: 74,
+  GRASS_SLOPE_LOW: 75,
+  ROAD_A_SLOPE_LOW: 76,
+  GRASS_CLIFF_LOW: 77,
+  GRASS_CLIFF_LOW_B: 78,
+  GRASS_CLIFF_LOW_C: 79,
 }
 
 /**
@@ -321,33 +326,74 @@ export const HexTileDefinitions = {
   },
 
   // === SLOPES ===
-  // Slopes connect two levels. High edges (NE, E, SE) are at level+1, low edges at base level.
+  // Slopes connect two levels. High edges (NE, E, SE) are at level + levelIncrement.
   // Edge types are regular (grass, road) - the level handles height matching.
+  // levelIncrement: 2 = 1u rise (2 × 0.5u), levelIncrement: 1 = 0.5u rise (1 × 0.5u)
+
+  // High slopes: 1u rise (levelIncrement: 2)
   [HexTileType.GRASS_SLOPE_HIGH]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
     weight: 200,
-    highEdges: ['NE', 'E', 'SE'],  // These edges connect to level+1
+    highEdges: ['NE', 'E', 'SE'],
+    levelIncrement: 2,
   },
   [HexTileType.ROAD_A_SLOPE_HIGH]: {
     edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
     weight: 120,
-    highEdges: ['NE', 'E', 'SE'],  // These edges connect to level+1
+    highEdges: ['NE', 'E', 'SE'],
+    levelIncrement: 2,
   },
   // Cliff - uses flat grass geometry but connects levels like a slope (vertical drop)
   [HexTileType.GRASS_CLIFF]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
     weight: 60,
     highEdges: ['NE', 'E', 'SE'],  // 3 high edges (half the hex)
+    levelIncrement: 2,
   },
   [HexTileType.GRASS_CLIFF_B]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
     weight: 60,
     highEdges: ['NE', 'E', 'SE', 'SW'],  // 4 high edges (wider cliff wrap)
+    levelIncrement: 2,
   },
   [HexTileType.GRASS_CLIFF_C]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
     weight: 60,
     highEdges: ['E'],  // 1 high edge (narrow point)
+    levelIncrement: 2,
+  },
+
+  // Low slopes: 0.5u rise (levelIncrement: 1)
+  [HexTileType.GRASS_SLOPE_LOW]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 200,
+    highEdges: ['NE', 'E', 'SE'],
+    levelIncrement: 1,
+  },
+  [HexTileType.ROAD_A_SLOPE_LOW]: {
+    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 120,
+    highEdges: ['NE', 'E', 'SE'],
+    levelIncrement: 1,
+  },
+  // Low cliffs: 0.5u rise
+  [HexTileType.GRASS_CLIFF_LOW]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 60,
+    highEdges: ['NE', 'E', 'SE'],  // 3 high edges
+    levelIncrement: 1,
+  },
+  [HexTileType.GRASS_CLIFF_LOW_B]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 60,
+    highEdges: ['NE', 'E', 'SE', 'SW'],  // 4 high edges
+    levelIncrement: 1,
+  },
+  [HexTileType.GRASS_CLIFF_LOW_C]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 60,
+    highEdges: ['E'],  // 1 high edge
+    levelIncrement: 1,
   },
 }
 
@@ -454,12 +500,19 @@ export const HexMeshNames = {
   [HexTileType.RIVER_CROSSING_A]: 'hex_river_crossing_A',
   [HexTileType.RIVER_CROSSING_B]: 'hex_river_crossing_B',
 
-  // Slopes
+  // High slopes (1u rise)
   [HexTileType.GRASS_SLOPE_HIGH]: 'hex_grass_sloped_high',
   [HexTileType.ROAD_A_SLOPE_HIGH]: 'hex_road_A_sloped_high',
   [HexTileType.GRASS_CLIFF]: 'hex_grass',  // Reuse flat grass for vertical cliff
   [HexTileType.GRASS_CLIFF_B]: 'hex_grass',
   [HexTileType.GRASS_CLIFF_C]: 'hex_grass',
+
+  // Low slopes (0.5u rise)
+  [HexTileType.GRASS_SLOPE_LOW]: 'hex_grass_sloped_low',
+  [HexTileType.ROAD_A_SLOPE_LOW]: 'hex_road_A_sloped_low',
+  [HexTileType.GRASS_CLIFF_LOW]: 'hex_grass',  // Reuse flat grass for vertical cliff
+  [HexTileType.GRASS_CLIFF_LOW_B]: 'hex_grass',
+  [HexTileType.GRASS_CLIFF_LOW_C]: 'hex_grass',
 }
 
 /**
