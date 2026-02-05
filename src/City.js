@@ -17,6 +17,7 @@ import gsap from 'gsap'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import { HexWFCSolver, HexWFCAdjacencyRules } from './HexWFC.js'
 import { HexTile, HexTileGeometry, HexTileType, HexTileDefinitions, HexDir, getHexNeighborOffset } from './HexTiles.js'
+import { Decorations } from './Decorations.js'
 import { Demo } from './Demo.js'
 
 export class City {
@@ -40,14 +41,21 @@ export class City {
     // Debug tile labels
     this.tileLabels = new Object3D()
     this.tileLabels.visible = false
+
+    // Decorations (trees, etc.)
+    this.decorations = new Decorations(scene)
   }
 
   async init() {
     await HexTileGeometry.init('./assets/models/hex-terrain.glb')
     this.createFloor()
     await this.initHexRoads()
+    await this.decorations.init(HexTileGeometry.gltfScene, this.roadMaterial)
     this.generateHexRoadsWFC()
     this.updateHexMatrices()
+    this.decorations.populate(this.hexTiles, this.wfcGridRadius)
+    this.decorations.populateBuildings(this.hexTiles, this.hexGrid, this.wfcGridRadius)
+    this.decorations.populateBridges(this.hexTiles, this.wfcGridRadius)
     this.createHexGridHelper()
     this.scene.add(this.tileLabels)
   }
@@ -112,7 +120,7 @@ export class City {
       HexTileType.RIVER_A,
       HexTileType.RIVER_A_CURVY,
       HexTileType.RIVER_B,
-      HexTileType.RIVER_C,
+      // HexTileType.RIVER_C,
       HexTileType.RIVER_D,
       HexTileType.RIVER_E,
       HexTileType.RIVER_F,
@@ -227,6 +235,9 @@ export class City {
       if (i >= placements.length) {
         // All tiles placed - update final positions (level already set by WFC)
         this.updateHexMatrices()
+        this.decorations.populate(this.hexTiles, gridRadius)
+        this.decorations.populateBuildings(this.hexTiles, this.hexGrid, gridRadius)
+        this.decorations.populateBridges(this.hexTiles, gridRadius)
         return
       }
       const tile = this.placeTile(placements[i], gridRadius)
@@ -489,6 +500,9 @@ export class City {
   }
 
   async regenerateHex(options = {}) {
+    // Clear decorations first
+    this.decorations.clear()
+
     if (this.hexMesh) {
       for (const tile of this.hexTiles) {
         if (tile.instanceId !== null) {
@@ -520,6 +534,9 @@ export class City {
     // Only update immediately if not animating (animation handles its own updates)
     if (!options.animate) {
       this.updateHexMatrices()
+      this.decorations.populate(this.hexTiles, this.wfcGridRadius)
+      this.decorations.populateBuildings(this.hexTiles, this.hexGrid, this.wfcGridRadius)
+      this.decorations.populateBridges(this.hexTiles, this.wfcGridRadius)
     }
     this.createHexGridHelper()
 
