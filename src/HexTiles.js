@@ -49,6 +49,13 @@ export const HexTileType = {
   // Crossings (60-69)
   RIVER_CROSSING_A: 60,
   RIVER_CROSSING_B: 61,
+
+  // Slopes (70-79)
+  GRASS_SLOPE_HIGH: 70,
+  ROAD_A_SLOPE_HIGH: 71,
+  GRASS_CLIFF: 72,
+  GRASS_CLIFF_B: 73,
+  GRASS_CLIFF_C: 74,
 }
 
 /**
@@ -60,6 +67,8 @@ export const EdgeType = {
   RIVER: 'river',
   OCEAN: 'ocean',
   COAST: 'coast',
+  CLIFF: 'cliff',
+  CLIFF_ROAD: 'cliff_road',
 }
 
 /**
@@ -310,6 +319,36 @@ export const HexTileDefinitions = {
     edges: { NE: 'road', E: 'river', SE: 'grass', SW: 'road', W: 'river', NW: 'grass' },
     weight: 5,
   },
+
+  // === SLOPES ===
+  // Slopes connect two levels. High edges (NE, E, SE) are at level+1, low edges at base level.
+  // Edge types are regular (grass, road) - the level handles height matching.
+  [HexTileType.GRASS_SLOPE_HIGH]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 200,
+    highEdges: ['NE', 'E', 'SE'],  // These edges connect to level+1
+  },
+  [HexTileType.ROAD_A_SLOPE_HIGH]: {
+    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 120,
+    highEdges: ['NE', 'E', 'SE'],  // These edges connect to level+1
+  },
+  // Cliff - uses flat grass geometry but connects levels like a slope (vertical drop)
+  [HexTileType.GRASS_CLIFF]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 60,
+    highEdges: ['NE', 'E', 'SE'],  // 3 high edges (half the hex)
+  },
+  [HexTileType.GRASS_CLIFF_B]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 60,
+    highEdges: ['NE', 'E', 'SE', 'SW'],  // 4 high edges (wider cliff wrap)
+  },
+  [HexTileType.GRASS_CLIFF_C]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 60,
+    highEdges: ['E'],  // 1 high edge (narrow point)
+  },
 }
 
 /**
@@ -327,6 +366,7 @@ export class HexTile {
     this.rotation = rotation  // 0-5 (60° steps)
     this.instanceId = null
     this.color = HexTile.DEFAULT_COLOR.clone()
+    this.level = 0  // Elevation level, set by height propagation
   }
 
   /**
@@ -336,6 +376,32 @@ export class HexTile {
     const baseDef = HexTileDefinitions[this.type]
     if (!baseDef) return null
     return rotateHexEdges(baseDef.edges, this.rotation)
+  }
+
+  /**
+   * Get high edges for this tile at its current rotation (for slope tiles)
+   * Returns a Set of direction strings, or null if not a slope tile
+   */
+  getHighEdges() {
+    const baseDef = HexTileDefinitions[this.type]
+    if (!baseDef || !baseDef.highEdges) return null
+
+    // Rotate high edges by the tile's rotation
+    const rotatedHighEdges = new Set()
+    for (const dir of baseDef.highEdges) {
+      const dirIndex = HexDir.indexOf(dir)
+      const rotatedIndex = (dirIndex + this.rotation) % 6
+      rotatedHighEdges.add(HexDir[rotatedIndex])
+    }
+    return rotatedHighEdges
+  }
+
+  /**
+   * Check if this tile is a slope tile
+   */
+  isSlope() {
+    const baseDef = HexTileDefinitions[this.type]
+    return baseDef && baseDef.highEdges && baseDef.highEdges.length > 0
   }
 }
 
@@ -387,6 +453,13 @@ export const HexMeshNames = {
   // Crossings
   [HexTileType.RIVER_CROSSING_A]: 'hex_river_crossing_A',
   [HexTileType.RIVER_CROSSING_B]: 'hex_river_crossing_B',
+
+  // Slopes
+  [HexTileType.GRASS_SLOPE_HIGH]: 'hex_grass_sloped_high',
+  [HexTileType.ROAD_A_SLOPE_HIGH]: 'hex_road_A_sloped_high',
+  [HexTileType.GRASS_CLIFF]: 'hex_grass',  // Reuse flat grass for vertical cliff
+  [HexTileType.GRASS_CLIFF_B]: 'hex_grass',
+  [HexTileType.GRASS_CLIFF_C]: 'hex_grass',
 }
 
 /**

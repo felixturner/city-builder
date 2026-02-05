@@ -11,7 +11,7 @@ import {
   PCFSoftShadowMap,
   AxesHelper,
 } from 'three/webgpu'
-import { OrbitControls } from 'three/examples/jsm/Addons.js'
+import { OrbitControls, CSS2DRenderer } from 'three/examples/jsm/Addons.js'
 import Stats from 'three/addons/libs/stats.module.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
 import { Pointer } from './lib/Pointer.js'
@@ -44,6 +44,7 @@ export class Demo {
     this.city = null
     this.lighting = null
     this.params = null
+    this.cssRenderer = null  // CSS2DRenderer for debug labels
 
     if (Demo.instance != null) {
       console.warn('Demo instance already exists')
@@ -75,6 +76,7 @@ export class Demo {
     this.initCamera()
     this.initPostProcessing()
     this.initStats()
+    this.initCSSRenderer()
 
     this.onResize()
     this.pointerHandler = new Pointer(
@@ -233,8 +235,18 @@ export class Demo {
     document.body.appendChild(this.stats.dom)
   }
 
+  initCSSRenderer() {
+    this.cssRenderer = new CSS2DRenderer()
+    this.cssRenderer.setSize(window.innerWidth, window.innerHeight)
+    this.cssRenderer.domElement.style.position = 'absolute'
+    this.cssRenderer.domElement.style.top = '0'
+    this.cssRenderer.domElement.style.left = '0'
+    this.cssRenderer.domElement.style.pointerEvents = 'none'
+    document.body.appendChild(this.cssRenderer.domElement)
+  }
+
   onResize(_e, toSize) {
-    const { renderer } = this
+    const { renderer, cssRenderer } = this
     const size = new Vector2(window.innerWidth, window.innerHeight)
     if (toSize) size.copy(toSize)
 
@@ -244,6 +256,10 @@ export class Demo {
     renderer.setSize(size.x, size.y)
     renderer.domElement.style.width = `${size.x}px`
     renderer.domElement.style.height = `${size.y}px`
+
+    if (cssRenderer) {
+      cssRenderer.setSize(size.x, size.y)
+    }
   }
 
   animate() {
@@ -263,6 +279,11 @@ export class Demo {
 
 
     postFX.render()
+
+    // Render CSS labels if visible
+    if (this.cssRenderer && this.city?.tileLabels?.visible) {
+      this.cssRenderer.render(this.scene, this.camera)
+    }
 
     this.stats.end()
   }

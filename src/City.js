@@ -14,8 +14,9 @@ import {
 } from 'three/webgpu'
 import { uniform, vec3, uv, step, min, float } from 'three/tsl'
 import gsap from 'gsap'
+import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import { HexWFCSolver, HexWFCAdjacencyRules } from './HexWFC.js'
-import { HexTile, HexTileGeometry, HexTileType } from './HexTiles.js'
+import { HexTile, HexTileGeometry, HexTileType, HexTileDefinitions, HexDir, getHexNeighborOffset } from './HexTiles.js'
 import { Demo } from './Demo.js'
 
 export class City {
@@ -35,6 +36,10 @@ export class City {
     // Environment rotation uniforms
     this.envRotation = uniform(0)
     this.envRotationX = uniform(0)
+
+    // Debug tile labels
+    this.tileLabels = new Object3D()
+    this.tileLabels.visible = false
   }
 
   async init() {
@@ -44,6 +49,7 @@ export class City {
     this.generateHexRoadsWFC()
     this.updateHexMatrices()
     this.createHexGridHelper()
+    this.scene.add(this.tileLabels)
   }
 
   createFloor() {
@@ -91,16 +97,16 @@ export class City {
       // Roads
       HexTileType.ROAD_A,
       HexTileType.ROAD_B,
-      HexTileType.ROAD_C,
+      // HexTileType.ROAD_C,
       HexTileType.ROAD_D,
       HexTileType.ROAD_E,
       HexTileType.ROAD_F,
-      HexTileType.ROAD_G,
+      // HexTileType.ROAD_G,
       HexTileType.ROAD_H,
-      HexTileType.ROAD_I,
+      // HexTileType.ROAD_I,
       HexTileType.ROAD_J,
-      HexTileType.ROAD_K,
-      HexTileType.ROAD_L,
+      // HexTileType.ROAD_K,
+      // HexTileType.ROAD_L,
       HexTileType.ROAD_M,
       // Rivers
       HexTileType.RIVER_A,
@@ -112,10 +118,10 @@ export class City {
       HexTileType.RIVER_F,
       HexTileType.RIVER_G,
       HexTileType.RIVER_H,
-      HexTileType.RIVER_I,
-      HexTileType.RIVER_J,
-      HexTileType.RIVER_K,
-      HexTileType.RIVER_L,
+      // HexTileType.RIVER_I,
+      // HexTileType.RIVER_J,
+      // HexTileType.RIVER_K,
+      // HexTileType.RIVER_L,
       // Crossings
       HexTileType.RIVER_CROSSING_A,
       HexTileType.RIVER_CROSSING_B,
@@ -126,10 +132,18 @@ export class City {
       HexTileType.COAST_C,
       HexTileType.COAST_D,
       HexTileType.COAST_E,
+      // Slopes
+      HexTileType.GRASS_SLOPE_HIGH,
+      HexTileType.ROAD_A_SLOPE_HIGH,
+      HexTileType.GRASS_CLIFF,
+      HexTileType.GRASS_CLIFF_B,
+      HexTileType.GRASS_CLIFF_C,
     ]
 
+    const maxLevel = options.maxLevel ?? 1
+
     if (!this.hexWfcRules) {
-      this.hexWfcRules = HexWFCAdjacencyRules.fromTileDefinitions(tileTypes)
+      this.hexWfcRules = HexWFCAdjacencyRules.fromTileDefinitions(tileTypes, maxLevel)
     }
 
     const weights = { ...options.weights }
@@ -142,12 +156,13 @@ export class City {
       seed,
       maxRestarts: options.maxRestarts ?? 10,
       tileTypes,
+      maxLevel,
     })
 
-    // Seed center tile with grass
+    // Seed center tile with grass at level 0
     const centerX = Math.floor(size / 2)
     const centerZ = Math.floor(size / 2)
-    const seedTiles = [{ x: centerX, z: centerZ, type: HexTileType.GRASS, rotation: 0 }]
+    const seedTiles = [{ x: centerX, z: centerZ, type: HexTileType.GRASS, rotation: 0, level: 0 }]
 
     const startTime = performance.now()
     const result = solver.solve(seedTiles)
@@ -171,6 +186,7 @@ export class City {
       for (const placement of placements) {
         this.placeTile(placement, gridRadius)
       }
+      // Level is now set by WFC, no need for propagateHeights()
       this.updateHexMatrices()
     }
   }
@@ -179,6 +195,7 @@ export class City {
     if (!this.isInHexRadius(placement.gridX - gridRadius, placement.gridZ - gridRadius, gridRadius)) return null
 
     const tile = new HexTile(placement.gridX, placement.gridZ, placement.type, placement.rotation)
+    tile.level = placement.level ?? 0  // Level from WFC
     this.hexGrid[placement.gridX][placement.gridZ] = tile
     this.hexTiles.push(tile)
 
@@ -198,9 +215,12 @@ export class City {
     let i = 0
     const dropHeight = 5
     const animDuration = 0.4
+    const LEVEL_HEIGHT = 1
 
     const step = () => {
       if (i >= placements.length) {
+        // All tiles placed - update final positions (level already set by WFC)
+        this.updateHexMatrices()
         return
       }
       const tile = this.placeTile(placements[i], gridRadius)
@@ -211,15 +231,16 @@ export class City {
           tile.gridZ - gridRadius
         )
         const rotation = -tile.rotation * Math.PI / 3  // Negative to match updateHexMatrices
+        const targetY = tile.level * LEVEL_HEIGHT
 
-        // Start above and animate down
-        const anim = { y: dropHeight, scale: 0.5 }
+        // Start above and animate down to tile's level
+        const anim = { y: dropHeight + targetY, scale: 0.5 }
         const dummy = this.dummy
         const mesh = this.hexMesh
         const instanceId = tile.instanceId
 
         gsap.to(anim, {
-          y: 0,
+          y: targetY,
           scale: 1,
           duration: animDuration,
           ease: 'power2.out',
@@ -289,6 +310,7 @@ export class City {
     const dummy = this.dummy
     const rotationAngles = [0, 1, 2, 3, 4, 5].map(r => -r * Math.PI / 3)
     const gridRadius = this.wfcGridRadius ?? 0
+    const LEVEL_HEIGHT = 1  // Height per level (slopes go from Y=1 to Y=2)
 
     for (const tile of this.hexTiles) {
       if (tile.instanceId === null) continue
@@ -297,13 +319,70 @@ export class City {
         tile.gridX - gridRadius,
         tile.gridZ - gridRadius
       )
-      dummy.position.set(pos.x, 0, pos.z)
+      dummy.position.set(pos.x, tile.level * LEVEL_HEIGHT, pos.z)
       dummy.scale.set(1, 1, 1)
       dummy.rotation.y = rotationAngles[tile.rotation]
       dummy.updateMatrix()
 
       this.hexMesh.setMatrixAt(tile.instanceId, dummy.matrix)
       this.hexMesh.setVisibleAt(tile.instanceId, true)
+    }
+  }
+
+  /**
+   * Propagate levels after WFC generation
+   * BFS from center, adjusting level when crossing slope tile high edges
+   */
+  propagateHeights() {
+    if (!this.hexGrid || this.hexTiles.length === 0) return
+
+    const gridRadius = this.wfcGridRadius ?? 0
+    const size = gridRadius * 2 + 1
+    const centerX = Math.floor(size / 2)
+    const centerZ = Math.floor(size / 2)
+
+    // Find center tile
+    const centerTile = this.hexGrid[centerX]?.[centerZ]
+    if (!centerTile) return
+
+    // BFS queue: { tile, level }
+    const visited = new Set()
+    const queue = [{ tile: centerTile, level: 0 }]
+    visited.add(`${centerTile.gridX},${centerTile.gridZ}`)
+    centerTile.level = 0
+
+    while (queue.length > 0) {
+      const { tile, level } = queue.shift()
+
+      // Get high edges if this is a slope tile
+      const highEdges = tile.getHighEdges()
+
+      // Visit all neighbors
+      for (const dir of HexDir) {
+        const offset = getHexNeighborOffset(tile.gridX, tile.gridZ, dir)
+        const nx = tile.gridX + offset.dx
+        const nz = tile.gridZ + offset.dz
+
+        // Skip out of bounds
+        if (nx < 0 || nx >= size || nz < 0 || nz >= size) continue
+
+        const neighbor = this.hexGrid[nx]?.[nz]
+        if (!neighbor) continue
+
+        const key = `${nx},${nz}`
+        if (visited.has(key)) continue
+        visited.add(key)
+
+        // Calculate level delta based on whether we're crossing a high edge
+        let neighborLevel = level
+        if (highEdges && highEdges.has(dir)) {
+          // Exiting through high edge: neighbor is one level up
+          neighborLevel = level + 1
+        }
+
+        neighbor.level = neighborLevel
+        queue.push({ tile: neighbor, level: neighborLevel })
+      }
     }
   }
 
@@ -437,10 +516,81 @@ export class City {
       this.updateHexMatrices()
     }
     this.createHexGridHelper()
+
+    // Refresh labels if visible
+    if (this.tileLabels.visible) {
+      this.createTileLabels()
+    }
   }
 
   update(_dt) {
     // Future: animate tiles
+  }
+
+  // === Debug tile labels ===
+
+  clearTileLabels() {
+    while (this.tileLabels.children.length > 0) {
+      const label = this.tileLabels.children[0]
+      this.tileLabels.remove(label)
+      if (label.element) label.element.remove()
+    }
+  }
+
+  createTileLabels() {
+    this.clearTileLabels()
+    const gridRadius = this.wfcGridRadius ?? this.hexGridRadius
+    const LEVEL_HEIGHT = 1
+    const TILE_SURFACE = 1  // Height of tile mesh surface
+
+    // Create reverse map: type number -> name
+    const typeNames = {}
+    for (const [name, value] of Object.entries(HexTileType)) {
+      typeNames[value] = name
+    }
+
+    for (const tile of this.hexTiles) {
+
+      const pos = HexTileGeometry.getWorldPosition(
+        tile.gridX - gridRadius,
+        tile.gridZ - gridRadius
+      )
+
+      // Check if tile is a slope (has highEdges)
+      const def = HexTileDefinitions[tile.type]
+      const isSlope = def?.highEdges?.length > 0
+
+      // Create label element
+      const div = document.createElement('div')
+      div.className = 'tile-label'
+      const tileName = typeNames[tile.type] || tile.type
+      div.textContent = `${tileName}:${tile.level}`
+      const bgColor = isSlope ? 'rgba(200,0,0,0.5)' : 'rgba(0,0,0,0.3)'
+      div.style.cssText = `
+        color: white;
+        font-family: monospace;
+        font-size: 10px;
+        background: ${bgColor};
+        padding: 2px 4px;
+        border-radius: 2px;
+        white-space: nowrap;
+      `
+
+      const label = new CSS2DObject(div)
+      // Position at center top of tile (slopes get +1u Y)
+      const slopeOffset = isSlope ? 1 : 0
+      label.position.set(pos.x, (tile.level ?? 0) * LEVEL_HEIGHT + TILE_SURFACE + slopeOffset, pos.z)
+      this.tileLabels.add(label)
+    }
+  }
+
+  setTileLabelsVisible(visible) {
+    if (visible) {
+      this.createTileLabels()
+    } else {
+      this.clearTileLabels()
+    }
+    this.tileLabels.visible = visible
   }
 
   // Stub methods for Demo.js compatibility

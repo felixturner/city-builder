@@ -59,10 +59,11 @@ export class GUIManager {
     },
     debug: {
       view: 'final',
-      originHelper: true,
+      originHelper: false,
       debugCam: true,
       squareGrid: true,
       hexGrid: false,
+      tileLabels: false,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
@@ -77,6 +78,7 @@ export class GUIManager {
       hexGridRadius: 6,
       animateWFC: false,
       animateDelay: 10,
+      useLevels: true,
     },
   }
 
@@ -120,6 +122,9 @@ export class GUIManager {
       if (demo.city.hexGridLines) demo.city.hexGridLines.visible = v
       if (demo.city.hexGridDots) demo.city.hexGridDots.visible = v
     })
+    gui.add(allParams.debug, 'tileLabels').name('Tile Labels').onChange((v) => {
+      demo.city.setTileLabelsVisible(v)
+    })
 
     // DPR dropdown (default 1)
     allParams.renderer.dpr = 1
@@ -133,6 +138,7 @@ export class GUIManager {
       demo.city.regenerate({
         animate: allParams.roads.animateWFC,
         animateDelay: allParams.roads.animateDelay,
+        maxLevel: allParams.roads.useLevels ? 2 : 0,
       })
       // Restore hex grid visibility from GUI state
       if (demo.city.hexGridLines) demo.city.hexGridLines.visible = allParams.debug.hexGrid
@@ -170,6 +176,7 @@ export class GUIManager {
     // Roads folder
     const mapFolder = gui.addFolder('Map').close()
     mapFolder.add(allParams.roads, 'wfcSeed', 0, 9999, 1).name('WFC Seed')
+    mapFolder.add(allParams.roads, 'useLevels').name('Use Levels')
     mapFolder.add(allParams.roads, 'animateWFC').name('Animate WFC')
     mapFolder.add(allParams.roads, 'animateDelay', 5, 40).name('Anim Delay (ms)')
 
@@ -313,6 +320,10 @@ export class GUIManager {
     demo.controls.minDistance = params.debug.debugCam ? 0 : 40
     demo.controls.maxDistance = params.debug.debugCam ? Infinity : 470
     if (demo.axesHelper) demo.axesHelper.visible = params.debug.originHelper
+
+    // Hex grid visibility
+    if (demo.city.hexGridLines) demo.city.hexGridLines.visible = params.debug.hexGrid
+    if (demo.city.hexGridDots) demo.city.hexGridDots.visible = params.debug.hexGrid
 
     // Renderer
     demo.renderer.setPixelRatio(params.renderer.dpr)

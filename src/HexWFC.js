@@ -9,23 +9,68 @@ import {
 } from './HexTiles.js'
 
 /**
+ * Check if two edges are compatible (edge type + level must match)
+ * @param {string} edgeTypeA - Edge type (grass, road, etc.)
+ * @param {number} levelA - Level of edge A
+ * @param {string} edgeTypeB - Edge type of neighbor
+ * @param {number} levelB - Level of edge B
+ */
+function edgesCompatible(edgeTypeA, levelA, edgeTypeB, levelB) {
+  // Both edge type and level must match
+  return edgeTypeA === edgeTypeB && levelA === levelB
+}
+
+// Cache for rotated high edges: Map<"type_rotation", Set<dir>>
+const highEdgeCache = new Map()
+
+/**
+ * Get the level for a specific edge of a tile
+ * Slopes have different levels on high vs low edges
+ */
+function getEdgeLevel(tileType, rotation, dir, baseLevel) {
+  const def = HexTileDefinitions[tileType]
+  if (!def || !def.highEdges) {
+    // Non-slope tile: all edges at base level
+    return baseLevel
+  }
+
+  // Check cache for rotated high edges
+  const cacheKey = `${tileType}_${rotation}`
+  let highEdges = highEdgeCache.get(cacheKey)
+
+  if (!highEdges) {
+    // Compute and cache rotated high edges
+    highEdges = new Set()
+    for (const highDir of def.highEdges) {
+      const dirIndex = HexDir.indexOf(highDir)
+      const rotatedIndex = (dirIndex + rotation) % 6
+      highEdges.add(HexDir[rotatedIndex])
+    }
+    highEdgeCache.set(cacheKey, highEdges)
+  }
+
+  // High edges are at baseLevel + 1, low edges at baseLevel
+  return highEdges.has(dir) ? baseLevel + 1 : baseLevel
+}
+
+/**
  * HexWFCCell - Tracks possibility space for one hex grid cell
  */
 export class HexWFCCell {
   constructor(allStates) {
-    // Each state is { type, rotation } - store as "type_rotation" keys
+    // Each state is { type, rotation, level } - store as "type_rotation_level" keys
     this.possibilities = new Set(allStates.map(s => HexWFCCell.stateKey(s)))
     this.collapsed = false
-    this.tile = null  // { type, rotation } when collapsed
+    this.tile = null  // { type, rotation, level } when collapsed
   }
 
   static stateKey(state) {
-    return `${state.type}_${state.rotation}`
+    return `${state.type}_${state.rotation}_${state.level ?? 0}`
   }
 
   static parseKey(key) {
-    const [type, rotation] = key.split('_').map(Number)
-    return { type, rotation }
+    const [type, rotation, level] = key.split('_').map(Number)
+    return { type, rotation, level: level ?? 0 }
   }
 
   get entropy() {
@@ -56,77 +101,77 @@ export class HexWFCCell {
  */
 export class HexWFCAdjacencyRules {
   constructor() {
-    // For each state, what states can be placed in each direction
-    // Map<stateKey, { N, NE, SE, S, SW, NW: Set<stateKey> }>
+    // For each state, what states can be placed in each direction (unused now, kept for API)
     this.allowed = new Map()
 
-    // Index by edge type and direction: edgeType → dir → Set<stateKey>
-    // Used for position-aware constraint lookup
+    // Pre-computed edge info per state: stateKey → { dir: { type, level } }
+    this.stateEdges = new Map()
+
+    // 3D index by edge type, direction, AND level: edgeType → dir → level → Set<stateKey>
+    // This allows O(1) lookup during propagation instead of O(candidates) filtering
     this.byEdge = new Map()
   }
 
   /**
    * Build adjacency rules from HexTileDefinitions
-   * Two tiles are compatible if their edge types match
+   * Two tiles are compatible if their edge types AND levels match
+   * Only builds byEdge index - propagation uses this directly (O(n) instead of O(n²))
    */
-  static fromTileDefinitions(tileTypes = null) {
+  static fromTileDefinitions(tileTypes = null, maxLevel = 1) {
     const rules = new HexWFCAdjacencyRules()
 
     // Use provided tile types or all defined types
     const types = tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
 
-    // Generate all (type, rotation) combinations
-    // Hex tiles have 6 rotations (0-5, each 60°)
+    // Generate all (type, rotation, level) combinations
     const allStates = []
     for (const type of types) {
-      if (HexTileDefinitions[type]) {
-        for (let rotation = 0; rotation < 6; rotation++) {
-          allStates.push({ type, rotation })
-        }
-      }
-    }
+      const def = HexTileDefinitions[type]
+      if (!def) continue
 
-    // Build edge type index: for each (edgeType, direction), which states have that edge type?
-    for (const state of allStates) {
-      const key = HexWFCCell.stateKey(state)
-      const edges = rotateHexEdges(HexTileDefinitions[state.type].edges, state.rotation)
+      const isSlope = def.highEdges && def.highEdges.length > 0
 
-      for (const dir of HexDir) {
-        const edgeType = edges[dir]
-        if (!rules.byEdge.has(edgeType)) {
-          rules.byEdge.set(edgeType, {})
-          for (const d of HexDir) rules.byEdge.get(edgeType)[d] = new Set()
-        }
-        rules.byEdge.get(edgeType)[dir].add(key)
-      }
-    }
-
-    // For each state pair, check if they're compatible in each direction
-    // Using geometric opposites for the base rules
-    for (const stateA of allStates) {
-      const keyA = HexWFCCell.stateKey(stateA)
-      const edgesA = rotateHexEdges(HexTileDefinitions[stateA.type].edges, stateA.rotation)
-
-      const allowed = {}
-      for (const dir of HexDir) {
-        allowed[dir] = new Set()
-      }
-
-      for (const dir of HexDir) {
-        const oppDir = HexOpposite[dir]
-
-        for (const stateB of allStates) {
-          const keyB = HexWFCCell.stateKey(stateB)
-          const edgesB = rotateHexEdges(HexTileDefinitions[stateB.type].edges, stateB.rotation)
-
-          // Compatible if edge types match
-          if (edgesA[dir] === edgesB[oppDir]) {
-            allowed[dir].add(keyB)
+      for (let rotation = 0; rotation < 6; rotation++) {
+        if (isSlope) {
+          // Slopes connect level N to N+1
+          for (let level = 0; level < maxLevel; level++) {
+            allStates.push({ type, rotation, level })
+          }
+        } else {
+          // Flat tiles at all levels
+          for (let level = 0; level <= maxLevel; level++) {
+            allStates.push({ type, rotation, level })
           }
         }
       }
+    }
 
-      rules.allowed.set(keyA, allowed)
+    // Build 3D edge index: byEdge[edgeType][dir][level] = Set<stateKey>
+    // This enables O(1) lookup during propagation (no filtering loop needed)
+    // stateEdges: stateKey → { dir: { type, level } }
+    for (const state of allStates) {
+      const stateKey = HexWFCCell.stateKey(state)
+      const edges = rotateHexEdges(HexTileDefinitions[state.type].edges, state.rotation)
+      const stateEdgeInfo = {}
+
+      for (const dir of HexDir) {
+        const edgeType = edges[dir]
+        const edgeLevel = getEdgeLevel(state.type, state.rotation, dir, state.level)
+        stateEdgeInfo[dir] = { type: edgeType, level: edgeLevel }
+
+        // Build 3D index: edgeType → dir → level → Set<stateKey>
+        if (!rules.byEdge.has(edgeType)) {
+          rules.byEdge.set(edgeType, {})
+          for (const d of HexDir) rules.byEdge.get(edgeType)[d] = []  // Array indexed by level
+        }
+        const levelIndex = rules.byEdge.get(edgeType)[dir]
+        if (!levelIndex[edgeLevel]) {
+          levelIndex[edgeLevel] = new Set()
+        }
+        levelIndex[edgeLevel].add(stateKey)
+      }
+
+      rules.stateEdges.set(stateKey, stateEdgeInfo)
     }
 
     return rules
@@ -137,11 +182,11 @@ export class HexWFCAdjacencyRules {
   }
 
   /**
-   * Get states that have a specific edge type in a specific direction
-   * Used for position-aware constraint propagation
+   * Get states that have a specific edge type, direction, AND level
+   * O(1) lookup - used for fast constraint propagation
    */
-  getByEdge(edgeType, direction) {
-    return this.byEdge.get(edgeType)?.[direction] ?? new Set()
+  getByEdge(edgeType, direction, level) {
+    return this.byEdge.get(edgeType)?.[direction]?.[level] ?? new Set()
   }
 
   isAllowed(stateKeyA, direction, stateKeyB) {
@@ -164,6 +209,7 @@ export class HexWFCSolver {
       seed: options.seed ?? null,
       maxRestarts: options.maxRestarts ?? 10,
       tileTypes: options.tileTypes ?? null,  // Restrict to certain tile types
+      maxLevel: options.maxLevel ?? 1,  // Maximum elevation level
       ...options
     }
 
@@ -186,13 +232,27 @@ export class HexWFCSolver {
     this.collapseOrder = []  // Reset on each attempt
     // Get tile types to use
     const types = this.options.tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
+    const maxLevel = this.options.maxLevel
 
-    // Generate all states (type × 6 rotations)
+    // Generate all states (type × 6 rotations × levels)
     const allStates = []
     for (const type of types) {
-      if (HexTileDefinitions[type]) {
-        for (let rotation = 0; rotation < 6; rotation++) {
-          allStates.push({ type, rotation })
+      const def = HexTileDefinitions[type]
+      if (!def) continue
+
+      const isSlope = def.highEdges && def.highEdges.length > 0
+
+      for (let rotation = 0; rotation < 6; rotation++) {
+        if (isSlope) {
+          // Slopes connect level N to N+1
+          for (let level = 0; level < maxLevel; level++) {
+            allStates.push({ type, rotation, level })
+          }
+        } else {
+          // Flat tiles at all levels
+          for (let level = 0; level <= maxLevel; level++) {
+            allStates.push({ type, rotation, level })
+          }
         }
       }
     }
@@ -311,8 +371,8 @@ export class HexWFCSolver {
     cell.collapse(state)
     this.propagationStack.push({ x, z })
 
-    // Record collapse order for visualization
-    this.collapseOrder.push({ gridX: x, gridZ: z, type: state.type, rotation: state.rotation })
+    // Record collapse order for visualization (includes level)
+    this.collapseOrder.push({ gridX: x, gridZ: z, type: state.type, rotation: state.rotation, level: state.level })
 
     return true
   }
@@ -332,33 +392,46 @@ export class HexWFCSolver {
         if (neighbor.collapsed) continue
 
         // Calculate what neighbor can still be
-        // Our edge 'dir' faces neighbor, neighbor's edge 'returnDir' faces us
-        // So we need tiles where neighbor's returnDir edge matches our dir edge
+        // Cache lookups by (edgeType, level) to avoid redundant work
+        // Many possibilities share the same edge - only look up unique combinations
         const allowedInNeighbor = new Set()
-        for (const stateKey of cell.possibilities) {
-          const state = HexWFCCell.parseKey(stateKey)
-          const edges = rotateHexEdges(HexTileDefinitions[state.type].edges, state.rotation)
-          const ourEdgeType = edges[dir]
+        const lookedUp = {}  // Nested object: lookedUp[type][level] = true
 
-          // Find all tiles whose returnDir edge matches ourEdgeType
-          const compatible = this.rules.getByEdge(ourEdgeType, returnDir)
-          for (const allowedKey of compatible) {
-            allowedInNeighbor.add(allowedKey)
+        for (const stateKey of cell.possibilities) {
+          const edgeInfo = this.rules.stateEdges.get(stateKey)?.[dir]
+          if (!edgeInfo) continue
+
+          // Skip if we already looked up this edge type + level combination
+          const typeCache = lookedUp[edgeInfo.type]
+          if (typeCache?.[edgeInfo.level]) continue
+          if (!typeCache) lookedUp[edgeInfo.type] = {}
+          lookedUp[edgeInfo.type][edgeInfo.level] = true
+
+          // Direct O(1) lookup - index already filtered by type, direction, AND level
+          const candidates = this.rules.getByEdge(edgeInfo.type, returnDir, edgeInfo.level)
+          for (const key of candidates) {
+            allowedInNeighbor.add(key)
           }
         }
 
-        // Remove invalid possibilities from neighbor
-        let changed = false
-        const toRemove = []
+        // Early exit: if allowed set covers all neighbor possibilities, nothing to remove
+        if (allowedInNeighbor.size >= neighbor.possibilities.size) {
+          let allAllowed = true
+          for (const key of neighbor.possibilities) {
+            if (!allowedInNeighbor.has(key)) {
+              allAllowed = false
+              break
+            }
+          }
+          if (allAllowed) continue
+        }
+
+        // Remove invalid possibilities directly (safe to delete during Set iteration)
+        const sizeBefore = neighbor.possibilities.size
         for (const neighborKey of neighbor.possibilities) {
           if (!allowedInNeighbor.has(neighborKey)) {
-            toRemove.push(neighborKey)
+            neighbor.possibilities.delete(neighborKey)
           }
-        }
-
-        for (const key of toRemove) {
-          neighbor.remove(key)
-          changed = true
         }
 
         // Contradiction: no possibilities left
@@ -367,7 +440,7 @@ export class HexWFCSolver {
         }
 
         // If changed, propagate further
-        if (changed) {
+        if (neighbor.possibilities.size < sizeBefore) {
           this.propagationStack.push({ x: nx, z: nz })
         }
       }
@@ -378,7 +451,7 @@ export class HexWFCSolver {
 
   /**
    * Main solve loop
-   * @returns {Array|null} Array of { gridX, gridZ, type, rotation } or null on failure
+   * @returns {Array|null} Array of { gridX, gridZ, type, rotation, level } or null on failure
    */
   solve(seedTiles = []) {
     this.init()
@@ -387,9 +460,9 @@ export class HexWFCSolver {
     for (const seed of seedTiles) {
       const cell = this.grid[seed.x]?.[seed.z]
       if (cell && !cell.collapsed) {
-        const state = { type: seed.type, rotation: seed.rotation ?? 0 }
+        const state = { type: seed.type, rotation: seed.rotation ?? 0, level: seed.level ?? 0 }
         cell.collapse(state)
-        this.collapseOrder.push({ gridX: seed.x, gridZ: seed.z, type: state.type, rotation: state.rotation })
+        this.collapseOrder.push({ gridX: seed.x, gridZ: seed.z, type: state.type, rotation: state.rotation, level: state.level })
         this.propagationStack.push({ x: seed.x, z: seed.z })
       }
     }
@@ -439,6 +512,7 @@ export class HexWFCSolver {
             gridZ: z,
             type: cell.tile.type,
             rotation: cell.tile.rotation,
+            level: cell.tile.level,
           })
         }
       }

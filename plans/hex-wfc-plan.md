@@ -1,5 +1,10 @@
 # WFC Hexagonal Tile Generation Plan
 
+## TODO
+
+- [ ] **Edge biasing for coast/ocean** - Pre-seed boundary cells with water before solving, or use position-based weights to boost ocean/coast near edges and grass near center
+- [ ] **Check cliff render heights** - Why are there no outcrops with 1 high neighbor? GRASS_CLIFF_C (1 highEdge) should create single-tile plateaus but they're rare/not appearing as expected
+
 ## Summary
 
 Extend WFC to support hexagonal tiles with multiple terrain types (grass, roads, rivers). Key change: 6 directions and 6 rotations instead of 4.
@@ -201,10 +206,6 @@ Mesh rotation: `rotation.y = step * Math.PI / 3` (60° per step)
 2. Console: Log tile counts, restart count
 3. Seed: Same seed = same layout
 4. Performance: 15×15 hex grid solves quickly
-
-## TODO
-
-- [ ] **Edge biasing for coast/ocean** - Pre-seed boundary cells with water before solving, or use position-based weights to boost ocean/coast near edges and grass near center
 
 ## Sources
 
