@@ -24,9 +24,6 @@ async function init() {
 }
 
 function start() {
-  // Play intro sound (also unlocks AudioContext on user gesture)
-  Sounds.play('intro')
-
   // Hide loading overlay
   loadingEl.style.display = 'none'
 
