@@ -19,10 +19,11 @@ a hex map builder toy
 
 - [ ] **Add dead-end tiles** - River dead-end, road slope dead-ends (low/high). Allows easier transitions to grass, helps tile replacement resolve conflicts.
 - test for failing WFC (seeds incompatible)
-- [ ] **Investigate level 2 not showing** - Weight imbalance? Edge constraints? Seeding?
+- use bigger world noise fields for water, mountains + forests, cities? 
+- [ ] Investigate level 2 not showing - Weight imbalance? Edge constraints? Seeding?
 - [ ] Figure out levels 4 + 5 (need more slope tile types to reach higher heights)
 - fix drop in build anim 
-- [ ] **Use continuous noise field for tree placement** - Instead of per-tile random
+- [ ] Use continuous noise field for tree placement - Instead of per-tile random
 - add rocks + plants
 - add stepped rocks by cliffs
 
@@ -36,7 +37,7 @@ a hex map builder toy
 
 - update mesh colors in blender png
 - remove baked shadoews from blender file?
-- use bigger world noise fields for water, mountains + forests? 
+
 - add snowy areas?
 - post - add subtle tilt shift, bleach,grain, LUT
 - add extra tile with just 1 small bit of hill to fill jagged gaps in cliffs?(like coast)

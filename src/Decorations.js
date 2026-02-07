@@ -3,6 +3,16 @@ import { HexTileGeometry, HexTileType, HexTileDefinitions } from './HexTiles.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 import { random } from './SeededRandom.js'
 
+// Global noise instances shared across all Decorations
+// Created lazily on first use, seeded from global RNG
+let globalNoiseA = null
+let globalNoiseB = null
+
+export function initGlobalTreeNoise() {
+  globalNoiseA = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
+  globalNoiseB = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
+}
+
 // Check if a tile type has any road edges
 function hasRoadEdge(tileType) {
   const def = HexTileDefinitions[tileType]
@@ -52,9 +62,6 @@ export class Decorations {
     this.bridgeGeomIds = new Map()
 
     this.dummy = new Object3D()
-    // Separate noise fields for each tree type (seeded via global RNG)
-    this.noiseA = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
-    this.noiseB = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
   }
 
   async init(gltfScene, material) {
@@ -157,6 +164,7 @@ export class Decorations {
     this.clearTrees()
 
     if (!this.treeMesh || this.treeGeomIds.size === 0) return
+    if (!globalNoiseA || !globalNoiseB) return  // Need global noise initialized
 
     const LEVEL_HEIGHT = 0.5
     const TILE_SURFACE = 1  // Height of tile mesh surface above base
@@ -167,7 +175,7 @@ export class Decorations {
       // Only flat grass tiles (not slopes)
       if (tile.type !== HexTileType.GRASS) continue
 
-      // Sample noise at tile position (local coords)
+      // Get local position (relative to grid group)
       const localPos = HexTileGeometry.getWorldPosition(
         tile.gridX - gridRadius,
         tile.gridZ - gridRadius
@@ -175,8 +183,8 @@ export class Decorations {
       // Use world position for noise sampling (consistent across grids)
       const worldX = localPos.x + offsetX
       const worldZ = localPos.z + offsetZ
-      const noiseA = this.noiseA.scaled2D(worldX, worldZ)
-      const noiseB = this.noiseB.scaled2D(worldX, worldZ)
+      const noiseA = globalNoiseA.scaled2D(worldX, worldZ)
+      const noiseB = globalNoiseB.scaled2D(worldX, worldZ)
 
       const aAbove = noiseA >= threshold
       const bAbove = noiseB >= threshold
@@ -205,11 +213,11 @@ export class Decorations {
       const geomId = this.treeGeomIds.get(meshName)
       const instanceId = this.treeMesh.addInstance(geomId)
 
-      // Position at tile center, on top of tile surface (world coords)
+      // Position at tile center (local coords since mesh is in group)
       this.dummy.position.set(
-        worldX,
+        localPos.x,
         tile.level * LEVEL_HEIGHT + TILE_SURFACE,
-        worldZ
+        localPos.z
       )
       this.dummy.rotation.y = random() * Math.PI * 2
       this.dummy.scale.setScalar(1)
@@ -229,7 +237,6 @@ export class Decorations {
     const TILE_SURFACE = 1
     const maxBuildings = options.maxBuildings ?? (2 + Math.floor(random() * 11))
     const buildingNames = [...this.buildingGeomIds.keys()]
-    const { x: offsetX, z: offsetZ } = this.worldOffset
 
     // Find grass tiles, preferring those adjacent to roads
     const candidates = []
@@ -293,9 +300,9 @@ export class Decorations {
       )
 
       this.dummy.position.set(
-        localPos.x + offsetX,
+        localPos.x,
         tile.level * LEVEL_HEIGHT + TILE_SURFACE,
-        localPos.z + offsetZ
+        localPos.z
       )
       // Face the road
       this.dummy.rotation.y = roadAngle
@@ -313,7 +320,6 @@ export class Decorations {
     if (!this.bridgeMesh || this.bridgeGeomIds.size === 0) return
 
     const LEVEL_HEIGHT = 0.5
-    const { x: offsetX, z: offsetZ } = this.worldOffset
 
     for (const tile of hexTiles) {
       // Only river crossing tiles
@@ -336,9 +342,9 @@ export class Decorations {
       )
 
       this.dummy.position.set(
-        localPos.x + offsetX,
+        localPos.x,
         tile.level * LEVEL_HEIGHT,
-        localPos.z + offsetZ
+        localPos.z
       )
       // Match tile rotation (60° steps, same as hex tiles)
       this.dummy.rotation.y = -tile.rotation * Math.PI / 3

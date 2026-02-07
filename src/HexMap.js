@@ -28,6 +28,7 @@ import {
   cubeToOffset,
 } from './HexGridConnector.js'
 import { Demo } from './Demo.js'
+import { initGlobalTreeNoise } from './Decorations.js'
 
 /**
  * HexMap - Manages the entire world of multiple HexGrid instances
@@ -81,6 +82,7 @@ export class HexMap {
     this.createFloor()
     await this.initMaterial()
     this.initWfcRules()
+    initGlobalTreeNoise()  // Initialize shared noise for tree placement
 
     // Create center grid at (0,0) and immediately populate it
     const centerGrid = await this.createGrid(0, 0)
@@ -143,8 +145,6 @@ export class HexMap {
       HexTileType.RIVER_D,
       HexTileType.RIVER_E,
       HexTileType.RIVER_F,
-      HexTileType.RIVER_G,
-      HexTileType.RIVER_H,
       // Crossings
       HexTileType.RIVER_CROSSING_A,
       HexTileType.RIVER_CROSSING_B,
@@ -870,6 +870,17 @@ export class HexMap {
     for (const grid of this.grids.values()) {
       if (grid.axesHelper) {
         grid.axesHelper.visible = visible
+      }
+    }
+  }
+
+  /**
+   * Toggle visibility of grid outlines
+   */
+  setOutlinesVisible(visible) {
+    for (const grid of this.grids.values()) {
+      if (grid.outline) {
+        grid.outline.visible = visible
       }
     }
   }

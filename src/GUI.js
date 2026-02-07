@@ -80,6 +80,7 @@ export class GUIManager {
       animateWFC: false,
       animateDelay: 10,
       useLevels: true,
+      showOutlines: true,
     },
   }
 
@@ -118,6 +119,9 @@ export class GUIManager {
     })
     gui.add(allParams.debug, 'hexGrid').name('Hex Helper').onChange((v) => {
       demo.city.setHelpersVisible(v)
+    })
+    gui.add(allParams.roads, 'showOutlines').name('Show Outlines').onChange((v) => {
+      demo.city?.setOutlinesVisible(v)
     })
     gui.add(allParams.debug, 'tileLabels').name('Tile Labels').onChange((v) => {
       demo.city.setTileLabelsVisible(v)

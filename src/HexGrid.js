@@ -157,8 +157,8 @@ export class HexGrid {
       }
     }
 
-    // Initialize decorations for this grid (using group offset)
-    this.decorations = new Decorations(this.group, { x: 0, z: 0 })
+    // Initialize decorations for this grid (pass worldOffset for noise sampling)
+    this.decorations = new Decorations(this.group, this.worldOffset)
     await this.decorations.init(HexTileGeometry.gltfScene, this.material)
 
     return true

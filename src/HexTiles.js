@@ -250,7 +250,7 @@ export const HexTileDefinitions = {
   },
   [HexTileType.ROAD_M]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 8,
+    weight: 4,
   },
 
   // === RIVERS (TODO: verify edges) ===
@@ -333,12 +333,12 @@ export const HexTileDefinitions = {
   [HexTileType.RIVER_CROSSING_A]: {
     // River E-W, Road NW-SE
     edges: { NE: 'grass', E: 'river', SE: 'road', SW: 'grass', W: 'river', NW: 'road' },
-    weight: 5,
+    weight: 2,
   },
   [HexTileType.RIVER_CROSSING_B]: {
     // River E-W, Road NE-SW
     edges: { NE: 'road', E: 'river', SE: 'grass', SW: 'road', W: 'river', NW: 'grass' },
-    weight: 5,
+    weight: 2,
   },
 
   // === SLOPES ===

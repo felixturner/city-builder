@@ -74,8 +74,7 @@ export class Demo {
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
-    // Hardcoded seed for debugging (found failing case)
-    const seed = 343506
+    const seed = Math.floor(Math.random() * 1000000)
     setSeed(seed)
 
     this.initCamera()
