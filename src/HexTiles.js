@@ -250,21 +250,21 @@ export const HexTileDefinitions = {
   },
   [HexTileType.ROAD_M]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 1,
+    weight: 8,
   },
 
   // === RIVERS (TODO: verify edges) ===
   [HexTileType.RIVER_A]: {
     edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 20,
+    weight: 10,
   },
   [HexTileType.RIVER_A_CURVY]: {
     edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 20,
+    weight: 10,
   },
   [HexTileType.RIVER_B]: {
     edges: { NE: 'river', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 60,
+    weight: 20,
   },
   [HexTileType.RIVER_C]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'river' },
@@ -382,13 +382,13 @@ export const HexTileDefinitions = {
   // Low slopes: 0.5u rise (levelIncrement: 1)
   [HexTileType.GRASS_SLOPE_LOW]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 125,
+    weight: 10,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 1,
   },
   [HexTileType.ROAD_A_SLOPE_LOW]: {
     edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 75,
+    weight: 10,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 1,
   },

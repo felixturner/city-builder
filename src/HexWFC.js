@@ -503,7 +503,8 @@ export class HexWFCSolver {
    * @returns {Array|null} Array of { gridX, gridZ, type, rotation, level } or null on failure
    */
   solve(seedTiles = [], gridId = '') {
-    const tryNum = this.options.attemptNum ?? (this.restartCount + 1)
+    const baseAttempt = this.options.attemptNum ?? 1
+    const tryNum = baseAttempt + this.restartCount
     console.log(`%cWFC START (try ${tryNum}, ${seedTiles.length} seeds)`, 'color: blue')
 
     this.init()
@@ -521,7 +522,7 @@ export class HexWFCSolver {
     // Propagate seed constraints
     if (seedTiles.length > 0 && !this.propagate()) {
       const getTileName = (type) => Object.entries(HexTileType).find(([, v]) => v === type)?.[0] || type
-      console.log(`%cSEED CONFLICT - propagation failed after seeding`, 'color: red')
+      console.log(`%cWFC failed - propagation failed after seeding`, 'color: red')
       if (this.lastContradiction) {
         const c = this.lastContradiction
         const failG = this.toGlobalCoords(c.failedX, c.failedZ)

@@ -412,20 +412,17 @@ export class HexGrid {
         const problemSeeds = this.findAdjacentSeeds(currentSeeds, failedX, failedZ)
 
         if (problemSeeds.length > 0) {
-          // Pick first neighbor to remove
           const seedToRemove = problemSeeds[0]
           const seedGlobal = solver.toGlobalCoords(seedToRemove.x, seedToRemove.z)
           const failedGlobal = solver.toGlobalCoords(failedX, failedZ)
           const typeName = Object.entries(HexTileType).find(([,v]) => v === seedToRemove.type)?.[0] || seedToRemove.type
-          console.log(`%cRemoving seed (${seedGlobal.col},${seedGlobal.row}) ${typeName} near failed cell (${failedGlobal.col},${failedGlobal.row}) [${problemSeeds.length} candidates]`, 'color: red')
+          console.log(`%cDropping seed (${seedGlobal.col},${seedGlobal.row}) ${typeName} near failed cell (${failedGlobal.col},${failedGlobal.row})`, 'color: orange')
           currentSeeds = currentSeeds.filter(s => s !== seedToRemove)
         } else {
-          // No adjacent seeds found, can't fix - break out
-          console.log(`%cNo adjacent seeds to remove, giving up`, 'color: red')
+          console.log(`%cNo adjacent seeds to drop, giving up`, 'color: orange')
           break
         }
       } else if (!result) {
-        // Failed but no contradiction info or no seeds left
         break
       }
     }
@@ -686,6 +683,42 @@ export class HexGrid {
       this.hexMesh.setMatrixAt(tile.instanceId, this.dummy.matrix)
     }
     return tile
+  }
+
+  /**
+   * Replace an existing tile with a different type/rotation
+   * Used by neighbor tile replacement to fix seed conflicts
+   */
+  replaceTile(gridX, gridZ, newType, newRotation, newLevel = 0) {
+    const oldTile = this.hexGrid[gridX]?.[gridZ]
+    if (!oldTile) {
+      console.warn(`[replaceTile] No tile at (${gridX}, ${gridZ})`)
+      return null
+    }
+
+    // Update tile data
+    oldTile.type = newType
+    oldTile.rotation = newRotation
+    oldTile.level = newLevel
+
+    // Update BatchedMesh geometry
+    if (this.hexMesh && this.geomIds.has(newType) && oldTile.instanceId !== undefined) {
+      const newGeomId = this.geomIds.get(newType)
+      this.hexMesh.setGeometryIdAt(oldTile.instanceId, newGeomId)
+
+      // Update matrix for new rotation
+      const LEVEL_HEIGHT = 0.5
+      const offsetCol = gridX - this.gridRadius
+      const offsetRow = gridZ - this.gridRadius
+      const pos = HexTileGeometry.getWorldPosition(offsetCol, offsetRow)
+      this.dummy.position.set(pos.x, oldTile.level * LEVEL_HEIGHT, pos.z)
+      this.dummy.rotation.y = -oldTile.rotation * Math.PI / 3
+      this.dummy.scale.setScalar(1)
+      this.dummy.updateMatrix()
+      this.hexMesh.setMatrixAt(oldTile.instanceId, this.dummy.matrix)
+    }
+
+    return oldTile
   }
 
   /**

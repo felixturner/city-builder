@@ -22,6 +22,7 @@ import {
   getOppositeDirection,
   filterConflictingSeeds,
   validateSeedConflicts,
+  findReplacementTile,
   worldOffsetToGlobalCube,
   offsetToCube,
   cubeToOffset,
@@ -134,8 +135,6 @@ export class HexMap {
       HexTileType.ROAD_D,
       HexTileType.ROAD_E,
       HexTileType.ROAD_F,
-      HexTileType.ROAD_H,
-      HexTileType.ROAD_J,
       HexTileType.ROAD_M,
       // Rivers
       HexTileType.RIVER_A,
@@ -414,7 +413,8 @@ export class HexMap {
           adjacentGrid.gridRadius,
           dir,
           adjacentGrid.globalCenterCube,  // source grid's cube center
-          grid.globalCenterCube           // new grid's cube center
+          grid.globalCenterCube,          // new grid's cube center
+          adjacentKey                     // source grid key for tile replacement
         )
         neighborSeeds.push(...seeds)
       }
@@ -436,16 +436,73 @@ export class HexMap {
       return cubeToOffset(globalCube.q, globalCube.r, globalCube.s)
     }
 
-    // Pre-validate: remove seeds that create unsolvable cells (adjacent to 2+ incompatible seeds)
+    // Pre-validate: try replacement before removal for seed conflicts
     let validation = validateSeedConflicts(validSeeds, this.hexWfcRules, grid.gridRadius, gridKey, grid.globalCenterCube)
     while (!validation.valid && validSeeds.length > 1) {
-      // Remove the first seed from the first conflict
-      const conflictSeed = validation.conflicts[0].seeds[0]
-      validSeeds = validSeeds.filter(s => {
-        const g = seedToGlobal(s)
-        return `${g.col},${g.row}` !== conflictSeed.global
-      })
-      console.log(`%cRemoving seed (${conflictSeed.global}) ${conflictSeed.type} - ${validSeeds.length} seeds remain`, 'color: red')
+      const conflict = validation.conflicts[0]
+      let replaced = false
+
+      // Try to replace each conflicting seed in order
+      for (let seedIdx = 0; seedIdx < conflict.seeds.length && !replaced; seedIdx++) {
+        const conflictSeedInfo = conflict.seeds[seedIdx]
+        const reqStr = conflict.requirements[seedIdx]
+
+        // Find the actual seed object
+        const actualSeed = validSeeds.find(s => {
+          const g = seedToGlobal(s)
+          return `${g.col},${g.row}` === conflictSeedInfo.global
+        })
+
+        if (!actualSeed?.sourceGridKey) continue
+
+        const sourceGrid = this.grids.get(actualSeed.sourceGridKey)
+        if (!sourceGrid?.hexGrid) continue
+
+        // Parse the conflict direction from requirement (e.g., "SW=road@0")
+        if (!reqStr) continue
+        const [conflictDir] = reqStr.split('=')
+
+        // Try to find replacement with different edge types
+        let replacement = null
+        for (const tryEdgeType of ['grass', 'road', 'river', 'coast']) {
+          replacement = findReplacementTile(
+            actualSeed,
+            sourceGrid.hexGrid,
+            sourceGrid.gridRadius,
+            tryEdgeType,
+            actualSeed.level ?? 0,
+            conflictDir,
+            this.hexWfcRules
+          )
+          if (replacement) break
+        }
+
+        if (replacement) {
+          // Replace tile in source grid
+          sourceGrid.replaceTile(actualSeed.sourceX, actualSeed.sourceZ, replacement.type, replacement.rotation, replacement.level)
+
+          // Update seed to match
+          actualSeed.type = replacement.type
+          actualSeed.rotation = replacement.rotation
+          actualSeed.level = replacement.level
+
+          const typeName = Object.entries(HexTileType).find(([,v]) => v === replacement.type)?.[0] || replacement.type
+          console.log(`%cReplaced tile (${conflictSeedInfo.global}) with ${typeName} rot=${replacement.rotation}`, 'color: red')
+          replaced = true
+        }
+      }
+
+      // Fall back to removal if no replacement found
+      if (!replaced) {
+        const conflictSeedInfo = conflict.seeds[0]
+        const actualSeed = validSeeds.find(s => {
+          const g = seedToGlobal(s)
+          return `${g.col},${g.row}` === conflictSeedInfo.global
+        })
+        validSeeds = validSeeds.filter(s => s !== actualSeed)
+        console.log(`%cDropping seed (${conflictSeedInfo.global}) ${conflictSeedInfo.type} - ${validSeeds.length} seeds remain`, 'color: orange')
+      }
+
       validation = validateSeedConflicts(validSeeds, this.hexWfcRules, grid.gridRadius, gridKey, grid.globalCenterCube)
     }
 

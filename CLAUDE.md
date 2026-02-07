@@ -17,6 +17,7 @@ a hex map builder toy
 
 ## TODO
 
+- [ ] **Add dead-end tiles** - River dead-end, road slope dead-ends (low/high). Allows easier transitions to grass, helps tile replacement resolve conflicts.
 - test for failing WFC (seeds incompatible)
 - [ ] **Investigate level 2 not showing** - Weight imbalance? Edge constraints? Seeding?
 - [ ] Figure out levels 4 + 5 (need more slope tile types to reach higher heights)

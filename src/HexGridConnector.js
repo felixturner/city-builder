@@ -458,9 +458,10 @@ function getNeighborWorldOffset(dir) {
  * @param {number} direction - GridDirection FROM new grid TO source grid
  * @param {Object} sourceCube - Source grid's center in global cube coords {q, r, s}
  * @param {Object} newCube - New grid's center in global cube coords {q, r, s}
- * @returns {Array} Seed tiles [{ x, z, type, rotation, level }] in new grid's coordinate system
+ * @param {string} sourceGridKey - Key of the source grid (for tile replacement)
+ * @returns {Array} Seed tiles [{ x, z, type, rotation, level, sourceGridKey, sourceX, sourceZ }] in new grid's coordinate system
  */
-export function getNeighborSeeds(hexGrid, gridRadius, direction, sourceCube = { q: 0, r: 0, s: 0 }, newCube = { q: 0, r: 0, s: 0 }) {
+export function getNeighborSeeds(hexGrid, gridRadius, direction, sourceCube = { q: 0, r: 0, s: 0 }, newCube = { q: 0, r: 0, s: 0 }, sourceGridKey = null) {
   // direction is FROM new grid TO source, oppositeDir is FROM source TO new
   const oppositeDir = getOppositeDirection(direction)
   const edgeTiles = extractEdgeTiles(hexGrid, gridRadius, oppositeDir)
@@ -500,7 +501,11 @@ export function getNeighborSeeds(hexGrid, gridRadius, direction, sourceCube = { 
       z: newGridRow,
       type: tile.type,
       rotation: tile.rotation,
-      level: tile.level ?? 0
+      level: tile.level ?? 0,
+      // Source info for tile replacement
+      sourceGridKey,
+      sourceX: tile.gridX,
+      sourceZ: tile.gridZ
     })
   }
 
@@ -702,12 +707,6 @@ export function validateSeedConflicts(seeds, rules, gridRadius = 8, gridKey = '?
       if (compatible.size === 0) break
     }
 
-    // Debug: log when we think it's solvable but with only a few options
-    if (compatible && compatible.size > 0 && compatible.size <= 3 && neighbors.length >= 2) {
-      const cellGlobal = toGlobal(cx, cz)
-      console.log(`[validateSeedConflicts] Cell (${cellGlobal.col},${cellGlobal.row}) has ${compatible.size} options: ${[...compatible].slice(0, 3).join(', ')}`)
-    }
-
     if (!compatible || compatible.size === 0) {
       const cellGlobal = toGlobal(cx, cz)
       conflicts.push({
@@ -733,6 +732,92 @@ export function validateSeedConflicts(seeds, rules, gridRadius = 8, gridKey = '?
   }
 
   return { valid: conflicts.length === 0, conflicts }
+}
+
+/**
+ * Find a replacement tile for a conflicting seed
+ * The replacement must:
+ * 1. Match edges that connect to other tiles in the source grid (preserve connectivity)
+ * 2. Have a compatible edge toward the conflict cell
+ *
+ * @param {Object} seed - The conflicting seed { type, rotation, level, sourceX, sourceZ, ... }
+ * @param {Array} sourceHexGrid - The source grid's tile array
+ * @param {number} gridRadius - Grid radius
+ * @param {string} conflictEdgeType - Edge type needed toward conflict cell (e.g., 'grass')
+ * @param {number} conflictEdgeLevel - Edge level needed
+ * @param {string} conflictDir - Direction from seed toward conflict cell
+ * @param {Object} rules - WFC adjacency rules
+ * @returns {Object|null} Replacement { type, rotation, level } or null if none found
+ */
+export function findReplacementTile(seed, sourceHexGrid, gridRadius, conflictEdgeType, conflictEdgeLevel, conflictDir, rules) {
+  const { sourceX, sourceZ, type: currentType, rotation: currentRotation, level: currentLevel } = seed
+
+  // conflictDir is from the conflict CELL's perspective (e.g., "SW" means cell needs edge on its SW)
+  // From the SEED's perspective, that's the opposite direction
+  const seedEdgeDir = HexOpposite[conflictDir]
+
+  // Get current tile's edges
+  const currentEdges = rotateHexEdges(HexTileDefinitions[currentType]?.edges || {}, currentRotation)
+
+  // Find which edges connect to actual neighbors in source grid (these must be preserved)
+  // EXCEPT the edge toward conflict cell - that's what we want to change!
+  const lockedEdges = {} // dir -> { type, level }
+  for (const dir of HexDir) {
+    // Skip the edge facing the conflict cell - that's what we're trying to change
+    if (dir === seedEdgeDir) continue
+
+    const offset = getHexNeighborOffset(sourceX, sourceZ, dir)
+    const nx = sourceX + offset.dx
+    const nz = sourceZ + offset.dz
+    const neighbor = sourceHexGrid[nx]?.[nz]
+
+    if (neighbor) {
+      // This direction has a neighbor - edge must be preserved
+      const edgeType = currentEdges[dir]
+      const edgeLevel = getEdgeLevelForTile(currentType, currentRotation, dir, currentLevel)
+      lockedEdges[dir] = { type: edgeType, level: edgeLevel }
+    }
+  }
+
+  // Search all tile types and rotations for a replacement
+  let matchedLockedCount = 0
+  let matchedConflictCount = 0
+
+  for (const [typeName, tileType] of Object.entries(HexTileType)) {
+    const def = HexTileDefinitions[tileType]
+    if (!def) continue
+
+    for (let rot = 0; rot < 6; rot++) {
+      const edges = rotateHexEdges(def.edges, rot)
+
+      // Check if this tile matches all locked edges
+      let matchesLocked = true
+      for (const [dir, required] of Object.entries(lockedEdges)) {
+        const edgeType = edges[dir]
+        const edgeLevel = getEdgeLevelForTile(tileType, rot, dir, currentLevel)
+        if (edgeType !== required.type || edgeLevel !== required.level) {
+          matchesLocked = false
+          break
+        }
+      }
+      if (!matchesLocked) continue
+      matchedLockedCount++
+
+      // Check if this tile has compatible edge toward conflict cell
+      const newEdge = edges[seedEdgeDir]
+      const newLevel = getEdgeLevelForTile(tileType, rot, seedEdgeDir, currentLevel)
+
+      if (newEdge === conflictEdgeType && newLevel === conflictEdgeLevel) {
+        matchedConflictCount++
+        // Skip if it's the same as current tile
+        if (tileType === currentType && rot === currentRotation) continue
+
+        return { type: tileType, rotation: rot, level: currentLevel }
+      }
+    }
+  }
+
+  return null // No replacement found
 }
 
 /**
