@@ -1,6 +1,7 @@
 import { Object3D, BatchedMesh } from 'three/webgpu'
 import { HexTileGeometry, HexTileType, HexTileDefinitions } from './HexTiles.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
+import { random } from './SeededRandom.js'
 
 // Check if a tile type has any road edges
 function hasRoadEdge(tileType) {
@@ -32,8 +33,9 @@ const BridgeMeshNames = [
 ]
 
 export class Decorations {
-  constructor(scene) {
+  constructor(scene, worldOffset = { x: 0, z: 0 }) {
     this.scene = scene
+    this.worldOffset = worldOffset
     this.treeMesh = null
     this.trees = []
     this.treeGeoms = new Map()      // meshName -> geometry
@@ -50,9 +52,9 @@ export class Decorations {
     this.bridgeGeomIds = new Map()
 
     this.dummy = new Object3D()
-    // Separate noise fields for each tree type (different seeds via random)
-    this.noiseA = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random: () => 0.1 })
-    this.noiseB = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random: () => 0.9 })
+    // Separate noise fields for each tree type (seeded via global RNG)
+    this.noiseA = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
+    this.noiseB = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
   }
 
   async init(gltfScene, material) {
@@ -159,18 +161,22 @@ export class Decorations {
     const LEVEL_HEIGHT = 0.5
     const TILE_SURFACE = 1  // Height of tile mesh surface above base
     const threshold = options.threshold ?? 0.5  // noise > threshold = tree
+    const { x: offsetX, z: offsetZ } = this.worldOffset
 
     for (const tile of hexTiles) {
       // Only flat grass tiles (not slopes)
       if (tile.type !== HexTileType.GRASS) continue
 
-      // Sample noise at tile position
-      const worldPos = HexTileGeometry.getWorldPosition(
+      // Sample noise at tile position (local coords)
+      const localPos = HexTileGeometry.getWorldPosition(
         tile.gridX - gridRadius,
         tile.gridZ - gridRadius
       )
-      const noiseA = this.noiseA.scaled2D(worldPos.x, worldPos.z)
-      const noiseB = this.noiseB.scaled2D(worldPos.x, worldPos.z)
+      // Use world position for noise sampling (consistent across grids)
+      const worldX = localPos.x + offsetX
+      const worldZ = localPos.z + offsetZ
+      const noiseA = this.noiseA.scaled2D(worldX, worldZ)
+      const noiseB = this.noiseB.scaled2D(worldX, worldZ)
 
       const aAbove = noiseA >= threshold
       const bAbove = noiseB >= threshold
@@ -181,7 +187,7 @@ export class Decorations {
       // Determine tree type: if both overlap, randomly pick one
       let treeType, noiseVal
       if (aAbove && bAbove) {
-        treeType = Math.random() < 0.5 ? 'A' : 'B'
+        treeType = random() < 0.5 ? 'A' : 'B'
         noiseVal = treeType === 'A' ? noiseA : noiseB
       } else if (aAbove) {
         treeType = 'A'
@@ -199,13 +205,13 @@ export class Decorations {
       const geomId = this.treeGeomIds.get(meshName)
       const instanceId = this.treeMesh.addInstance(geomId)
 
-      // Position at tile center, on top of tile surface
+      // Position at tile center, on top of tile surface (world coords)
       this.dummy.position.set(
-        worldPos.x,
+        worldX,
         tile.level * LEVEL_HEIGHT + TILE_SURFACE,
-        worldPos.z
+        worldZ
       )
-      this.dummy.rotation.y = Math.random() * Math.PI * 2
+      this.dummy.rotation.y = random() * Math.PI * 2
       this.dummy.scale.setScalar(1)
       this.dummy.updateMatrix()
 
@@ -221,8 +227,9 @@ export class Decorations {
 
     const LEVEL_HEIGHT = 0.5
     const TILE_SURFACE = 1
-    const maxBuildings = options.maxBuildings ?? 8
+    const maxBuildings = options.maxBuildings ?? (2 + Math.floor(random() * 11))
     const buildingNames = [...this.buildingGeomIds.keys()]
+    const { x: offsetX, z: offsetZ } = this.worldOffset
 
     // Find grass tiles, preferring those adjacent to roads
     const candidates = []
@@ -269,26 +276,26 @@ export class Decorations {
 
     // Shuffle candidates
     for (let i = candidates.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
+      const j = Math.floor(random() * (i + 1))
       ;[candidates[i], candidates[j]] = [candidates[j], candidates[i]]
     }
 
     // Place buildings
     for (let i = 0; i < Math.min(maxBuildings, candidates.length); i++) {
       const { tile, roadAngle } = candidates[i]
-      const meshName = buildingNames[Math.floor(Math.random() * buildingNames.length)]
+      const meshName = buildingNames[Math.floor(random() * buildingNames.length)]
       const geomId = this.buildingGeomIds.get(meshName)
       const instanceId = this.buildingMesh.addInstance(geomId)
 
-      const worldPos = HexTileGeometry.getWorldPosition(
+      const localPos = HexTileGeometry.getWorldPosition(
         tile.gridX - gridRadius,
         tile.gridZ - gridRadius
       )
 
       this.dummy.position.set(
-        worldPos.x,
+        localPos.x + offsetX,
         tile.level * LEVEL_HEIGHT + TILE_SURFACE,
-        worldPos.z
+        localPos.z + offsetZ
       )
       // Face the road
       this.dummy.rotation.y = roadAngle
@@ -306,7 +313,7 @@ export class Decorations {
     if (!this.bridgeMesh || this.bridgeGeomIds.size === 0) return
 
     const LEVEL_HEIGHT = 0.5
-    const TILE_SURFACE = 1
+    const { x: offsetX, z: offsetZ } = this.worldOffset
 
     for (const tile of hexTiles) {
       // Only river crossing tiles
@@ -323,15 +330,15 @@ export class Decorations {
 
       const instanceId = this.bridgeMesh.addInstance(geomId)
 
-      const worldPos = HexTileGeometry.getWorldPosition(
+      const localPos = HexTileGeometry.getWorldPosition(
         tile.gridX - gridRadius,
         tile.gridZ - gridRadius
       )
 
       this.dummy.position.set(
-        worldPos.x,
+        localPos.x + offsetX,
         tile.level * LEVEL_HEIGHT,
-        worldPos.z
+        localPos.z + offsetZ
       )
       // Match tile rotation (60° steps, same as hex tiles)
       this.dummy.rotation.y = -tile.rotation * Math.PI / 3
@@ -371,5 +378,37 @@ export class Decorations {
       this.bridgeMesh.deleteInstance(bridge.instanceId)
     }
     this.bridges = []
+  }
+
+  /**
+   * Dispose of all resources
+   */
+  dispose() {
+    this.clear()
+
+    if (this.treeMesh) {
+      this.scene.remove(this.treeMesh)
+      this.treeMesh.dispose()
+      this.treeMesh = null
+    }
+
+    if (this.buildingMesh) {
+      this.scene.remove(this.buildingMesh)
+      this.buildingMesh.dispose()
+      this.buildingMesh = null
+    }
+
+    if (this.bridgeMesh) {
+      this.scene.remove(this.bridgeMesh)
+      this.bridgeMesh.dispose()
+      this.bridgeMesh = null
+    }
+
+    this.treeGeoms.clear()
+    this.treeGeomIds.clear()
+    this.buildingGeoms.clear()
+    this.buildingGeomIds.clear()
+    this.bridgeGeoms.clear()
+    this.bridgeGeomIds.clear()
   }
 }

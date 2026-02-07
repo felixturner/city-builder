@@ -16,9 +16,10 @@ import Stats from 'three/addons/libs/stats.module.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
 import { Pointer } from './lib/Pointer.js'
 import { GUIManager } from './GUI.js'
-import { City } from './City.js'
+import { HexMap } from './HexMap.js'
 import { Lighting } from './Lighting.js'
 import { PostFX } from './PostFX.js'
+import { setSeed } from './SeededRandom.js'
 
 export class Demo {
   static instance = null
@@ -73,6 +74,10 @@ export class Demo {
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
+    // Hardcoded seed for debugging (found failing case)
+    const seed = 343506
+    setSeed(seed)
+
     this.initCamera()
     this.initPostProcessing()
     this.initStats()
@@ -87,19 +92,38 @@ export class Demo {
 
     // Initialize modules
     this.lighting = new Lighting(this.scene, this.renderer, this.params)
-    this.city = new City(this.scene, this.params)
+    this.city = new HexMap(this.scene, this.params)
 
     await this.lighting.init()
     await this.city.init()
 
-    // Set up hover and click detection on hex tiles
+    // Set up hover and click detection on hex tiles and placeholders
     this.pointerHandler.setRaycastTargets(
-      [this.city.hexMesh],
+      [],  // Dynamic targets - we'll handle raycasting in callbacks
       {
         onHover: (intersection) => this.city.onHover(intersection),
-        onPointerDown: (intersection, x, y, isTouch) => this.city.onPointerDown(intersection, x, y, isTouch),
+        onPointerDown: (intersection, clientX, clientY, isTouch) => {
+          // Convert client coords to normalized device coordinates
+          const pointer = new Vector2(
+            (clientX / window.innerWidth) * 2 - 1,
+            -(clientY / window.innerHeight) * 2 + 1
+          )
+          // Check placeholders
+          if (this.city.onPointerDown(pointer, this.camera)) {
+            return true  // Placeholder was clicked
+          }
+          return false
+        },
         onPointerUp: (isTouch, touchIntersection) => this.city.onPointerUp(isTouch, touchIntersection),
-        onPointerMove: (x, y) => this.city.onPointerMove(x, y),
+        onPointerMove: (clientX, clientY) => {
+          // Convert client coords to normalized device coordinates
+          const pointer = new Vector2(
+            (clientX / window.innerWidth) * 2 - 1,
+            -(clientY / window.innerHeight) * 2 + 1
+          )
+          // Update placeholder hover state
+          this.city.onPointerMove(pointer, this.camera)
+        },
         onRightClick: (intersection) => this.city.onRightClick(intersection)
       }
     )
@@ -149,9 +173,8 @@ export class Demo {
     this.orthoCamera.position.copy(camPos)
     this.updateOrthoFrustum()
 
-    // Set up perspective camera - standard Three.js view for debugging
-    // Straight down view for debugging hex tiles
-    this.perspCamera.position.set(-13.111, 69.959, 52.146)
+    // Set up perspective camera - top-down view of hex map
+    this.perspCamera.position.set(2.391, 227.788, -0.177)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -177,7 +200,7 @@ export class Demo {
     this.controls.maxPolarAngle = Math.PI
     // Pan parallel to ground plane instead of screen
     this.controls.screenSpacePanning = false
-    this.controls.target.set(0.139, 0, -0.740)
+    this.controls.target.set(2.406, 0, -2.851)
     this.controls.update()
   }
 
@@ -246,7 +269,7 @@ export class Demo {
   }
 
   onResize(_e, toSize) {
-    const { renderer, cssRenderer } = this
+    const { renderer, cssRenderer, postFX } = this
     const size = new Vector2(window.innerWidth, window.innerHeight)
     if (toSize) size.copy(toSize)
 
@@ -259,6 +282,11 @@ export class Demo {
 
     if (cssRenderer) {
       cssRenderer.setSize(size.x, size.y)
+    }
+
+    // Resize overlay render target
+    if (postFX) {
+      postFX.resize()
     }
   }
 
@@ -277,11 +305,13 @@ export class Demo {
     // Update debris physics
     this.city.update(dt)
 
+    // Update overlay objects (bypasses AO)
+    postFX.setOverlayObjects(this.city.getOverlayObjects())
 
     postFX.render()
 
-    // Render CSS labels if visible
-    if (this.cssRenderer && this.city?.tileLabels?.visible) {
+    // Always render CSS labels (individual label.visible controls what shows)
+    if (this.cssRenderer) {
       this.cssRenderer.render(this.scene, this.camera)
     }
 

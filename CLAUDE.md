@@ -1,12 +1,14 @@
 # Project Notes
 
-a city builder toy.
+a hex map builder toy
 
 ## Critical Rules (ALWAYS follow)
 
 1. **NEVER** git revert, commit, or push without asking for explicit permission first. No exceptions.
 2. **NEVER** make code changes unless I specifically ask you to. If I ask a question, just answer it.
-3. **ALWAYS** play audio notification (`afplay /System/Library/Sounds/Glass.aiff`) after completing ANY task or before asking ANY question. Every single response.
+3. **NEVER** write to the memories directory. Use `plans/` for TODOs and notes.
+4. **ALWAYS** play audio notification (`afplay /System/Library/Sounds/Glass.aiff`) after completing ANY task or before asking ANY question. Every single response.
+5. **DON'T** run `npm run build` - I'll tell you if the build fails.
 
 ## Other Instructions
 
@@ -15,75 +17,123 @@ a city builder toy.
 
 ## TODO
 
+- test for failing WFC (seeds incompatible)
+- [ ] **Investigate level 2 not showing** - Weight imbalance? Edge constraints? Seeding?
+- [ ] Figure out levels 4 + 5 (need more slope tile types to reach higher heights)
+- fix drop in build anim 
+- [ ] **Use continuous noise field for tree placement** - Instead of per-tile random
+- add rocks + plants
+- add stepped rocks by cliffs
+
+
 - [ ] Consider manual compositing passes instead of MRT (fixes transparency, enables half-res AO for perf)
-- [ ] Fix AO flicker on pan when zoomed out
-- [ ] Dial in AO (some AO is banding)
-- [ ] Rotate some blocks?
-- [ ] Smooth camera zoom
-- [ ] add dynamic windows/lights
-- [ ] Dynamic AO blur based on zoom - reduce blur when zoomed out, increase when zoomed in
-- [ ] Add three-point lighting? (key, fill, rim lights)
-- [ ] Update to latest threejs
-- [ ] add floor grid and UI like https://robot.co/playground/grid
-- [ ] Setup Netlify deploy (alternative to GitHub Pages)
-- [ ] day/night toggle (move dir light / fade between HDRs)
-- [ ] roads / cars
-- [ ] create my own roof tiles in blender or get from a pack. (look at lego blocks)
-- [ ] add subtle noise grain etc?
-- [ ] click and drag to move buildings?
 - [ ] Consider preventing road slopes from meeting (use 'road_slope' edge type instead of 'road')
+- [ ] **Edge biasing for coast/ocean** - Pre-seed boundary cells with water before solving, or use position-based weights to boost ocean/coast near edges and grass near center
+- [ ] **Check cliff render heights** - Why are there no outcrops with 1 high neighbor? GRASS_CLIFF_C (1 highEdge) should create single-tile plateaus but they're rare/not appearing as expected
+- [ ] **Fix grids with no buildings** - Buildings only spawn on grass adjacent to roads
+- [ ] **Place house on road dead-ends** - Road end tiles should get a building
 
-## Done
+- update mesh colors in blender png
+- remove baked shadoews from blender file?
+- use bigger world noise fields for water, mountains + forests? 
+- add snowy areas?
+- post - add subtle tilt shift, bleach,grain, LUT
+- add extra tile with just 1 small bit of hill to fill jagged gaps in cliffs?(like coast)
+- paint big noise color fileds over grasss for more variation
+- find/make simpler house models
+- fix weird ocean walls
+- add boats + carts?
+- add birds + clouds?
+- add better skybox - styormy skies
+- make tile hex edges less deep/visible in blender?
+- [ ] Update to latest threejs
+- [ ] Fix regen destroyed texture crash - WebGPU textures disposed before GPU queue finishes, needs device.queue.onSubmittedWorkDone()
+- [ ] **Consider switching to global cell coords** - Avoid world position math for coordinate conversion. Offset coords have stagger issues; cube/axial coords are linear and additive. See Red Blob Games article.
 
-- [x] Fix AO - was using computed normals, switched back to normalView
-- [x] Fix shadow clipping - light-space AABB calculation, dynamic shadow frustum based on camera zoom
-- [x] Split up code into more files (Demo.js, GUI.js, CityBuilder.js, Lighting.js)
-- [x] Deformed grid like Townscaper (DeformableGrid.js, GridRenderer.js) - vertex-based grid with noise deformation, relaxation, edge pinning, blue ground grid visualization
-- [x] Fix mobile touch controls - correct TOUCH constant values
-- [x] Fix shadow clipping on mobile portrait - use max of vertical/horizontal frustum extent
-- [x] Add HDR rotation controls - custom TSL environment node for WebGPU (background + material reflections)
-- [x] Stack multiple floor blocks for tall towers (instead of stretched single block)
-- [x] click to destroy / build buildings (like townscaper)
-- [x] subtle sound effects
 
-## Current Work: Road Extension Algorithm
 
-Implementing a road tile system that grows outward from a central X intersection. Simpler than full WFC.
+## Current Work: Multi-Grid WFC Connection
 
-### Debug Setup
-- Single TURN_90 tile at world origin (0,0,0) with rotation 0
-- Camera at standard Three.js angle: position (-28, 40, 26) targeting (0,0,0)
-- Axes: +X = right (East), +Z = toward viewer (South), +Y = up
+Expandable hex map where clicking placeholder helpers spawns new grids that seamlessly connect via WFC edge-matching.
 
 ### Key Files
-- **src/Tiles.js** - TileType enum, TileDefinitions (exits per type), rotateExits(), TileGeometry loader
-- **src/City.js** - Road generation, placeRoadTile(), updateRoadMatrices(), rotation helpers
+- **src/HexMap.js** - Manages multiple HexGrid instances, handles expansion
+- **src/HexGrid.js** - Self-contained grid with own BatchedMesh, Decorations, GridHelper
+- **src/HexGridHelper.js** - Visual overlay (lines + dots) + clickable placeholder meshes
+- **src/HexGridConnector.js** - Edge extraction, seed generation for adjacent grids
+- **src/HexTiles.js** - Tile definitions, HexTile class, isInHexRadius()
+- **src/HexWFC.js** - WFC solver and adjacency rules
 
-### Tile Definitions (rotation 0)
-- FORWARD: exits N, S (straight road)
-- END: exit S (cap at N)
-- T: exits E, S, W (no N)
-- X: exits N, E, S, W
-- ANGLE: exits S, E
-- TURN_90: exits S, E
-
-### Rotation System
-- rotation 0-3 = 0°, 90°, 180°, 270° clockwise when viewed from above
-- Mesh rotation: `[0, -Math.PI/2, -Math.PI, -Math.PI*1.5]`
-- rotateExits() rotates exit data to match mesh rotation
-- Geometry baked with -90° at import to align FORWARD tile N-S
-
-### Current Issue
-Debugging tile rotation - verifying that visual mesh rotation matches data layer (TileDefinitions + rotateExits).
+### Architecture
+- Each grid is self-contained with its own BatchedMesh instances
+- `Map` manages a collection of `HexGrid` instances keyed by "x,z" grid coordinates
+- Clicking a placeholder generates seeds from adjacent grid edge and creates new grid
+- Seeds ensure seamless edge matching between adjacent grids
 
 ## Naming Conventions
 
-- **City** - The entire grid, comprised of 11x11 lots
-- **Lot** - A 10x10 grid of cells containing towers (separated by 3-cell roads)
-- **Cell** - A 1x1 grid unit, the size of the smallest block
-- **Tower** - A building/stack made of multiple blocks. Has position, rotation, height, colors. (class: `Tower`)
-- **Block** - An individual mesh instance within a tower
-  - **Base Block** - Floor/body block geometry (typeBottom: 0-8)
-  - **Top Block** - Roof block geometry (typeTop: 0-5)
-- **Floor** - One level of a tower, rendered as a base block instance
+### Hex Grid System (current)
+- **HexMap** - The entire world, manages multiple Grids (class: `HexMap` in `src/HexMap.js`)
+- **HexGrid** - A hexagonal grid of hex cells (one WFC solve = one Grid, class: `HexGrid` in `src/HexGrid.js`)
+- **GridHelper** - Visual overlay (lines + dots) for a grid (class: `HexGridHelper` in `src/HexGridHelper.js`)
+- **GridPlaceholder** - Clickable hexagonal button to expand into adjacent grid slot
+- **Cell** - A position in the grid that can hold a Tile (the small hexes within a HexGrid)
+- **Tile** - The actual mesh placed in a Cell (class: `HexTile` in `src/HexTiles.js`)
 
+
+## Coordinate Systems
+
+### Blender (Z-up)
+- **+X = East** (right in top-down view)
+- **+Y = North** (up in top-down view)
+- **+Z = Up** (vertical, out of ground plane)
+
+### Three.js / App (Y-up)
+- **+X = East** (right in top-down view)
+- **+Y = Up** (vertical)
+- **+Z = South** (toward camera in default view, so **-Z = North**)
+
+### glTF Export Transform ("+Y Up" checked)
+| Blender | Three.js |
+|---------|----------|
+| +X | +X (East) |
+| +Y | -Z (North) |
+| +Z | +Y (Up) |
+
+### Hex Orientation
+- **Cells/Tiles**: Pointy-top (pointy vertices face ±Z North/South, flat edges face ±X East/West)
+- **HexGrids**: Flat-top (flat edges face ±Z North/South, pointy vertices face ±X East/West)
+
+### Hex Coordinate Systems
+Two coordinate systems are used:
+
+**Offset Coordinates (col, row)**
+- Simple 2D array indexing
+- Best for: storage, iteration, array access, rendering positions
+- Row parity affects neighbor calculations (odd vs even rows have different neighbor offsets)
+
+**Cube/Axial Coordinates (q, r, s where s = -q-r)**
+- Three axes at 60° angles, constraint: q + r + s = 0
+- Best for: distance calculations, rotations, symmetry operations, hex math
+- Hex distance = max(|q|, |r|, |s|)
+
+**Conversion (pointy-top odd-row offset):**
+- Offset → Axial: `q = col - floor(row/2)`, `r = row`
+- Axial → Offset: `col = q + floor(r/2)`, `row = r`
+
+### Scale
+- **Blender**: Tiles are 2m on X, 2.31m on Y, 1m on Z
+- **App**: 1:1 scale (no scaling applied)
+- **Result**: Hex tile is exactly 2 cells wide on the square grid (2 WU on X axis)
+
+## Hex Grid Sources
+
+- [Red Blob Games - Hexagonal Grids](https://www.redblobgames.com/grids/hexagons/) - Coordinate systems
+- [mxgmn/WaveFunctionCollapse](https://github.com/mxgmn/WaveFunctionCollapse) - Original WFC
+- Medieval Hexagon Pack - Tile assets (KayKit)
+- https://observablehq.com/@sanderevers/hexagon-tiling-of-an-hexagonal-grid
+
+## Game / Style Refs
+
+- Dorf Romantik
+- Bad North

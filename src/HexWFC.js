@@ -7,6 +7,8 @@ import {
   getReturnDirection,
   rotateHexEdges,
 } from './HexTiles.js'
+import { offsetToCube, cubeToOffset } from './HexGridConnector.js'
+import { random } from './SeededRandom.js'
 
 /**
  * Check if two edges are compatible (edge type + level must match)
@@ -78,7 +80,7 @@ export class HexWFCCell {
   get entropy() {
     if (this.collapsed) return 0
     // Shannon entropy simplified + noise for tie-breaking
-    return Math.log(this.possibilities.size) + Math.random() * 0.001
+    return Math.log(this.possibilities.size) + random() * 0.001
   }
 
   collapse(state) {
@@ -217,19 +219,36 @@ export class HexWFCSolver {
       maxRestarts: options.maxRestarts ?? 10,
       tileTypes: options.tileTypes ?? null,  // Restrict to certain tile types
       levelsCount: options.levelsCount ?? 2,  // Total number of levels (e.g., 3 means 0, 1, 2)
+      // Coord conversion for logging (to match tile labels)
+      padding: options.padding ?? 0,
+      gridRadius: options.gridRadius ?? 0,
+      worldOffset: options.worldOffset ?? { x: 0, z: 0 },
       ...options
     }
-
-    // Seeded RNG or Math.random
-    this.rng = this.options.seed !== null
-      ? this.createSeededRNG(this.options.seed)
-      : Math.random.bind(Math)
 
     this.grid = []
     this.neighbors = []  // Precomputed neighbor relationships
     this.propagationStack = []
     this.restartCount = 0
     this.collapseOrder = []  // Track order of tile placements for visualization
+    this.lastContradiction = null  // Track last contradiction for debugging
+  }
+
+  /**
+   * Convert grid array coords to global offset coords (for logging to match tile labels)
+   * Uses cube coordinates for accurate conversion (no stagger issues)
+   */
+  toGlobalCoords(x, z) {
+    const { padding, gridRadius, globalCenterCube } = this.options
+    const localCol = x - padding - gridRadius
+    const localRow = z - padding - gridRadius
+    const localCube = offsetToCube(localCol, localRow)
+    const globalCube = {
+      q: localCube.q + globalCenterCube.q,
+      r: localCube.r + globalCenterCube.r,
+      s: localCube.s + globalCenterCube.s
+    }
+    return cubeToOffset(globalCube.q, globalCube.r, globalCube.s)
   }
 
   /**
@@ -367,7 +386,7 @@ export class HexWFCSolver {
     })
     const totalWeight = weights.reduce((a, b) => a + b, 0)
 
-    let roll = this.rng() * totalWeight
+    let roll = random() * totalWeight
     let selectedKey = possArray[possArray.length - 1]
     for (let i = 0; i < possArray.length; i++) {
       roll -= weights[i]
@@ -446,6 +465,24 @@ export class HexWFCSolver {
 
         // Contradiction: no possibilities left
         if (neighbor.possibilities.size === 0) {
+          // Store contradiction info for debugging
+          const sourceState = cell.collapsed ? HexWFCCell.parseKey([...cell.possibilities][0]) : null
+          this.lastContradiction = {
+            sourceX: x, sourceZ: z,
+            sourceState,
+            failedX: nx, failedZ: nz,
+            dir,
+            allowedEdges: [...new Set([...cell.possibilities].map(k => {
+              const e = this.rules.stateEdges.get(k)?.[dir]
+              return e ? `${e.type}@${e.level}` : '?'
+            }))],
+            // What was allowed before this step removed everything
+            lastAllowed: [...allowedInNeighbor].slice(0, 10).map(k => {
+              const s = HexWFCCell.parseKey(k)
+              const name = Object.entries(HexTileType).find(([, v]) => v === s.type)?.[0] || s.type
+              return `${name} r${s.rotation} l${s.level}`
+            })
+          }
           return false
         }
 
@@ -461,9 +498,14 @@ export class HexWFCSolver {
 
   /**
    * Main solve loop
+   * @param {Array} seedTiles - Seed tiles to pre-collapse [{ x, z, type, rotation, level }]
+   * @param {string} gridId - Grid identifier for logging (e.g., "0,0")
    * @returns {Array|null} Array of { gridX, gridZ, type, rotation, level } or null on failure
    */
-  solve(seedTiles = []) {
+  solve(seedTiles = [], gridId = '') {
+    const tryNum = this.options.attemptNum ?? (this.restartCount + 1)
+    console.log(`%cWFC START (try ${tryNum}, ${seedTiles.length} seeds)`, 'color: blue')
+
     this.init()
 
     // Pre-collapse seeded tiles
@@ -478,7 +520,32 @@ export class HexWFCSolver {
     }
     // Propagate seed constraints
     if (seedTiles.length > 0 && !this.propagate()) {
-      console.warn('HexWFC: seed tiles caused contradiction')
+      const getTileName = (type) => Object.entries(HexTileType).find(([, v]) => v === type)?.[0] || type
+      console.log(`%cSEED CONFLICT - propagation failed after seeding`, 'color: red')
+      if (this.lastContradiction) {
+        const c = this.lastContradiction
+        const failG = this.toGlobalCoords(c.failedX, c.failedZ)
+        console.log(`%c  FAILED CELL: (${failG.col},${failG.row})`, 'color: red')
+        // // Log ALL collapsed neighbors and their edge requirements
+        // for (const dir of HexDir) {
+        //   const offset = getHexNeighborOffset(c.failedX, c.failedZ, dir)
+        //   const nx = c.failedX + offset.dx
+        //   const nz = c.failedZ + offset.dz
+        //   const neighbor = this.grid[nx]?.[nz]
+        //   if (neighbor?.collapsed) {
+        //     const nState = HexWFCCell.parseKey([...neighbor.possibilities][0])
+        //     const nG = this.toGlobalCoords(nx, nz)
+        //     const returnDir = HexOpposite[dir]
+        //     const edgeInfo = this.rules.stateEdges.get([...neighbor.possibilities][0])?.[returnDir]
+        //     const edgeStr = edgeInfo ? `${edgeInfo.type}@${edgeInfo.level}` : '?'
+        //     console.log(`    ${dir}: (${nG.col},${nG.row}) ${getTileName(nState.type)} rot=${nState.rotation} → requires ${edgeStr}`)
+        //   }
+        // }
+        // // Log what tiles the last propagation step would have allowed
+        // if (c.lastAllowed?.length > 0) {
+        //   console.log(`  Last step allowed: ${c.lastAllowed.join(', ')}`)
+        // }
+      }
       return null
     }
 
@@ -487,6 +554,7 @@ export class HexWFCSolver {
 
       // All collapsed - success!
       if (!target) {
+        console.log(`%cWFC SUCCESS`, 'color: green')
         return this.extractResult()
       }
 
@@ -497,13 +565,15 @@ export class HexWFCSolver {
 
       // Propagate constraints
       if (!this.propagate()) {
-        // Contradiction - restart
+        // Contradiction during solve - restart with fresh grid
         this.restartCount++
+        console.log(`${gridId} WFC fail (contradiction)`)
         if (this.restartCount >= this.options.maxRestarts) {
-          console.warn(`HexWFC: max restarts (${this.options.maxRestarts}) reached`)
+          console.log(`%cWFC FAILED - MAX TRIES REACHED (${this.options.maxRestarts})`, 'color: red')
           return null
         }
-        this.init()
+        // Recursive call to restart with incremented try count
+        return this.solve(seedTiles, gridId)
       }
     }
   }
@@ -528,19 +598,5 @@ export class HexWFCSolver {
       }
     }
     return result
-  }
-
-  /**
-   * Mulberry32 seeded PRNG
-   */
-  createSeededRNG(seed) {
-    let s = seed
-    return () => {
-      s |= 0
-      s = s + 0x6D2B79F5 | 0
-      let t = Math.imul(s ^ s >>> 15, 1 | s)
-      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t
-      return ((t ^ t >>> 14) >>> 0) / 4294967296
-    }
   }
 }

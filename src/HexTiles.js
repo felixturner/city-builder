@@ -132,6 +132,22 @@ export function getHexNeighborOffset(x, z, dir) {
 }
 
 /**
+ * Check if a position is within hex grid radius (axial coordinates check)
+ * @param {number} col - Offset column (relative to center)
+ * @param {number} row - Offset row (relative to center)
+ * @param {number} radius - Grid radius
+ * @returns {boolean}
+ */
+export function isInHexRadius(col, row, radius) {
+  const r = row
+  const q = col - Math.floor(row / 2)
+  if (q < -radius || q > radius) return false
+  const r1 = Math.max(-radius, -q - radius)
+  const r2 = Math.min(radius, -q + radius)
+  return r >= r1 && r <= r2
+}
+
+/**
  * Get the direction from neighbor back to origin (dynamic opposite)
  * In offset coordinates, the "return direction" depends on both source and destination row parity
  */
@@ -186,11 +202,11 @@ export const HexTileDefinitions = {
   // === ROADS ===
   [HexTileType.ROAD_A]: {
     edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 28,
+    weight: 10,
   },
   [HexTileType.ROAD_B]: {
     edges: { NE: 'road', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 25,
+    weight: 8,
   },
   [HexTileType.ROAD_C]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'road' },
@@ -202,11 +218,11 @@ export const HexTileDefinitions = {
   },
   [HexTileType.ROAD_E]: {
     edges: { NE: 'road', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 5,
+    weight: 2,
   },
   [HexTileType.ROAD_F]: {
     edges: { NE: 'grass', E: 'road', SE: 'road', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 5,
+    weight: 2,
   },
   [HexTileType.ROAD_G]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'road', W: 'road', NW: 'road' },
@@ -366,32 +382,32 @@ export const HexTileDefinitions = {
   // Low slopes: 0.5u rise (levelIncrement: 1)
   [HexTileType.GRASS_SLOPE_LOW]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 200,
+    weight: 125,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 1,
   },
   [HexTileType.ROAD_A_SLOPE_LOW]: {
     edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 120,
+    weight: 75,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 1,
   },
   // Low cliffs: 0.5u rise
   [HexTileType.GRASS_CLIFF_LOW]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 60,
+    weight: 38,
     highEdges: ['NE', 'E', 'SE'],  // 3 high edges
     levelIncrement: 1,
   },
   [HexTileType.GRASS_CLIFF_LOW_B]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 60,
+    weight: 38,
     highEdges: ['NE', 'E', 'SE', 'SW'],  // 4 high edges
     levelIncrement: 1,
   },
   [HexTileType.GRASS_CLIFF_LOW_C]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 60,
+    weight: 38,
     highEdges: ['E'],  // 1 high edge
     levelIncrement: 1,
   },

@@ -2,35 +2,12 @@
 
 ## TODO
 
-- [ ] **Edge biasing for coast/ocean** - Pre-seed boundary cells with water before solving, or use position-based weights to boost ocean/coast near edges and grass near center
-- [ ] **Check cliff render heights** - Why are there no outcrops with 1 high neighbor? GRASS_CLIFF_C (1 highEdge) should create single-tile plateaus but they're rare/not appearing as expected
+
 
 ## Summary
 
 Extend WFC to support hexagonal tiles with multiple terrain types (grass, roads, rivers). Key change: 6 directions and 6 rotations instead of 4.
 
-## Coordinate Systems
-
-### Blender (Z-up)
-- **+X = East** (right in top-down view)
-- **+Y = North** (up in top-down view)
-- **+Z = Up** (vertical, out of ground plane)
-
-### Three.js / App (Y-up)
-- **+X = East** (right in top-down view)
-- **+Y = Up** (vertical)
-- **+Z = South** (toward camera in default view, so **-Z = North**)
-
-### glTF Export Transform ("+Y Up" checked)
-| Blender | Three.js |
-|---------|----------|
-| +X | +X (East) |
-| +Y | -Z (North) |
-| +Z | +Y (Up) |
-
-### Hex Orientation: Pointy-top
-- Pointy vertices face ±Z (North/South)
-- Flat edges face ±X (East/West)
 
 ```
 In Three.js (looking down from +Y):
@@ -50,10 +27,6 @@ In Three.js (looking down from +Y):
 
 The STRAIGHT road tile (hex_road_A) connects E↔W (flat edge to flat edge along X axis).
 
-### Scale
-- **Blender**: Tiles are 2m on X, 2.31m on Y, 1m on Z
-- **App**: 1:1 scale (no scaling applied)
-- **Result**: Hex tile is exactly 2 cells wide on the square grid (2 WU on X axis)
 
 ## Phase 1: Square WFC (DONE ✓)
 
@@ -206,9 +179,3 @@ Mesh rotation: `rotation.y = step * Math.PI / 3` (60° per step)
 2. Console: Log tile counts, restart count
 3. Seed: Same seed = same layout
 4. Performance: 15×15 hex grid solves quickly
-
-## Sources
-
-- [Red Blob Games - Hexagonal Grids](https://www.redblobgames.com/grids/hexagons/) - Coordinate systems
-- [mxgmn/WaveFunctionCollapse](https://github.com/mxgmn/WaveFunctionCollapse) - Original WFC
-- Medieval Hexagon Pack - Tile assets (KayKit)

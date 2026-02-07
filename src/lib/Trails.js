@@ -92,7 +92,7 @@ export class Trails {
     this.paths = []
     this.meshes = []
 
-    // Grid layout constants (from City)
+    // Grid layout constants (from Map)
     this.lotSize = 10
     this.roadWidth = 4
     this.cellSize = this.lotSize + this.roadWidth // 14
@@ -105,7 +105,7 @@ export class Trails {
     this.uTime = uniform(0)
 
     // Trail colors - match tower hover colors (pink, yellow, cyan)
-    // Original hex hover colors from City: #FC238D, #D2E253, #1BB3F6
+    // Original hex hover colors from Map: #FC238D, #D2E253, #1BB3F6
     this.trailColors = [
       vec3(0xFC / 255, 0x23 / 255, 0x8D / 255),  // #FC238D - Hot pink
       vec3(0xD2 / 255, 0xE2 / 255, 0x53 / 255),  // #D2E253 - Lime/yellow-green

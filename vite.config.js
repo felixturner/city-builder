@@ -13,6 +13,11 @@ export default defineConfig({
   root: '',
   base: './',
   plugins: [fullReloadAlways, basicSsl()],
+  server: {
+    watch: {
+      ignored: ['**/*.md'],
+    },
+  },
   build: {
     target: 'esnext',
   },

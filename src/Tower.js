@@ -436,7 +436,7 @@ export class Tower {
 
   /**
    * Handle click on tower - add a floor with animation and sounds
-   * @param {City} city - The city instance (for towerMesh and gridToWorld)
+   * @param {Map} map - The map instance (for towerMesh and gridToWorld)
    * @param {number} floorHeight - Height of each floor
    * @param {number} maxFloors - Maximum number of floors
    * @param {Debris} debris - Debris system for spawning particles
@@ -471,7 +471,7 @@ export class Tower {
 
   /**
    * Handle right-click on tower - delete all floors
-   * @param {City} city - The city instance (for towerMesh and gridToWorld)
+   * @param {Map} map - The map instance (for towerMesh and gridToWorld)
    * @param {number} floorHeight - Height of each floor
    * @param {Debris} debris - Debris system for spawning particles
    * @param {Tower[]} allTowers - All towers for debris collision

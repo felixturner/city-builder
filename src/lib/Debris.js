@@ -94,7 +94,7 @@ export class Debris {
    * @param {Tower} clickedTower - The tower that was clicked (exclude from collisions)
    * @param {Tower[]} allTowers - All towers in the scene
    * @param {number} floorHeight - Height of each floor
-   * @param {City} city - City instance for coordinate conversion
+   * @param {Map} map - Map instance for coordinate conversion
    * @param {number} radius - Radius to check for nearby towers
    */
   setupNearbyCollisions(clickedTower, allTowers, floorHeight, city, radius = 15) {

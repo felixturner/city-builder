@@ -1,13 +1,10 @@
 import {
   Vector3,
   Box3,
-  PlaneGeometry,
-  Mesh,
   EquirectangularReflectionMapping,
   DirectionalLight,
   HemisphereLight,
   DirectionalLightHelper,
-  MeshStandardNodeMaterial,
 } from 'three/webgpu'
 import { RGBELoader } from 'three/examples/jsm/Addons.js'
 
@@ -35,13 +32,6 @@ export class Lighting {
     texture.needsUpdate = true
     scene.background = texture
     scene.environment = texture
-
-    const groundGeom = new PlaneGeometry(296, 296, 1, 1)
-    groundGeom.rotateX(-Math.PI * 0.5)
-    const groundMat = new MeshStandardNodeMaterial({ color: 0x999999 })
-    const groundMesh = new Mesh(groundGeom, groundMat)
-    groundMesh.receiveShadow = true
-    scene.add(groundMesh)
 
     // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)
     this.sceneBounds = new Box3(

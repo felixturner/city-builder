@@ -44,14 +44,16 @@ export class Pointer {
       this.isTouch = e.pointerType === 'touch'
 
       // Raycast for click detection
-      if (this.raycastTargets.length > 0 && this.onPointerDownCallback) {
+      if (this.onPointerDownCallback) {
         this.clientPointer.set(e.clientX, e.clientY)
         this.pointer.set(
           (e.clientX / window.innerWidth) * 2 - 1,
           -(e.clientY / window.innerHeight) * 2 + 1
         )
         this.rayCaster.setFromCamera(this.pointer, this.camera)
-        const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
+        const intersects = this.raycastTargets.length > 0
+          ? this.rayCaster.intersectObjects(this.raycastTargets, false)
+          : []
         const intersection = intersects.length > 0 ? intersects[0] : null
 
         // For touch, store intersection for later use on pointerup
@@ -76,7 +78,7 @@ export class Pointer {
     this.updateScreenPointer(e)
 
     if (this.pointerDown && this.onPointerUpCallback) {
-      // For touch, pass the stored intersection so City can handle tap
+      // For touch, pass the stored intersection so Map can handle tap
       if (this.isTouch && this.pendingTouchIntersection !== undefined) {
         this.onPointerUpCallback(this.isTouch, this.pendingTouchIntersection)
         this.pendingTouchIntersection = undefined
@@ -93,8 +95,8 @@ export class Pointer {
     this.clientPointer.set(e.clientX, e.clientY)
     this.updateScreenPointer(e)
 
-    // Notify callback of pointer move (for drag detection)
-    if (this.pointerDown && this.onPointerMoveCallback) {
+    // Notify callback of pointer move (for hover detection and drag)
+    if (this.onPointerMoveCallback) {
       this.onPointerMoveCallback(e.clientX, e.clientY)
     }
   }

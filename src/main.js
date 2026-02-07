@@ -1,10 +1,10 @@
 import { Demo } from './Demo.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
-import { Sounds } from './lib/Sounds.js'
+// import { Sounds } from './lib/Sounds.js'
 
 const loadingEl = document.getElementById('loading')
-const loaderGif = document.getElementById('loader-gif')
-const startBtn = document.getElementById('start-btn')
+// const loaderGif = document.getElementById('loader-gif')
+// const startBtn = document.getElementById('start-btn')
 const canvas = document.getElementById('canvas')
 
 let demo = null
@@ -18,9 +18,12 @@ async function init() {
   demo = new Demo(canvas)
   await demo.init()
 
-  // WebGPU ready - hide loader gif, show start button
-  loaderGif.style.display = 'none'
-  startBtn.style.display = 'block'
+  // Go straight to rendering (no start button)
+  start()
+
+  // // WebGPU ready - hide loader gif, show start button
+  // loaderGif.style.display = 'none'
+  // startBtn.style.display = 'block'
 }
 
 function start() {
@@ -34,5 +37,5 @@ function start() {
   demo.city.startIntroAnimation(demo.camera, demo.controls, 4)
 }
 
-startBtn.addEventListener('click', start)
+// startBtn.addEventListener('click', start)
 init()

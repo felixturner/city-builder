@@ -1,6 +1,7 @@
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
 import { Sounds } from './lib/Sounds.js'
 import { TileGeometry } from './Tiles.js'
+import { setSeed } from './SeededRandom.js'
 
 export class GUIManager {
   constructor(demo) {
@@ -61,9 +62,9 @@ export class GUIManager {
       view: 'final',
       originHelper: false,
       debugCam: true,
-      squareGrid: true,
       hexGrid: false,
       tileLabels: false,
+      floor: true,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
@@ -100,30 +101,29 @@ export class GUIManager {
     })
 
     // Debug view
-    const viewMap = { final: 0, color: 1, depth: 2, normal: 3, ao: 4 }
+    const viewMap = { final: 0, color: 1, depth: 2, normal: 3, ao: 4, overlay: 5 }
     gui.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
       demo.debugView.value = viewMap[v]
     })
 
     // Visual toggles at top level
-    gui.add(allParams.debug, 'originHelper').name('Origin Helper').onChange((v) => {
+    gui.add(allParams.debug, 'originHelper').name('Axes Helpers').onChange((v) => {
       if (demo.axesHelper) demo.axesHelper.visible = v
+      demo.city.setAxesHelpersVisible(v)
     })
     gui.add(allParams.debug, 'debugCam').name('Debug Cam').onChange((v) => {
       demo.controls.maxPolarAngle = v ? Math.PI : 1.53
       demo.controls.minDistance = v ? 0 : 40
       demo.controls.maxDistance = v ? Infinity : 470
     })
-    gui.add(allParams.debug, 'squareGrid').name('Square Grid').onChange((v) => {
-      if (demo.city.cellGrid) demo.city.cellGrid.visible = v
-      if (demo.city.dotMesh) demo.city.dotMesh.visible = v
-    })
-    gui.add(allParams.debug, 'hexGrid').name('Hex Grid').onChange((v) => {
-      if (demo.city.hexGridLines) demo.city.hexGridLines.visible = v
-      if (demo.city.hexGridDots) demo.city.hexGridDots.visible = v
+    gui.add(allParams.debug, 'hexGrid').name('Hex Helper').onChange((v) => {
+      demo.city.setHelpersVisible(v)
     })
     gui.add(allParams.debug, 'tileLabels').name('Tile Labels').onChange((v) => {
       demo.city.setTileLabelsVisible(v)
+    })
+    gui.add(allParams.debug, 'floor').name('Floor').onChange((v) => {
+      if (demo.city.floor) demo.city.floor.visible = v
     })
 
     // DPR dropdown (default 1)
@@ -135,14 +135,15 @@ export class GUIManager {
 
     // Action buttons
     gui.add({ regen: () => {
+      // Reset global RNG to seed value before regenerating
+      setSeed(allParams.roads.wfcSeed)
       demo.city.regenerate({
         animate: allParams.roads.animateWFC,
         animateDelay: allParams.roads.animateDelay,
         levelsCount: allParams.roads.useLevels ? 3 : 1,
       })
-      // Restore hex grid visibility from GUI state
-      if (demo.city.hexGridLines) demo.city.hexGridLines.visible = allParams.debug.hexGrid
-      if (demo.city.hexGridDots) demo.city.hexGridDots.visible = allParams.debug.hexGrid
+      // Restore hex helper visibility from GUI state
+      demo.city.setHelpersVisible(allParams.debug.hexGrid)
     } }, 'regen').name('Regen')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
 
@@ -320,10 +321,10 @@ export class GUIManager {
     demo.controls.minDistance = params.debug.debugCam ? 0 : 40
     demo.controls.maxDistance = params.debug.debugCam ? Infinity : 470
     if (demo.axesHelper) demo.axesHelper.visible = params.debug.originHelper
+    demo.city.setAxesHelpersVisible(params.debug.originHelper)
 
-    // Hex grid visibility
-    if (demo.city.hexGridLines) demo.city.hexGridLines.visible = params.debug.hexGrid
-    if (demo.city.hexGridDots) demo.city.hexGridDots.visible = params.debug.hexGrid
+    // Hex helper visibility
+    demo.city.setHelpersVisible(params.debug.hexGrid)
 
     // Renderer
     demo.renderer.setPixelRatio(params.renderer.dpr)
