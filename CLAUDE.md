@@ -17,17 +17,18 @@ a hex map builder toy
 
 ## TODO
 
-- [ ] **Add dead-end tiles** - River dead-end, road slope dead-ends (low/high). Allows easier transitions to grass, helps tile replacement resolve conflicts.
-- test for failing WFC (seeds incompatible)
+- test for failing WFC (seeds incompatible) X
 - use bigger world noise fields for water, mountains + forests, cities? 
 - [ ] Investigate level 2 not showing - Weight imbalance? Edge constraints? Seeding?
 - [ ] Figure out levels 4 + 5 (need more slope tile types to reach higher heights)
 - fix drop in build anim 
-- [ ] Use continuous noise field for tree placement - Instead of per-tile random
+- [ ] Use continuous noise field for tree placement - Instead of per-tile random X
+
 - add rocks + plants
 - add stepped rocks by cliffs
 
 
+- [ ] Add new TILES: River dead-end, road slope dead-ends (low/high). river slopes? coast slopes. branching bridges? Allows easier transitions to grass, helps tile replacement resolve conflicts.
 - [ ] Consider manual compositing passes instead of MRT (fixes transparency, enables half-res AO for perf)
 - [ ] Consider preventing road slopes from meeting (use 'road_slope' edge type instead of 'road')
 - [ ] **Edge biasing for coast/ocean** - Pre-seed boundary cells with water before solving, or use position-based weights to boost ocean/coast near edges and grass near center
@@ -51,7 +52,8 @@ a hex map builder toy
 - [ ] Update to latest threejs
 - [ ] Fix regen destroyed texture crash - WebGPU textures disposed before GPU queue finishes, needs device.queue.onSubmittedWorkDone()
 - [ ] **Consider switching to global cell coords** - Avoid world position math for coordinate conversion. Offset coords have stagger issues; cube/axial coords are linear and additive. See Red Blob Games article.
-
+- put grid gen ina worker - show spinner  / building anim
+- add dec to hide road/river discontuities. Add a big house/watermill?ok
 
 
 ## Current Work: Multi-Grid WFC Connection

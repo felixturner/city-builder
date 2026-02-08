@@ -7,9 +7,11 @@ import {
   Raycaster,
   Vector2,
 } from 'three/webgpu'
+import WFCWorker from './workers/wfc.worker.js?worker'
 import { uniform, varyingProperty, materialColor, vec3 } from 'three/tsl'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import { HexWFCAdjacencyRules } from './HexWFC.js'
+import { setStatus } from './Demo.js'
 import { HexTileGeometry, HexTileType, HexTileDefinitions, isInHexRadius, TILE_LIST } from './HexTiles.js'
 import { HexGrid, HexGridState } from './HexGrid.js'
 import {
@@ -76,6 +78,11 @@ export class HexMap {
 
     // Regeneration state (prevents overlay rendering during disposal)
     this.isRegenerating = false
+
+    // WFC Web Worker
+    this.wfcWorker = null
+    this.wfcPendingResolve = null  // Promise resolver for current WFC solve
+    this.wfcRequestId = 0
   }
 
   async init() {
@@ -83,6 +90,7 @@ export class HexMap {
     this.createFloor()
     await this.initMaterial()
     this.initWfcRules()
+    this.initWfcWorker()
     initGlobalTreeNoise()  // Initialize shared noise for tree placement
 
     // Create center grid at (0,0) and immediately populate it
@@ -128,6 +136,89 @@ export class HexMap {
     const tileTypes = this.getDefaultTileTypes()
     const levelsCount = 4
     this.hexWfcRules = HexWFCAdjacencyRules.fromTileDefinitions(tileTypes, levelsCount)
+  }
+
+  /**
+   * Initialize WFC Web Worker
+   */
+  initWfcWorker() {
+    try {
+      this.wfcWorker = new WFCWorker()
+      this.wfcWorker.onmessage = (e) => this.handleWfcMessage(e)
+      this.wfcWorker.onerror = (e) => {
+        console.error('WFC Worker error:', e)
+        // Resolve with null on error to trigger fallback
+        if (this.wfcPendingResolve) {
+          this.wfcPendingResolve({ success: false, tiles: null, collapseOrder: [] })
+          this.wfcPendingResolve = null
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to create WFC worker, will use sync solver:', e)
+      this.wfcWorker = null
+    }
+  }
+
+  /**
+   * Handle messages from WFC worker
+   */
+  handleWfcMessage(e) {
+    const { type, id, message, success, tiles, collapseOrder } = e.data
+
+    if (type === 'log') {
+      // Stream log to status bar
+      console.log('[WFC Worker]', message)
+      setStatus(message)
+    } else if (type === 'result') {
+      // Resolve pending promise
+      if (this.wfcPendingResolve) {
+        const { lastContradiction } = e.data
+        this.wfcPendingResolve({ success, tiles, collapseOrder, lastContradiction })
+        this.wfcPendingResolve = null
+      }
+    }
+  }
+
+  /**
+   * Solve WFC using Web Worker (async)
+   * Returns promise that resolves with { success, tiles, collapseOrder }
+   */
+  solveWfcAsync(width, height, seeds, options) {
+    return new Promise((resolve) => {
+      if (!this.wfcWorker) {
+        // No worker available, resolve with null to trigger fallback
+        resolve({ success: false, tiles: null, collapseOrder: [] })
+        return
+      }
+
+      const id = `wfc_${++this.wfcRequestId}`
+      this.wfcPendingResolve = resolve
+
+      // Set up timeout (10 seconds)
+      const timeout = setTimeout(() => {
+        console.warn('WFC worker timeout, falling back to sync')
+        if (this.wfcPendingResolve) {
+          this.wfcPendingResolve({ success: false, tiles: null, collapseOrder: [] })
+          this.wfcPendingResolve = null
+        }
+      }, 10000)
+
+      // Override resolve to clear timeout
+      const originalResolve = resolve
+      this.wfcPendingResolve = (result) => {
+        clearTimeout(timeout)
+        originalResolve(result)
+      }
+
+      this.wfcWorker.postMessage({
+        type: 'solve',
+        id,
+        width,
+        height,
+        seeds,
+        options
+      })
+    })
   }
 
   /**
@@ -213,6 +304,11 @@ export class HexMap {
       seedWaterEdge: seedTiles.length === 0,
       tileTypes: this.getDefaultTileTypes(),
       onSeedDropped: (globalCoord) => this.droppedSeeds.add(globalCoord),
+      // Pass worker solve function
+      solveWfcAsync: this.wfcWorker ? (w, h, s, o) => this.solveWfcAsync(w, h, s, o) : null,
+      // Animation callbacks
+      onSolveStart: () => grid.placeholder?.startSpinning(),
+      onSolveEnd: () => grid.placeholder?.stopSpinning(),
       ...options,  // Allow caller to override defaults
     })
 

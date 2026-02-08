@@ -27,6 +27,7 @@ import {
 import { Decorations } from './Decorations.js'
 import { HexGridHelper } from './HexGridHelper.js'
 import { Placeholder } from './Placeholder.js'
+import { offsetToCube, cubeToOffset } from './HexGridConnector.js'
 
 /**
  * HexGrid states
@@ -159,6 +160,19 @@ export class HexGrid {
         const geomId = this.hexMesh.addGeometry(geom)
         this.geomIds.set(type, geomId)
       }
+    }
+
+    // Initialize color buffer with a dummy white instance (fixes WebGPU color sync issue)
+    // This ensures setColorAt is called before first render
+    const firstGeomId = this.geomIds.values().next().value
+    if (firstGeomId !== undefined) {
+      const WHITE = new Color(0xffffff)
+      this.hexMesh._dummyInstanceId = this.hexMesh.addInstance(firstGeomId)
+      this.hexMesh.setColorAt(this.hexMesh._dummyInstanceId, WHITE)
+      this.dummy.position.set(0, -1000, 0)
+      this.dummy.scale.setScalar(0)
+      this.dummy.updateMatrix()
+      this.hexMesh.setMatrixAt(this.hexMesh._dummyInstanceId, this.dummy.matrix)
     }
 
     // Initialize decorations for this grid (pass worldOffset for noise sampling)
@@ -298,6 +312,9 @@ export class HexGrid {
    * @param {Array} seedTiles - Seed tiles for WFC [{ x, z, type, rotation, level }]
    *   Seeds can include neighbor tiles from adjacent grids (may be outside hex radius)
    * @param {Object} options - Options for WFC and animation
+   *   - solveWfcAsync: async function to solve WFC via worker (optional)
+   *   - onSolveStart: callback when solve starts (for animation)
+   *   - onSolveEnd: callback when solve ends (for animation)
    */
   async populate(rules, seedTiles = [], options = {}) {
     // Ensure meshes are initialized
@@ -305,9 +322,8 @@ export class HexGrid {
       await this.initMeshes(HexTileGeometry.geoms)
     }
 
-    // Transition to POPULATED state
-    this.state = HexGridState.POPULATED
-    this.updateVisibility()
+    // Keep in PLACEHOLDER state during solve (so spinner is visible)
+    // Will transition to POPULATED after solve completes
     const baseSize = this.gridRadius * 2 + 1
     this.hexTiles = []
     this.hexGrid = Array.from({ length: baseSize }, () => Array(baseSize).fill(null))
@@ -385,58 +401,100 @@ export class HexGrid {
     const initialSeedCount = currentSeeds.length
     let droppedCount = 0
     let result = null
+    let resultCollapseOrder = []
     let attempt = 0
     const maxAttempts = 10
     let solver = null
 
-    // Graduated retry: remove problem seeds one at a time
-    while (!result && attempt < maxAttempts) {
-      attempt++
+    // Get async solver from options (provided by HexMap)
+    const solveWfcAsync = options.solveWfcAsync ?? null
 
-      solver = new HexWFCSolver(wfcSize, wfcSize, rules, {
-        attemptNum: attempt,
-        weights,
-        seed,
-        maxRestarts: 1,
-        tileTypes,
-        levelsCount,
-        padding,
-        gridRadius: this.gridRadius,
-        globalCenterCube,
-      })
+    // Notify solve start (for placeholder animation)
+    options.onSolveStart?.()
 
-      result = solver.solve(currentSeeds, gridId)
+    try {
+      // Graduated retry: remove problem seeds one at a time
+      while (!result && attempt < maxAttempts) {
+        attempt++
 
-      if (!result && solver.lastContradiction && currentSeeds.length > 0) {
-        // Find seeds adjacent to the failed cell
-        const { failedX, failedZ } = solver.lastContradiction
-        const problemSeeds = this.findAdjacentSeeds(currentSeeds, failedX, failedZ)
-
-        // Pick the seed to handle
-        let seedToHandle = null
-        if (problemSeeds.length > 0) {
-          seedToHandle = problemSeeds[0]
-        } else if (currentSeeds.length > 0) {
-          const randomIdx = Math.floor(random() * currentSeeds.length)
-          seedToHandle = currentSeeds[randomIdx]
+        const solverOptions = {
+          attemptNum: attempt,
+          weights,
+          seed,
+          maxRestarts: 1,
+          tileTypes,
+          levelsCount,
+          padding,
+          gridRadius: this.gridRadius,
+          globalCenterCube,
+          gridId,
         }
 
-        if (seedToHandle) {
-          const seedGlobal = solver.toGlobalCoords(seedToHandle.x, seedToHandle.z)
-          const globalKey = `${seedGlobal.col},${seedGlobal.row}`
+        // Helper to convert seed coords to global (same logic as solver.toGlobalCoords)
+        const toGlobalCoords = (x, z) => {
+          const localCol = x - padding - this.gridRadius
+          const localRow = z - padding - this.gridRadius
+          const localCube = offsetToCube(localCol, localRow)
+          const globalCube = {
+            q: localCube.q + globalCenterCube.q,
+            r: localCube.r + globalCenterCube.r,
+            s: localCube.s + globalCenterCube.s
+          }
+          return cubeToOffset(globalCube.q, globalCube.r, globalCube.s)
+        }
 
-          // Drop the problematic seed
-          log(`WFC FAILED - Dropping seed (${globalKey})`, 'color: red')
-          onSeedDropped?.(globalKey)
-          droppedCount++
-          currentSeeds = currentSeeds.filter(s => s !== seedToHandle)
+        let lastContradiction = null
+
+        // Use async worker if available, otherwise sync solver
+        if (solveWfcAsync) {
+          const workerResult = await solveWfcAsync(wfcSize, wfcSize, currentSeeds, solverOptions)
+          if (workerResult.success) {
+            result = workerResult.tiles
+            resultCollapseOrder = workerResult.collapseOrder || []
+          }
+          lastContradiction = workerResult.lastContradiction
         } else {
-          log(`WFC FAILED - No seeds left to drop`, 'color: red')
+          // Sync solver (fallback when worker unavailable)
+          solver = new HexWFCSolver(wfcSize, wfcSize, rules, solverOptions)
+          result = solver.solve(currentSeeds, gridId)
+          resultCollapseOrder = solver.collapseOrder
+          lastContradiction = solver.lastContradiction
+        }
+
+        if (!result && lastContradiction && currentSeeds.length > 0) {
+          // Find seeds adjacent to the failed cell
+          const { failedX, failedZ } = lastContradiction
+          const problemSeeds = this.findAdjacentSeeds(currentSeeds, failedX, failedZ)
+
+          // Pick the seed to handle
+          let seedToHandle = null
+          if (problemSeeds.length > 0) {
+            seedToHandle = problemSeeds[0]
+          } else if (currentSeeds.length > 0) {
+            const randomIdx = Math.floor(random() * currentSeeds.length)
+            seedToHandle = currentSeeds[randomIdx]
+          }
+
+          if (seedToHandle) {
+            const seedGlobal = toGlobalCoords(seedToHandle.x, seedToHandle.z)
+            const globalKey = `${seedGlobal.col},${seedGlobal.row}`
+
+            // Drop the problematic seed
+            log(`WFC FAILED - Dropping seed (${globalKey})`, 'color: red')
+            onSeedDropped?.(globalKey)
+            droppedCount++
+            currentSeeds = currentSeeds.filter(s => s !== seedToHandle)
+          } else {
+            log(`WFC FAILED - No seeds left to drop`, 'color: red')
+            break
+          }
+        } else if (!result) {
           break
         }
-      } else if (!result) {
-        break
       }
+    } finally {
+      // Notify solve end (for placeholder animation)
+      options.onSolveEnd?.()
     }
 
     if (!result) {
@@ -450,6 +508,10 @@ export class HexGrid {
     if (replacedCount > 0) stats.push(`${replacedCount} replaced`)
     if (droppedCount > 0) stats.push(`${droppedCount} dropped`)
     log(`WFC SUCCESS - ${stats.join(', ')}`, 'color: green')
+
+    // Transition to POPULATED state now that solve succeeded
+    this.state = HexGridState.POPULATED
+    this.updateVisibility()
 
     // Filter results to only include tiles within original hex radius (exclude padding)
     const filteredResult = result.filter(p => {
@@ -465,7 +527,7 @@ export class HexGrid {
     }))
 
     // Get WFC collapse order for animation (filtered and adjusted for padding)
-    const collapseOrder = solver.collapseOrder.filter(p => {
+    const collapseOrder = resultCollapseOrder.filter(p => {
       const origX = p.gridX - padding
       const origZ = p.gridZ - padding
       const offsetCol = origX - this.gridRadius

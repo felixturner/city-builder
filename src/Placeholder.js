@@ -6,6 +6,7 @@ import {
   DoubleSide,
   Group,
 } from 'three/webgpu'
+import gsap from 'gsap'
 
 /**
  * Placeholder - Visual representation for an unmapped HexGrid
@@ -22,6 +23,7 @@ export class Placeholder {
     this.button = null
     this.triangles = []  // Triangle meshes for neighbor indicators
     this.onClick = null
+    this.spinTween = null  // GSAP tween for spinning animation
 
     this.createButton()
   }
@@ -144,6 +146,32 @@ export class Placeholder {
   }
 
   /**
+   * Start spinning animation (called when WFC starts)
+   */
+  startSpinning() {
+    if (!this.button) return
+    this.spinTween = gsap.to(this.button.rotation, {
+      y: Math.PI * 2,
+      duration: 1,
+      repeat: -1,
+      ease: 'none'
+    })
+  }
+
+  /**
+   * Stop spinning animation (called when WFC completes)
+   */
+  stopSpinning() {
+    if (this.spinTween) {
+      this.spinTween.kill()
+      this.spinTween = null
+    }
+    if (this.button) {
+      this.button.rotation.y = 0
+    }
+  }
+
+  /**
    * Show placeholder
    */
   show() {
@@ -175,6 +203,9 @@ export class Placeholder {
    * Dispose of resources
    */
   dispose() {
+    // Stop any running animation
+    this.stopSpinning()
+
     // Dispose triangles first (geometry only - material is shared with button)
     for (const tri of this.triangles) {
       tri.geometry?.dispose()

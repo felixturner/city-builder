@@ -1,53 +1,169 @@
-import {
-  HexTileDefinitions,
-  HexTileType,
-  HexDir,
-  HexOpposite,
-  getHexNeighborOffset,
-  getReturnDirection,
-  rotateHexEdges,
-} from './HexTiles.js'
-import { offsetToCube, cubeToOffset } from './HexGridConnector.js'
-import { random } from './SeededRandom.js'
-import { log as defaultLog } from './Demo.js'
-
 /**
- * Check if two edges are compatible (edge type + level must match)
- * @param {string} edgeTypeA - Edge type (grass, road, etc.)
- * @param {number} levelA - Level of edge A
- * @param {string} edgeTypeB - Edge type of neighbor
- * @param {number} levelB - Level of edge B
+ * WFC Web Worker
+ * Runs WFC solver in a separate thread to prevent UI freezing
  */
-function edgesCompatible(edgeTypeA, levelA, edgeTypeB, levelB) {
-  // Edge types must match
-  if (edgeTypeA !== edgeTypeB) return false
-  // Grass edges can connect at any level (height jumps look OK)
-  if (edgeTypeA === 'grass') return true
-  // Other edges (road, water, etc.) must match levels
-  return levelA === levelB
+
+// ============================================================================
+// Inline SeededRandom (from SeededRandom.js)
+// ============================================================================
+
+let rng = Math.random
+let currentSeed = null
+
+function setSeed(seed) {
+  currentSeed = seed
+  if (seed === null) {
+    rng = Math.random
+  } else {
+    // Mulberry32 seeded PRNG
+    let s = seed
+    rng = () => {
+      s |= 0
+      s = s + 0x6D2B79F5 | 0
+      let t = Math.imul(s ^ s >>> 15, 1 | s)
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t
+      return ((t ^ t >>> 14) >>> 0) / 4294967296
+    }
+  }
 }
 
-// Cache for rotated high edges: Map<"type_rotation", Set<dir>>
+function random() {
+  return rng()
+}
+
+// ============================================================================
+// Inline HexTiles definitions (from HexTiles.js)
+// ============================================================================
+
+const HexTileType = {
+  GRASS: 0, WATER: 1,
+  ROAD_A: 10, ROAD_B: 11, ROAD_C: 12, ROAD_D: 13, ROAD_E: 14, ROAD_F: 15,
+  ROAD_G: 16, ROAD_H: 17, ROAD_I: 18, ROAD_J: 19, ROAD_K: 20, ROAD_L: 21, ROAD_M: 22,
+  RIVER_A: 30, RIVER_A_CURVY: 31, RIVER_B: 32, RIVER_C: 33, RIVER_D: 34, RIVER_E: 35,
+  RIVER_F: 36, RIVER_G: 37, RIVER_H: 38, RIVER_I: 39, RIVER_J: 40, RIVER_K: 41,
+  RIVER_L: 42, RIVER_M: 43,
+  COAST_A: 50, COAST_B: 51, COAST_C: 52, COAST_D: 53, COAST_E: 54,
+  RIVER_CROSSING_A: 60, RIVER_CROSSING_B: 61,
+  GRASS_SLOPE_HIGH: 70, ROAD_A_SLOPE_HIGH: 71, GRASS_CLIFF: 72, GRASS_CLIFF_B: 73,
+  GRASS_CLIFF_C: 74, GRASS_SLOPE_LOW: 75, ROAD_A_SLOPE_LOW: 76, GRASS_CLIFF_LOW: 77,
+  GRASS_CLIFF_LOW_B: 78, GRASS_CLIFF_LOW_C: 79,
+}
+
+const HexDir = ['NE', 'E', 'SE', 'SW', 'W', 'NW']
+
+const HexOpposite = {
+  NE: 'SW', E: 'W', SE: 'NW', SW: 'NE', W: 'E', NW: 'SE',
+}
+
+const HexNeighborOffsets = {
+  even: {
+    NE: { dx: 0, dz: -1 }, E: { dx: 1, dz: 0 }, SE: { dx: 0, dz: 1 },
+    SW: { dx: -1, dz: 1 }, W: { dx: -1, dz: 0 }, NW: { dx: -1, dz: -1 },
+  },
+  odd: {
+    NE: { dx: 1, dz: -1 }, E: { dx: 1, dz: 0 }, SE: { dx: 1, dz: 1 },
+    SW: { dx: 0, dz: 1 }, W: { dx: -1, dz: 0 }, NW: { dx: 0, dz: -1 },
+  },
+}
+
+function getHexNeighborOffset(x, z, dir) {
+  const parity = (z % 2 === 0) ? 'even' : 'odd'
+  return HexNeighborOffsets[parity][dir]
+}
+
+function rotateHexEdges(edges, rotation) {
+  const rotated = {}
+  for (let i = 0; i < 6; i++) {
+    const fromDir = HexDir[i]
+    const toDir = HexDir[(i + rotation) % 6]
+    rotated[toDir] = edges[fromDir]
+  }
+  return rotated
+}
+
+const HexTileDefinitions = {
+  [HexTileType.GRASS]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 300 },
+  [HexTileType.WATER]: { edges: { NE: 'ocean', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'ocean', NW: 'ocean' }, weight: 50 },
+  [HexTileType.ROAD_A]: { edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' }, weight: 10 },
+  [HexTileType.ROAD_B]: { edges: { NE: 'road', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' }, weight: 8 },
+  [HexTileType.ROAD_C]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'road' }, weight: 1 },
+  [HexTileType.ROAD_D]: { edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'grass', W: 'road', NW: 'grass' }, weight: 2 },
+  [HexTileType.ROAD_E]: { edges: { NE: 'road', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' }, weight: 2 },
+  [HexTileType.ROAD_F]: { edges: { NE: 'grass', E: 'road', SE: 'road', SW: 'grass', W: 'road', NW: 'grass' }, weight: 2 },
+  [HexTileType.ROAD_G]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'road', W: 'road', NW: 'road' }, weight: 2 },
+  [HexTileType.ROAD_H]: { edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'road', W: 'road', NW: 'road' }, weight: 2 },
+  [HexTileType.ROAD_I]: { edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'road', W: 'grass', NW: 'road' }, weight: 2 },
+  [HexTileType.ROAD_J]: { edges: { NE: 'grass', E: 'road', SE: 'road', SW: 'road', W: 'road', NW: 'grass' }, weight: 1 },
+  [HexTileType.ROAD_K]: { edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'road', W: 'road', NW: 'road' }, weight: 1 },
+  [HexTileType.ROAD_L]: { edges: { NE: 'road', E: 'road', SE: 'road', SW: 'road', W: 'road', NW: 'road' }, weight: 1 },
+  [HexTileType.ROAD_M]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' }, weight: 4 },
+  [HexTileType.RIVER_A]: { edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' }, weight: 20 },
+  [HexTileType.RIVER_A_CURVY]: { edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' }, weight: 20 },
+  [HexTileType.RIVER_B]: { edges: { NE: 'river', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' }, weight: 60 },
+  [HexTileType.RIVER_C]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'river' }, weight: 8 },
+  [HexTileType.RIVER_D]: { edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' }, weight: 4 },
+  [HexTileType.RIVER_E]: { edges: { NE: 'river', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' }, weight: 4 },
+  [HexTileType.RIVER_F]: { edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' }, weight: 4 },
+  [HexTileType.RIVER_G]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'river', W: 'river', NW: 'river' }, weight: 4 },
+  [HexTileType.RIVER_H]: { edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'river', W: 'river', NW: 'river' }, weight: 2 },
+  [HexTileType.RIVER_I]: { edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'grass', NW: 'river' }, weight: 2 },
+  [HexTileType.RIVER_J]: { edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'grass' }, weight: 2 },
+  [HexTileType.RIVER_K]: { edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'river', NW: 'river' }, weight: 2 },
+  [HexTileType.RIVER_L]: { edges: { NE: 'river', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'river' }, weight: 2 },
+  [HexTileType.RIVER_M]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' }, weight: 8 },
+  [HexTileType.COAST_A]: { edges: { NE: 'grass', E: 'coast', SE: 'ocean', SW: 'coast', W: 'grass', NW: 'grass' }, weight: 20 },
+  [HexTileType.COAST_B]: { edges: { NE: 'grass', E: 'coast', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'grass' }, weight: 15 },
+  [HexTileType.COAST_C]: { edges: { NE: 'coast', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'grass' }, weight: 15 },
+  [HexTileType.COAST_D]: { edges: { NE: 'ocean', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'coast' }, weight: 15 },
+  [HexTileType.COAST_E]: { edges: { NE: 'grass', E: 'grass', SE: 'coast', SW: 'coast', W: 'grass', NW: 'grass' }, weight: 10 },
+  [HexTileType.RIVER_CROSSING_A]: { edges: { NE: 'grass', E: 'river', SE: 'road', SW: 'grass', W: 'river', NW: 'road' }, weight: 4 },
+  [HexTileType.RIVER_CROSSING_B]: { edges: { NE: 'road', E: 'river', SE: 'grass', SW: 'road', W: 'river', NW: 'grass' }, weight: 4 },
+  [HexTileType.GRASS_SLOPE_HIGH]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 100, highEdges: ['NE', 'E', 'SE'], levelIncrement: 2 },
+  [HexTileType.ROAD_A_SLOPE_HIGH]: { edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' }, weight: 60, highEdges: ['NE', 'E', 'SE'], levelIncrement: 2 },
+  [HexTileType.GRASS_CLIFF]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 30, highEdges: ['NE', 'E', 'SE'], levelIncrement: 2 },
+  [HexTileType.GRASS_CLIFF_B]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 30, highEdges: ['NE', 'E', 'SE', 'SW'], levelIncrement: 2 },
+  [HexTileType.GRASS_CLIFF_C]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 30, highEdges: ['E'], levelIncrement: 2 },
+  [HexTileType.GRASS_SLOPE_LOW]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 100, highEdges: ['NE', 'E', 'SE'], levelIncrement: 1 },
+  [HexTileType.ROAD_A_SLOPE_LOW]: { edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' }, weight: 60, highEdges: ['NE', 'E', 'SE'], levelIncrement: 1 },
+  [HexTileType.GRASS_CLIFF_LOW]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 30, highEdges: ['NE', 'E', 'SE'], levelIncrement: 1 },
+  [HexTileType.GRASS_CLIFF_LOW_B]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 30, highEdges: ['NE', 'E', 'SE', 'SW'], levelIncrement: 1 },
+  [HexTileType.GRASS_CLIFF_LOW_C]: { edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' }, weight: 30, highEdges: ['E'], levelIncrement: 1 },
+}
+
+// ============================================================================
+// Coordinate conversion (from HexGridConnector.js)
+// ============================================================================
+
+function offsetToCube(col, row) {
+  const q = col - Math.floor(row / 2)
+  const r = row
+  const s = -q - r
+  return { q, r, s }
+}
+
+function cubeToOffset(q, r, _s) {
+  const col = q + Math.floor(r / 2)
+  const row = r
+  return { col, row }
+}
+
+// ============================================================================
+// WFC Classes (from HexWFC.js)
+// ============================================================================
+
+// Cache for rotated high edges
 const highEdgeCache = new Map()
 
-/**
- * Get the level for a specific edge of a tile
- * Slopes have different levels on high vs low edges
- * Uses levelIncrement from tile definition (default 1)
- */
 function getEdgeLevel(tileType, rotation, dir, baseLevel) {
   const def = HexTileDefinitions[tileType]
   if (!def || !def.highEdges) {
-    // Non-slope tile: all edges at base level
     return baseLevel
   }
 
-  // Check cache for rotated high edges
   const cacheKey = `${tileType}_${rotation}`
   let highEdges = highEdgeCache.get(cacheKey)
 
   if (!highEdges) {
-    // Compute and cache rotated high edges
     highEdges = new Set()
     for (const highDir of def.highEdges) {
       const dirIndex = HexDir.indexOf(highDir)
@@ -57,20 +173,15 @@ function getEdgeLevel(tileType, rotation, dir, baseLevel) {
     highEdgeCache.set(cacheKey, highEdges)
   }
 
-  // High edges are at baseLevel + levelIncrement, low edges at baseLevel
   const levelIncrement = def.levelIncrement ?? 1
   return highEdges.has(dir) ? baseLevel + levelIncrement : baseLevel
 }
 
-/**
- * HexWFCCell - Tracks possibility space for one hex grid cell
- */
-export class HexWFCCell {
+class HexWFCCell {
   constructor(allStates) {
-    // Each state is { type, rotation, level } - store as "type_rotation_level" keys
     this.possibilities = new Set(allStates.map(s => HexWFCCell.stateKey(s)))
     this.collapsed = false
-    this.tile = null  // { type, rotation, level } when collapsed
+    this.tile = null
   }
 
   static stateKey(state) {
@@ -84,7 +195,6 @@ export class HexWFCCell {
 
   get entropy() {
     if (this.collapsed) return 0
-    // Shannon entropy simplified + noise for tie-breaking
     return Math.log(this.possibilities.size) + random() * 0.001
   }
 
@@ -104,37 +214,17 @@ export class HexWFCCell {
   }
 }
 
-/**
- * HexWFCAdjacencyRules - Pre-computed tile compatibility for hex grids
- * Handles offset coordinate asymmetry by indexing by edge type
- */
-export class HexWFCAdjacencyRules {
+class HexWFCAdjacencyRules {
   constructor() {
-    // For each state, what states can be placed in each direction (unused now, kept for API)
     this.allowed = new Map()
-
-    // Pre-computed edge info per state: stateKey → { dir: { type, level } }
     this.stateEdges = new Map()
-
-    // 3D index by edge type, direction, AND level: edgeType → dir → level → Set<stateKey>
-    // This allows O(1) lookup during propagation instead of O(candidates) filtering
     this.byEdge = new Map()
   }
 
-  /**
-   * Build adjacency rules from HexTileDefinitions
-   * Two tiles are compatible if their edge types AND levels match
-   * Only builds byEdge index - propagation uses this directly (O(n) instead of O(n²))
-   * @param {number[]} tileTypes - Tile types to include
-   * @param {number} levelsCount - Total number of levels (e.g., 3 means levels 0, 1, 2)
-   */
   static fromTileDefinitions(tileTypes = null, levelsCount = 2) {
     const rules = new HexWFCAdjacencyRules()
-
-    // Use provided tile types or all defined types
     const types = tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
 
-    // Generate all (type, rotation, level) combinations
     const allStates = []
     for (const type of types) {
       const def = HexTileDefinitions[type]
@@ -144,15 +234,12 @@ export class HexWFCAdjacencyRules {
 
       for (let rotation = 0; rotation < 6; rotation++) {
         if (isSlope) {
-          // Slopes connect level N to N + levelIncrement
-          // Max base level = levelsCount - 1 - increment
           const increment = def.levelIncrement ?? 1
           const maxBaseLevel = levelsCount - 1 - increment
           for (let level = 0; level <= maxBaseLevel; level++) {
             allStates.push({ type, rotation, level })
           }
         } else {
-          // Flat tiles at all levels
           for (let level = 0; level < levelsCount; level++) {
             allStates.push({ type, rotation, level })
           }
@@ -160,9 +247,6 @@ export class HexWFCAdjacencyRules {
       }
     }
 
-    // Build 3D edge index: byEdge[edgeType][dir][level] = Set<stateKey>
-    // This enables O(1) lookup during propagation (no filtering loop needed)
-    // stateEdges: stateKey → { dir: { type, level } }
     for (const state of allStates) {
       const stateKey = HexWFCCell.stateKey(state)
       const edges = rotateHexEdges(HexTileDefinitions[state.type].edges, state.rotation)
@@ -173,10 +257,9 @@ export class HexWFCAdjacencyRules {
         const edgeLevel = getEdgeLevel(state.type, state.rotation, dir, state.level)
         stateEdgeInfo[dir] = { type: edgeType, level: edgeLevel }
 
-        // Build 3D index: edgeType → dir → level → Set<stateKey>
         if (!rules.byEdge.has(edgeType)) {
           rules.byEdge.set(edgeType, {})
-          for (const d of HexDir) rules.byEdge.get(edgeType)[d] = []  // Array indexed by level
+          for (const d of HexDir) rules.byEdge.get(edgeType)[d] = []
         }
         const levelIndex = rules.byEdge.get(edgeType)[dir]
         if (!levelIndex[edgeLevel]) {
@@ -191,28 +274,12 @@ export class HexWFCAdjacencyRules {
     return rules
   }
 
-  getAllowed(stateKey, direction) {
-    return this.allowed.get(stateKey)?.[direction] ?? new Set()
-  }
-
-  /**
-   * Get states that have a specific edge type, direction, AND level
-   * O(1) lookup - used for fast constraint propagation
-   */
   getByEdge(edgeType, direction, level) {
     return this.byEdge.get(edgeType)?.[direction]?.[level] ?? new Set()
   }
-
-  isAllowed(stateKeyA, direction, stateKeyB) {
-    return this.allowed.get(stateKeyA)?.[direction]?.has(stateKeyB) ?? false
-  }
 }
 
-/**
- * HexWFCSolver - Wave Function Collapse for hex grids
- * Uses precomputed neighbor relationships instead of offset calculations
- */
-export class HexWFCSolver {
+class HexWFCSolver {
   constructor(width, height, rules, options = {}) {
     this.width = width
     this.height = height
@@ -222,29 +289,27 @@ export class HexWFCSolver {
       weights: options.weights ?? {},
       seed: options.seed ?? null,
       maxRestarts: options.maxRestarts ?? 10,
-      tileTypes: options.tileTypes ?? null,  // Restrict to certain tile types
-      levelsCount: options.levelsCount ?? 2,  // Total number of levels (e.g., 3 means 0, 1, 2)
-      // Coord conversion for logging (to match tile labels)
+      tileTypes: options.tileTypes ?? null,
+      levelsCount: options.levelsCount ?? 2,
       padding: options.padding ?? 0,
       gridRadius: options.gridRadius ?? 0,
       worldOffset: options.worldOffset ?? { x: 0, z: 0 },
-      // Injectable log function (allows worker to override with postMessage)
-      log: options.log ?? defaultLog,
+      log: options.log ?? ((msg) => postMessage({ type: 'log', message: msg })),
       ...options
     }
 
     this.grid = []
-    this.neighbors = []  // Precomputed neighbor relationships
+    this.neighbors = []
     this.propagationStack = []
     this.restartCount = 0
-    this.collapseOrder = []  // Track order of tile placements for visualization
-    this.lastContradiction = null  // Track last contradiction for debugging
+    this.collapseOrder = []
+    this.lastContradiction = null
   }
 
-  /**
-   * Convert grid array coords to global offset coords (for logging to match tile labels)
-   * Uses cube coordinates for accurate conversion (no stagger issues)
-   */
+  log(message) {
+    this.options.log(message)
+  }
+
   toGlobalCoords(x, z) {
     const { padding, gridRadius, globalCenterCube } = this.options
     const localCol = x - padding - gridRadius
@@ -258,16 +323,11 @@ export class HexWFCSolver {
     return cubeToOffset(globalCube.q, globalCube.r, globalCube.s)
   }
 
-  /**
-   * Initialize grid with all possibilities and precompute neighbors
-   */
   init() {
-    this.collapseOrder = []  // Reset on each attempt
-    // Get tile types to use
+    this.collapseOrder = []
     const types = this.options.tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
     const levelsCount = this.options.levelsCount
 
-    // Generate all states (type × 6 rotations × levels)
     const allStates = []
     for (const type of types) {
       const def = HexTileDefinitions[type]
@@ -277,15 +337,12 @@ export class HexWFCSolver {
 
       for (let rotation = 0; rotation < 6; rotation++) {
         if (isSlope) {
-          // Slopes connect level N to N + levelIncrement
-          // Max base level = levelsCount - 1 - increment
           const increment = def.levelIncrement ?? 1
           const maxBaseLevel = levelsCount - 1 - increment
           for (let level = 0; level <= maxBaseLevel; level++) {
             allStates.push({ type, rotation, level })
           }
         } else {
-          // Flat tiles at all levels
           for (let level = 0; level < levelsCount; level++) {
             allStates.push({ type, rotation, level })
           }
@@ -300,7 +357,6 @@ export class HexWFCSolver {
       this.neighbors[x] = []
       for (let z = 0; z < this.height; z++) {
         this.grid[x][z] = new HexWFCCell(allStates)
-        // Precompute neighbors for this cell
         this.neighbors[x][z] = this.computeNeighbors(x, z)
       }
     }
@@ -308,13 +364,6 @@ export class HexWFCSolver {
     this.propagationStack = []
   }
 
-  /**
-   * Precompute neighbors for a cell at (x, z)
-   * Returns array of { dir, returnDir, nx, nz } for each valid neighbor
-   * - dir: direction from this cell to neighbor (edge of THIS cell that faces neighbor)
-   * - returnDir: direction from neighbor to this cell (edge of NEIGHBOR that faces us)
-   * - nx, nz: neighbor grid coordinates
-   */
   computeNeighbors(x, z) {
     const neighbors = []
 
@@ -323,21 +372,15 @@ export class HexWFCSolver {
       const nx = x + offset.dx
       const nz = z + offset.dz
 
-      // Skip out of bounds
       if (nx < 0 || nx >= this.width || nz < 0 || nz >= this.height) continue
 
-      // Compute the return direction: which direction from neighbor reaches us?
       const returnDir = this.findReturnDirection(x, z, nx, nz)
-
       neighbors.push({ dir, returnDir, nx, nz })
     }
 
     return neighbors
   }
 
-  /**
-   * Find which direction from (nx, nz) leads back to (x, z)
-   */
   findReturnDirection(x, z, nx, nz) {
     for (const dir of HexDir) {
       const offset = getHexNeighborOffset(nx, nz, dir)
@@ -345,13 +388,9 @@ export class HexWFCSolver {
         return dir
       }
     }
-    // Fallback to geometric opposite (shouldn't happen)
     return HexOpposite[HexDir[0]]
   }
 
-  /**
-   * Find cell with lowest entropy
-   */
   findLowestEntropyCell() {
     let minEntropy = Infinity
     let minCell = null
@@ -375,18 +414,13 @@ export class HexWFCSolver {
     return minCell ? { cell: minCell, x: minX, z: minZ } : null
   }
 
-  /**
-   * Collapse a cell to a single state (weighted random)
-   */
   collapse(x, z) {
     const cell = this.grid[x][z]
     if (cell.collapsed || cell.possibilities.size === 0) return false
 
-    // Weighted random selection
     const possArray = Array.from(cell.possibilities)
     const weights = possArray.map(key => {
       const state = HexWFCCell.parseKey(key)
-      // Use custom weight or default from tile definition
       const customWeight = this.options.weights[state.type]
       const defaultWeight = HexTileDefinitions[state.type]?.weight ?? 1
       return customWeight ?? defaultWeight
@@ -407,50 +441,38 @@ export class HexWFCSolver {
     cell.collapse(state)
     this.propagationStack.push({ x, z })
 
-    // Record collapse order for visualization (includes level)
     this.collapseOrder.push({ gridX: x, gridZ: z, type: state.type, rotation: state.rotation, level: state.level })
 
     return true
   }
 
-  /**
-   * Propagate constraints to neighbors using precomputed neighbor relationships
-   * @returns {boolean} true if successful, false if contradiction
-   */
   propagate() {
     while (this.propagationStack.length > 0) {
       const { x, z } = this.propagationStack.pop()
       const cell = this.grid[x][z]
 
-      // Use precomputed neighbors
       for (const { dir, returnDir, nx, nz } of this.neighbors[x][z]) {
         const neighbor = this.grid[nx][nz]
         if (neighbor.collapsed) continue
 
-        // Calculate what neighbor can still be
-        // Cache lookups by (edgeType, level) to avoid redundant work
-        // Many possibilities share the same edge - only look up unique combinations
         const allowedInNeighbor = new Set()
-        const lookedUp = {}  // Nested object: lookedUp[type][level] = true
+        const lookedUp = {}
 
         for (const stateKey of cell.possibilities) {
           const edgeInfo = this.rules.stateEdges.get(stateKey)?.[dir]
           if (!edgeInfo) continue
 
-          // Skip if we already looked up this edge type + level combination
           const typeCache = lookedUp[edgeInfo.type]
           if (typeCache?.[edgeInfo.level]) continue
           if (!typeCache) lookedUp[edgeInfo.type] = {}
           lookedUp[edgeInfo.type][edgeInfo.level] = true
 
-          // Direct O(1) lookup - index already filtered by type, direction, AND level
           const candidates = this.rules.getByEdge(edgeInfo.type, returnDir, edgeInfo.level)
           for (const key of candidates) {
             allowedInNeighbor.add(key)
           }
         }
 
-        // Early exit: if allowed set covers all neighbor possibilities, nothing to remove
         if (allowedInNeighbor.size >= neighbor.possibilities.size) {
           let allAllowed = true
           for (const key of neighbor.possibilities) {
@@ -462,7 +484,6 @@ export class HexWFCSolver {
           if (allAllowed) continue
         }
 
-        // Remove invalid possibilities directly (safe to delete during Set iteration)
         const sizeBefore = neighbor.possibilities.size
         for (const neighborKey of neighbor.possibilities) {
           if (!allowedInNeighbor.has(neighborKey)) {
@@ -470,9 +491,7 @@ export class HexWFCSolver {
           }
         }
 
-        // Contradiction: no possibilities left
         if (neighbor.possibilities.size === 0) {
-          // Store contradiction info for debugging
           const sourceState = cell.collapsed ? HexWFCCell.parseKey([...cell.possibilities][0]) : null
           this.lastContradiction = {
             sourceX: x, sourceZ: z,
@@ -483,7 +502,6 @@ export class HexWFCSolver {
               const e = this.rules.stateEdges.get(k)?.[dir]
               return e ? `${e.type}@${e.level}` : '?'
             }))],
-            // What was allowed before this step removed everything
             lastAllowed: [...allowedInNeighbor].slice(0, 10).map(k => {
               const s = HexWFCCell.parseKey(k)
               const name = Object.entries(HexTileType).find(([, v]) => v === s.type)?.[0] || s.type
@@ -493,7 +511,6 @@ export class HexWFCSolver {
           return false
         }
 
-        // If changed, propagate further
         if (neighbor.possibilities.size < sizeBefore) {
           this.propagationStack.push({ x: nx, z: nz })
         }
@@ -503,20 +520,13 @@ export class HexWFCSolver {
     return true
   }
 
-  /**
-   * Main solve loop
-   * @param {Array} seedTiles - Seed tiles to pre-collapse [{ x, z, type, rotation, level }]
-   * @param {string} gridId - Grid identifier for logging (e.g., "0,0")
-   * @returns {Array|null} Array of { gridX, gridZ, type, rotation, level } or null on failure
-   */
   solve(seedTiles = [], gridId = '') {
     const baseAttempt = this.options.attemptNum ?? 1
     const tryNum = baseAttempt + this.restartCount
-    this.options.log(`WFC START (try ${tryNum}, ${seedTiles.length} seeds)`, 'color: blue')
+    this.log(`WFC START (try ${tryNum}, ${seedTiles.length} seeds)`)
 
     this.init()
 
-    // Pre-collapse seeded tiles
     for (const seed of seedTiles) {
       const cell = this.grid[seed.x]?.[seed.z]
       if (cell && !cell.collapsed) {
@@ -526,33 +536,13 @@ export class HexWFCSolver {
         this.propagationStack.push({ x: seed.x, z: seed.z })
       }
     }
-    // Propagate seed constraints
+
     if (seedTiles.length > 0 && !this.propagate()) {
-      const getTileName = (type) => Object.entries(HexTileType).find(([, v]) => v === type)?.[0] || type
-      this.options.log('WFC failed - propagation failed after seeding', 'color: red')
+      this.log('WFC failed - propagation failed after seeding')
       if (this.lastContradiction) {
         const c = this.lastContradiction
         const failG = this.toGlobalCoords(c.failedX, c.failedZ)
-        this.options.log(`  FAILED CELL: (${failG.col},${failG.row})`, 'color: red')
-        // // Log ALL collapsed neighbors and their edge requirements
-        // for (const dir of HexDir) {
-        //   const offset = getHexNeighborOffset(c.failedX, c.failedZ, dir)
-        //   const nx = c.failedX + offset.dx
-        //   const nz = c.failedZ + offset.dz
-        //   const neighbor = this.grid[nx]?.[nz]
-        //   if (neighbor?.collapsed) {
-        //     const nState = HexWFCCell.parseKey([...neighbor.possibilities][0])
-        //     const nG = this.toGlobalCoords(nx, nz)
-        //     const returnDir = HexOpposite[dir]
-        //     const edgeInfo = this.rules.stateEdges.get([...neighbor.possibilities][0])?.[returnDir]
-        //     const edgeStr = edgeInfo ? `${edgeInfo.type}@${edgeInfo.level}` : '?'
-        //     console.log(`    ${dir}: (${nG.col},${nG.row}) ${getTileName(nState.type)} rot=${nState.rotation} → requires ${edgeStr}`)
-        //   }
-        // }
-        // // Log what tiles the last propagation step would have allowed
-        // if (c.lastAllowed?.length > 0) {
-        //   console.log(`  Last step allowed: ${c.lastAllowed.join(', ')}`)
-        // }
+        this.log(`  FAILED CELL: (${failG.col},${failG.row})`)
       }
       return null
     }
@@ -560,33 +550,25 @@ export class HexWFCSolver {
     while (true) {
       const target = this.findLowestEntropyCell()
 
-      // All collapsed - success!
       if (!target) {
         return this.extractResult()
       }
 
-      // Collapse the cell
       if (!this.collapse(target.x, target.z)) {
         return null
       }
 
-      // Propagate constraints
       if (!this.propagate()) {
-        // Contradiction during solve - restart with fresh grid
         this.restartCount++
-        this.options.log(`${gridId} WFC fail (contradiction)`)
+        this.log(`${gridId} WFC fail (contradiction)`)
         if (this.restartCount >= this.options.maxRestarts) {
-          return null  // Caller will log the failure with dropped seed info
+          return null
         }
-        // Recursive call to restart with incremented try count
         return this.solve(seedTiles, gridId)
       }
     }
   }
 
-  /**
-   * Extract result from collapsed grid
-   */
   extractResult() {
     const result = []
     for (let x = 0; x < this.width; x++) {
@@ -604,5 +586,52 @@ export class HexWFCSolver {
       }
     }
     return result
+  }
+}
+
+// ============================================================================
+// Worker Message Handler
+// ============================================================================
+
+let currentRequestId = null
+
+self.onmessage = function(e) {
+  const { type, id, width, height, seeds, options } = e.data
+
+  if (type === 'solve') {
+    currentRequestId = id
+
+    // Set seed if provided
+    if (options?.seed != null) {
+      setSeed(options.seed)
+    }
+
+    // Build rules
+    const tileTypes = options?.tileTypes ?? null
+    const levelsCount = options?.levelsCount ?? 2
+    const rules = HexWFCAdjacencyRules.fromTileDefinitions(tileTypes, levelsCount)
+
+    // Create solver with log callback that sends messages to main thread
+    const solver = new HexWFCSolver(width, height, rules, {
+      ...options,
+      log: (message) => {
+        postMessage({ type: 'log', id, message })
+      }
+    })
+
+    // Run solver
+    const result = solver.solve(seeds || [], options?.gridId || '')
+
+    // Send result (include lastContradiction for seed dropping on failure)
+    postMessage({
+      type: 'result',
+      id,
+      success: result !== null,
+      tiles: result,
+      collapseOrder: solver.collapseOrder,
+      lastContradiction: solver.lastContradiction
+    })
+
+    currentRequestId = null
   }
 }
