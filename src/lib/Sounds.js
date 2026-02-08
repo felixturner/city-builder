@@ -13,6 +13,8 @@ class SoundsManager {
       debris: new Howl({ src: ['assets/sfx/debris.mp3'] }),
       good: new Howl({ src: ['assets/sfx/good.mp3'] }),
       intro: new Howl({ src: ['assets/sfx/intro.mp3'] }),
+      mystery: new Howl({ src: ['assets/sfx/mystery.mp3'] }),
+      incorrect: new Howl({ src: ['assets/sfx/incorrect.mp3'] }),
     }
     // Multiple stone sounds for random selection
     this.stoneSounds = [

@@ -7,19 +7,22 @@ import {
   Float32BufferAttribute,
   LineSegments,
   LineBasicMaterial,
+  Color,
 } from 'three/webgpu'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import gsap from 'gsap'
 import { HexWFCSolver, HexWFCAdjacencyRules } from './HexWFC.js'
 import { random } from './SeededRandom.js'
+import { log } from './Demo.js'
+import { Sounds } from './lib/Sounds.js'
 import {
   HexTile,
   HexTileGeometry,
   HexTileType,
-  HexTileDefinitions,
   HexDir,
   getHexNeighborOffset,
   isInHexRadius,
+  TILE_LIST,
 } from './HexTiles.js'
 import { Decorations } from './Decorations.js'
 import { HexGridHelper } from './HexGridHelper.js'
@@ -146,6 +149,7 @@ export class HexGrid {
     this.hexMesh.sortObjects = false
     this.hexMesh.receiveShadow = true
     this.hexMesh.castShadow = true
+    this.hexMesh.frustumCulled = false
     this.group.add(this.hexMesh)
 
     // Register geometries in BatchedMesh
@@ -312,6 +316,8 @@ export class HexGrid {
     const levelsCount = options.levelsCount ?? 2
     const weights = { ...options.weights }
     const seed = options.seed ?? null
+    const onSeedDropped = options.onSeedDropped ?? null
+    let replacedCount = options.replacedCount ?? 0
 
     // Separate neighbor seeds (outside grid) from internal seeds
     const neighborSeeds = []
@@ -347,7 +353,7 @@ export class HexGrid {
     // Expanded grid size with padding
     const wfcSize = baseSize + padding * 2
 
-    // Adjust seed positions for padding offset
+    // Adjust seed positions for padding offset (preserve source info for replacement callback)
     const adjustedSeeds = []
     for (const s of [...internalSeeds, ...neighborSeeds]) {
       adjustedSeeds.push({
@@ -355,7 +361,11 @@ export class HexGrid {
         z: s.z + padding,
         type: s.type,
         rotation: s.rotation,
-        level: s.level ?? 0
+        level: s.level ?? 0,
+        // Preserve source grid info for replacement callback
+        sourceGridKey: s.sourceGridKey,
+        sourceX: s.sourceX,
+        sourceZ: s.sourceZ,
       })
     }
 
@@ -371,32 +381,23 @@ export class HexGrid {
       this.addWaterEdgeSeeds(adjustedSeeds, baseSize, padding)
     }
 
-    const solver = new HexWFCSolver(wfcSize, wfcSize, rules, {
-      weights,
-      seed,
-      maxRestarts: options.maxRestarts ?? 10,
-      tileTypes,
-      levelsCount,
-      // Coord conversion for logging (using cube coords - no stagger issues)
-      padding,
-      gridRadius: this.gridRadius,
-      globalCenterCube,
-    })
-
     let currentSeeds = [...adjustedSeeds]
+    const initialSeedCount = currentSeeds.length
+    let droppedCount = 0
     let result = null
     let attempt = 0
     const maxAttempts = 10
+    let solver = null
 
     // Graduated retry: remove problem seeds one at a time
     while (!result && attempt < maxAttempts) {
       attempt++
 
-      const solver = new HexWFCSolver(wfcSize, wfcSize, rules, {
+      solver = new HexWFCSolver(wfcSize, wfcSize, rules, {
         attemptNum: attempt,
         weights,
         seed,
-        maxRestarts: options.maxRestarts ?? 10,
+        maxRestarts: 1,
         tileTypes,
         levelsCount,
         padding,
@@ -411,15 +412,26 @@ export class HexGrid {
         const { failedX, failedZ } = solver.lastContradiction
         const problemSeeds = this.findAdjacentSeeds(currentSeeds, failedX, failedZ)
 
+        // Pick the seed to handle
+        let seedToHandle = null
         if (problemSeeds.length > 0) {
-          const seedToRemove = problemSeeds[0]
-          const seedGlobal = solver.toGlobalCoords(seedToRemove.x, seedToRemove.z)
-          const failedGlobal = solver.toGlobalCoords(failedX, failedZ)
-          const typeName = Object.entries(HexTileType).find(([,v]) => v === seedToRemove.type)?.[0] || seedToRemove.type
-          console.log(`%cDropping seed (${seedGlobal.col},${seedGlobal.row}) ${typeName} near failed cell (${failedGlobal.col},${failedGlobal.row})`, 'color: orange')
-          currentSeeds = currentSeeds.filter(s => s !== seedToRemove)
+          seedToHandle = problemSeeds[0]
+        } else if (currentSeeds.length > 0) {
+          const randomIdx = Math.floor(random() * currentSeeds.length)
+          seedToHandle = currentSeeds[randomIdx]
+        }
+
+        if (seedToHandle) {
+          const seedGlobal = solver.toGlobalCoords(seedToHandle.x, seedToHandle.z)
+          const globalKey = `${seedGlobal.col},${seedGlobal.row}`
+
+          // Drop the problematic seed
+          log(`WFC FAILED - Dropping seed (${globalKey})`, 'color: red')
+          onSeedDropped?.(globalKey)
+          droppedCount++
+          currentSeeds = currentSeeds.filter(s => s !== seedToHandle)
         } else {
-          console.log(`%cNo adjacent seeds to drop, giving up`, 'color: orange')
+          log(`WFC FAILED - No seeds left to drop`, 'color: red')
           break
         }
       } else if (!result) {
@@ -427,28 +439,17 @@ export class HexGrid {
       }
     }
 
-    // Last resort: fall back to center grass (disconnected from neighbors)
     if (!result) {
-      console.log(`%cFalling back to center grass seed`, 'color: red')
-      const fallbackSolver = new HexWFCSolver(baseSize, baseSize, rules, {
-        weights,
-        seed,
-        maxRestarts: options.maxRestarts ?? 10,
-        tileTypes,
-        levelsCount,
-        padding: 0,
-        gridRadius: this.gridRadius,
-        globalCenterCube,
-      })
-      const centerX = Math.floor(baseSize / 2)
-      const centerZ = Math.floor(baseSize / 2)
-      result = fallbackSolver.solve([{ x: centerX, z: centerZ, type: HexTileType.GRASS, rotation: 0, level: 0 }], `${gridId} fallback`)
-      padding = 0
-    }
-
-    if (!result) {
+      log(`WFC FAILED - Grid not populated`, 'color: red')
+      Sounds.play('incorrect')
       return false
     }
+
+    // Log final status
+    const stats = [`${initialSeedCount} seeds`]
+    if (replacedCount > 0) stats.push(`${replacedCount} replaced`)
+    if (droppedCount > 0) stats.push(`${droppedCount} dropped`)
+    log(`WFC SUCCESS - ${stats.join(', ')}`, 'color: green')
 
     // Filter results to only include tiles within original hex radius (exclude padding)
     const filteredResult = result.filter(p => {
@@ -463,19 +464,37 @@ export class HexGrid {
       gridZ: p.gridZ - padding
     }))
 
+    // Get WFC collapse order for animation (filtered and adjusted for padding)
+    const collapseOrder = solver.collapseOrder.filter(p => {
+      const origX = p.gridX - padding
+      const origZ = p.gridZ - padding
+      const offsetCol = origX - this.gridRadius
+      const offsetRow = origZ - this.gridRadius
+      return isInHexRadius(offsetCol, offsetRow, this.gridRadius)
+    }).map(p => ({
+      ...p,
+      gridX: p.gridX - padding,
+      gridZ: p.gridZ - padding
+    }))
+
     // Place tiles
     const animate = options.animate ?? false
     const animateDelay = options.animateDelay ?? 20
-    const placements = animate ? solver.collapseOrder : filteredResult
+
+    // Use filteredResult for placement, collapseOrder for animation
+    const placements = filteredResult
+
+    // Place all tiles first (synchronously in both paths)
+    for (const placement of placements) {
+      this.placeTile(placement)
+    }
+    this.updateMatrices()
+    this.populateDecorations()
 
     if (animate) {
-      this.animatePlacements(placements, animateDelay)
-    } else {
-      for (const placement of placements) {
-        this.placeTile(placement)
-      }
-      this.updateMatrices()
-      this.populateDecorations()
+      // Hide everything, then animate tiles dropping in (using WFC collapse order)
+      this.hideAllInstances()
+      this.animatePlacements(collapseOrder, animateDelay)
     }
 
     return true
@@ -485,47 +504,7 @@ export class HexGrid {
    * Get default tile types for WFC
    */
   getDefaultTileTypes() {
-    return [
-      // Base
-      HexTileType.GRASS,
-      // Roads
-      HexTileType.ROAD_A,
-      HexTileType.ROAD_B,
-      HexTileType.ROAD_D,
-      HexTileType.ROAD_E,
-      HexTileType.ROAD_F,
-      HexTileType.ROAD_H,
-      HexTileType.ROAD_J,
-      HexTileType.ROAD_M,
-      // Rivers
-      HexTileType.RIVER_A,
-      HexTileType.RIVER_A_CURVY,
-      HexTileType.RIVER_B,
-      HexTileType.RIVER_D,
-      HexTileType.RIVER_E,
-      HexTileType.RIVER_F,
-      HexTileType.RIVER_G,
-      HexTileType.RIVER_H,
-      // Crossings
-      HexTileType.RIVER_CROSSING_A,
-      HexTileType.RIVER_CROSSING_B,
-      // Coasts & Water
-      HexTileType.WATER,
-      HexTileType.COAST_A,
-      HexTileType.COAST_B,
-      HexTileType.COAST_C,
-      HexTileType.COAST_D,
-      HexTileType.COAST_E,
-      // High slopes
-      HexTileType.GRASS_SLOPE_HIGH,
-      HexTileType.ROAD_A_SLOPE_HIGH,
-      HexTileType.GRASS_CLIFF,
-      HexTileType.GRASS_CLIFF_C,
-      // Low slopes
-      HexTileType.GRASS_SLOPE_LOW,
-      HexTileType.ROAD_A_SLOPE_LOW,
-      HexTileType.GRASS_CLIFF_LOW,
-    ]
+    return [...TILE_LIST]
   }
 
   /**
@@ -572,45 +551,6 @@ export class HexGrid {
   }
 
   /**
-   * TEMP TEST: Add water seeds for ALL edge tiles to make island grids
-   */
-  addAllEdgeWaterSeeds(seedTiles, size) {
-    const gridRadius = this.gridRadius
-    const usedPositions = new Set(seedTiles.map(s => `${s.x},${s.z}`))
-
-    for (let col = 0; col < size; col++) {
-      for (let row = 0; row < size; row++) {
-        const offsetCol = col - gridRadius
-        const offsetRow = row - gridRadius
-        if (!isInHexRadius(offsetCol, offsetRow, gridRadius)) continue
-
-        // Check if edge tile (has at least one neighbor outside grid)
-        const neighborOffsets = (row % 2 === 0)
-          ? [[-1, -1], [0, -1], [-1, 0], [1, 0], [-1, 1], [0, 1]]
-          : [[0, -1], [1, -1], [-1, 0], [1, 0], [0, 1], [1, 1]]
-
-        let isEdge = false
-        for (const [dx, dz] of neighborOffsets) {
-          if (!isInHexRadius(offsetCol + dx, offsetRow + dz, gridRadius)) {
-            isEdge = true
-            break
-          }
-        }
-        if (!isEdge) continue
-
-        // Skip if already seeded
-        const posKey = `${col},${row}`
-        if (usedPositions.has(posKey)) continue
-        usedPositions.add(posKey)
-
-        seedTiles.push({ x: col, z: row, type: HexTileType.WATER, rotation: 0, level: 0 })
-      }
-    }
-
-    console.log(`[Island Test] Seeded ${seedTiles.length} edge tiles with water`)
-  }
-
-  /**
    * Find seeds adjacent to a given cell position
    * Used for graduated retry - identifies which seeds to remove when WFC fails
    */
@@ -629,36 +569,6 @@ export class HexGrid {
     return adjacent
   }
 
-  // /**
-  //  * Pick which seed to remove from problem seeds
-  //  * Priority: 1) seeds with level mismatch, 2) grass over road/river
-  //  */
-  // pickSeedToRemove(problemSeeds, solver) {
-  //   if (problemSeeds.length === 1) return problemSeeds[0]
-  //
-  //   // Score each seed (lower = remove first)
-  //   const scored = problemSeeds.map(seed => {
-  //     let score = 0
-  //     const def = HexTileDefinitions[seed.type]
-  //     const edges = def?.edges || {}
-  //
-  //     // Prefer removing seeds at non-zero levels (level mismatches are less visible)
-  //     if (seed.level > 0) score -= 10
-  //
-  //     // Prefer removing grass over interesting features
-  //     const hasRoad = Object.values(edges).includes('road')
-  //     const hasRiver = Object.values(edges).includes('river')
-  //     if (hasRoad) score += 5
-  //     if (hasRiver) score += 5
-  //
-  //     return { seed, score }
-  //   })
-  //
-  //   // Sort by score ascending (lowest score = remove first)
-  //   scored.sort((a, b) => a.score - b.score)
-  //   return scored[0].seed
-  // }
-
   /**
    * Place a single tile
    */
@@ -670,6 +580,7 @@ export class HexGrid {
 
     const tile = new HexTile(placement.gridX, placement.gridZ, placement.type, placement.rotation)
     tile.level = placement.level ?? 0
+    tile.updateLevelColor()
     this.hexGrid[placement.gridX][placement.gridZ] = tile
     this.hexTiles.push(tile)
 
@@ -700,11 +611,13 @@ export class HexGrid {
     oldTile.type = newType
     oldTile.rotation = newRotation
     oldTile.level = newLevel
+    oldTile.updateLevelColor()
 
     // Update BatchedMesh geometry
     if (this.hexMesh && this.geomIds.has(newType) && oldTile.instanceId !== undefined) {
       const newGeomId = this.geomIds.get(newType)
       this.hexMesh.setGeometryIdAt(oldTile.instanceId, newGeomId)
+      this.hexMesh.setColorAt(oldTile.instanceId, oldTile.color)
 
       // Update matrix for new rotation
       const LEVEL_HEIGHT = 0.5
@@ -722,52 +635,183 @@ export class HexGrid {
   }
 
   /**
-   * Animate tile placements
+   * Hide all tile and decoration instances (for animation start)
    */
-  animatePlacements(placements, delay) {
-    let i = 0
-    const dropHeight = 5
-    const animDuration = 0.4
-    const LEVEL_HEIGHT = 0.5
+  hideAllInstances() {
+    const dummy = this.dummy
+    dummy.scale.setScalar(0)
+    dummy.updateMatrix()
 
-    const step = () => {
-      if (i >= placements.length) {
-        this.updateMatrices()
-        this.populateDecorations()
-        return
+    // Hide tiles
+    for (const tile of this.hexTiles) {
+      if (tile.instanceId !== null) {
+        this.hexMesh.setMatrixAt(tile.instanceId, dummy.matrix)
       }
-      const tile = this.placeTile(placements[i])
+    }
+
+    // Hide decorations
+    if (this.decorations) {
+      for (const tree of this.decorations.trees) {
+        this.decorations.treeMesh.setMatrixAt(tree.instanceId, dummy.matrix)
+      }
+      for (const building of this.decorations.buildings) {
+        this.decorations.buildingMesh.setMatrixAt(building.instanceId, dummy.matrix)
+      }
+      for (const bridge of this.decorations.bridges) {
+        this.decorations.bridgeMesh.setMatrixAt(bridge.instanceId, dummy.matrix)
+      }
+    }
+  }
+
+  /**
+   * Animate tile placements with GSAP drop-in (tiles already placed but hidden)
+   * Each decoration drops 0.5s after its tile
+   */
+  animatePlacements(collapseOrder, delay) {
+    const LEVEL_HEIGHT = 0.5
+    const DROP_HEIGHT = 5
+    const ANIM_DURATION = 0.4
+    const DEC_DELAY = 1500 // Decoration drops 1.5s after its tile
+    const dummy = new Object3D()
+
+    // Build decoration lookup by tile position
+    const decsByTile = this.buildDecorationMap()
+
+    let i = 0
+    const step = () => {
+      if (i >= collapseOrder.length) return
+
+      const placement = collapseOrder[i]
+      const tile = this.hexGrid[placement.gridX]?.[placement.gridZ]
+
       if (tile && tile.instanceId !== null) {
         const pos = HexTileGeometry.getWorldPosition(
           tile.gridX - this.gridRadius,
           tile.gridZ - this.gridRadius
         )
-        const rotation = -tile.rotation * Math.PI / 3
         const targetY = tile.level * LEVEL_HEIGHT
+        const rotationY = -tile.rotation * Math.PI / 3
 
-        const anim = { y: dropHeight + targetY, scale: 0.5 }
-        const dummy = this.dummy
-        const mesh = this.hexMesh
-        const instanceId = tile.instanceId
-
+        // Animate tile from above
+        const anim = { y: targetY + DROP_HEIGHT, scale: 1 }
         gsap.to(anim, {
           y: targetY,
-          scale: 1,
-          duration: animDuration,
-          ease: 'power2.out',
+          duration: ANIM_DURATION,
+          ease: 'bounce.out',
           onUpdate: () => {
             dummy.position.set(pos.x, anim.y, pos.z)
-            dummy.rotation.y = rotation
+            dummy.rotation.y = rotationY
             dummy.scale.setScalar(anim.scale)
             dummy.updateMatrix()
-            mesh.setMatrixAt(instanceId, dummy.matrix)
+            this.hexMesh.setMatrixAt(tile.instanceId, dummy.matrix)
           }
         })
+
+        // Schedule decoration for this tile 0.5s later
+        const tileKey = `${tile.gridX},${tile.gridZ}`
+        const decs = decsByTile.get(tileKey)
+        if (decs) {
+          setTimeout(() => {
+            this.animateDecoration(decs)
+          }, DEC_DELAY)
+        }
       }
+
       i++
       setTimeout(step, delay)
     }
     step()
+  }
+
+  /**
+   * Build a map of tile position -> decorations on that tile
+   */
+  buildDecorationMap() {
+    const map = new Map()
+    if (!this.decorations) return map
+
+    const LEVEL_HEIGHT = 0.5
+    const TILE_SURFACE = 1
+
+    for (const tree of this.decorations.trees) {
+      const key = `${tree.tile.gridX},${tree.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        tree.tile.gridX - this.gridRadius,
+        tree.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.treeMesh,
+        instanceId: tree.instanceId,
+        x: pos.x,
+        y: tree.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        z: pos.z,
+        rotationY: tree.rotationY ?? 0
+      })
+    }
+
+    for (const building of this.decorations.buildings) {
+      const key = `${building.tile.gridX},${building.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        building.tile.gridX - this.gridRadius,
+        building.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.buildingMesh,
+        instanceId: building.instanceId,
+        x: pos.x,
+        y: building.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        z: pos.z,
+        rotationY: building.rotationY ?? 0
+      })
+    }
+
+    for (const bridge of this.decorations.bridges) {
+      const key = `${bridge.tile.gridX},${bridge.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        bridge.tile.gridX - this.gridRadius,
+        bridge.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.bridgeMesh,
+        instanceId: bridge.instanceId,
+        x: pos.x,
+        y: bridge.tile.level * LEVEL_HEIGHT,
+        z: pos.z,
+        rotationY: -bridge.tile.rotation * Math.PI / 3
+      })
+    }
+
+    return map
+  }
+
+  /**
+   * Animate a single decoration or array of decorations dropping in
+   */
+  animateDecoration(items) {
+    const DROP_HEIGHT = 4
+    const ANIM_DURATION = 0.3
+    const dummy = new Object3D()
+
+    const list = Array.isArray(items) ? items : [items]
+    for (const item of list) {
+      const anim = { y: item.y + DROP_HEIGHT, scale: 0.5 }
+      gsap.to(anim, {
+        y: item.y,
+        scale: 1,
+        duration: ANIM_DURATION,
+        ease: 'bounce.out',
+        onUpdate: () => {
+          dummy.position.set(item.x, anim.y, item.z)
+          dummy.rotation.y = item.rotationY
+          dummy.scale.setScalar(anim.scale)
+          dummy.updateMatrix()
+          item.mesh.setMatrixAt(item.instanceId, dummy.matrix)
+        }
+      })
+    }
   }
 
   /**
@@ -806,6 +850,19 @@ export class HexGrid {
     this.decorations.populate(this.hexTiles, this.gridRadius)
     this.decorations.populateBuildings(this.hexTiles, this.hexGrid, this.gridRadius)
     this.decorations.populateBridges(this.hexTiles, this.gridRadius)
+  }
+
+  /**
+   * Update all tile colors (for debug level visualization toggle)
+   */
+  updateTileColors() {
+    if (!this.hexMesh) return
+    for (const tile of this.hexTiles) {
+      tile.updateLevelColor()
+      if (tile.instanceId !== null) {
+        this.hexMesh.setColorAt(tile.instanceId, tile.color)
+      }
+    }
   }
 
   /**

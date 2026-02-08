@@ -20,47 +20,10 @@ export class Placeholder {
 
     this.group = new Group()
     this.button = null
-    this.hitArea = null  // Large hex for hover detection
     this.triangles = []  // Triangle meshes for neighbor indicators
     this.onClick = null
 
-    this.createHitArea()
     this.createButton()
-  }
-
-  /**
-   * Create invisible hit area covering the whole grid hex
-   */
-  createHitArea() {
-    // Full grid hex radius (flat-top hex)
-    const hitRadius = this.gridRadius * this.hexWidth * 0.95
-
-    // Create flat hexagon geometry (6 triangles from center)
-    const vertices = []
-    for (let i = 0; i < 6; i++) {
-      const angle1 = (i * Math.PI) / 3
-      const angle2 = ((i + 1) * Math.PI) / 3
-      vertices.push(0, 0, 0)
-      vertices.push(Math.cos(angle1) * hitRadius, 0, Math.sin(angle1) * hitRadius)
-      vertices.push(Math.cos(angle2) * hitRadius, 0, Math.sin(angle2) * hitRadius)
-    }
-
-    const geometry = new BufferGeometry()
-    geometry.setAttribute('position', new Float32BufferAttribute(vertices, 3))
-    geometry.computeVertexNormals()
-
-    const material = new MeshBasicMaterial({
-      transparent: true,
-      opacity: 0,
-      side: DoubleSide,
-      depthWrite: false,
-    })
-
-    this.hitArea = new Mesh(geometry, material)
-    this.hitArea.position.y = 1.5
-    this.hitArea.userData.isPlaceholder = true
-    this.hitArea.userData.owner = this
-    this.group.add(this.hitArea)
   }
 
   /**
@@ -202,10 +165,10 @@ export class Placeholder {
   }
 
   /**
-   * Get all clickable meshes (hitArea + button + triangles) for raycasting
+   * Get all clickable meshes (button + triangles only) for raycasting
    */
   getClickables() {
-    return [this.hitArea, this.button, ...this.triangles].filter(Boolean)
+    return [this.button, ...this.triangles].filter(Boolean)
   }
 
   /**
@@ -217,12 +180,6 @@ export class Placeholder {
       tri.geometry?.dispose()
     }
     this.triangles = []
-
-    // Dispose hit area
-    if (this.hitArea) {
-      this.hitArea.geometry?.dispose()
-      this.hitArea.material?.dispose()
-    }
 
     // Dispose button
     if (this.button) {

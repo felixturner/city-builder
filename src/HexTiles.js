@@ -38,6 +38,7 @@ export const HexTileType = {
   RIVER_J: 40,
   RIVER_K: 41,
   RIVER_L: 42,
+  RIVER_M: 43,
 
   // Coasts (50-59)
   COAST_A: 50,
@@ -192,7 +193,7 @@ export const HexTileDefinitions = {
   // === BASE ===
   [HexTileType.GRASS]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 500,
+    weight: 300,
   },
   [HexTileType.WATER]: {
     edges: { NE: 'ocean', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'ocean', NW: 'ocean' },
@@ -256,55 +257,59 @@ export const HexTileDefinitions = {
   // === RIVERS (TODO: verify edges) ===
   [HexTileType.RIVER_A]: {
     edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 10,
+    weight: 20,
   },
   [HexTileType.RIVER_A_CURVY]: {
     edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 10,
+    weight: 20,
   },
   [HexTileType.RIVER_B]: {
     edges: { NE: 'river', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 20,
+    weight: 60,
   },
   [HexTileType.RIVER_C]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'river' },
-    weight: 4,
+    weight: 8,
   },
   [HexTileType.RIVER_D]: {
     edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 2,
+    weight: 4,
   },
   [HexTileType.RIVER_E]: {
     edges: { NE: 'river', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 2,
+    weight: 4,
   },
   [HexTileType.RIVER_F]: {
     edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 2,
+    weight: 4,
   },
   [HexTileType.RIVER_G]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'river', W: 'river', NW: 'river' },
-    weight: 2,
+    weight: 4,
   },
   [HexTileType.RIVER_H]: {
     edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'river', W: 'river', NW: 'river' },
-    weight: 1,
+    weight: 2,
   },
   [HexTileType.RIVER_I]: {
     edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'grass', NW: 'river' },
-    weight: 1,
+    weight: 2,
   },
   [HexTileType.RIVER_J]: {
     edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'grass' },
-    weight: 1,
+    weight: 2,
   },
   [HexTileType.RIVER_K]: {
     edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'river', NW: 'river' },
-    weight: 1,
+    weight: 2,
   },
   [HexTileType.RIVER_L]: {
     edges: { NE: 'river', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'river' },
-    weight: 1,
+    weight: 2,
+  },
+  [HexTileType.RIVER_M]: {
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 8,
   },
 
   // === COASTS ===
@@ -333,12 +338,12 @@ export const HexTileDefinitions = {
   [HexTileType.RIVER_CROSSING_A]: {
     // River E-W, Road NW-SE
     edges: { NE: 'grass', E: 'river', SE: 'road', SW: 'grass', W: 'river', NW: 'road' },
-    weight: 2,
+    weight: 4,
   },
   [HexTileType.RIVER_CROSSING_B]: {
     // River E-W, Road NE-SW
     edges: { NE: 'road', E: 'river', SE: 'grass', SW: 'road', W: 'river', NW: 'grass' },
-    weight: 2,
+    weight: 4,
   },
 
   // === SLOPES ===
@@ -349,32 +354,32 @@ export const HexTileDefinitions = {
   // High slopes: 1u rise (levelIncrement: 2)
   [HexTileType.GRASS_SLOPE_HIGH]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 200,
+    weight: 100,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 2,
   },
   [HexTileType.ROAD_A_SLOPE_HIGH]: {
     edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 120,
+    weight: 60,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 2,
   },
   // Cliff - uses flat grass geometry but connects levels like a slope (vertical drop)
   [HexTileType.GRASS_CLIFF]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 60,
+    weight: 30,
     highEdges: ['NE', 'E', 'SE'],  // 3 high edges (half the hex)
     levelIncrement: 2,
   },
   [HexTileType.GRASS_CLIFF_B]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 60,
+    weight: 30,
     highEdges: ['NE', 'E', 'SE', 'SW'],  // 4 high edges (wider cliff wrap)
     levelIncrement: 2,
   },
   [HexTileType.GRASS_CLIFF_C]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 60,
+    weight: 30,
     highEdges: ['E'],  // 1 high edge (narrow point)
     levelIncrement: 2,
   },
@@ -382,32 +387,32 @@ export const HexTileDefinitions = {
   // Low slopes: 0.5u rise (levelIncrement: 1)
   [HexTileType.GRASS_SLOPE_LOW]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 10,
+    weight: 100,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 1,
   },
   [HexTileType.ROAD_A_SLOPE_LOW]: {
     edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 10,
+    weight: 60,
     highEdges: ['NE', 'E', 'SE'],
     levelIncrement: 1,
   },
   // Low cliffs: 0.5u rise
   [HexTileType.GRASS_CLIFF_LOW]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 38,
+    weight: 30,
     highEdges: ['NE', 'E', 'SE'],  // 3 high edges
     levelIncrement: 1,
   },
   [HexTileType.GRASS_CLIFF_LOW_B]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 38,
+    weight: 30,
     highEdges: ['NE', 'E', 'SE', 'SW'],  // 4 high edges
     levelIncrement: 1,
   },
   [HexTileType.GRASS_CLIFF_LOW_C]: {
     edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 38,
+    weight: 30,
     highEdges: ['E'],  // 1 high edge
     levelIncrement: 1,
   },
@@ -418,7 +423,13 @@ export const HexTileDefinitions = {
  */
 export class HexTile {
   static ID = 0
-  static DEFAULT_COLOR = new Color(0x88aa88)
+  static DEFAULT_COLOR = new Color(0xffffff)
+  static LEVEL_COLORS = [
+    new Color(0x44aa44),  // Level 0: green
+    new Color(0xcccc44),  // Level 1: yellow
+    new Color(0xcc4444),  // Level 2: red
+  ]
+  static debugLevelColors = false
 
   constructor(gridX, gridZ, type, rotation = 0) {
     this.id = HexTile.ID++
@@ -429,6 +440,18 @@ export class HexTile {
     this.instanceId = null
     this.color = HexTile.DEFAULT_COLOR.clone()
     this.level = 0  // Elevation level, set by height propagation
+  }
+
+  /**
+   * Update color based on current level (for debug visualization)
+   */
+  updateLevelColor() {
+    if (HexTile.debugLevelColors) {
+      const levelColor = HexTile.LEVEL_COLORS[this.level] || HexTile.LEVEL_COLORS[HexTile.LEVEL_COLORS.length - 1]
+      this.color.copy(levelColor)
+    } else {
+      this.color.copy(HexTile.DEFAULT_COLOR)
+    }
   }
 
   /**
@@ -504,6 +527,7 @@ export const HexMeshNames = {
   [HexTileType.RIVER_J]: 'hex_river_J',
   [HexTileType.RIVER_K]: 'hex_river_K',
   [HexTileType.RIVER_L]: 'hex_river_L',
+  [HexTileType.RIVER_M]: 'hex_river_M',
 
   // Coasts
   [HexTileType.COAST_A]: 'hex_coast_A',
@@ -530,6 +554,52 @@ export const HexMeshNames = {
   [HexTileType.GRASS_CLIFF_LOW_B]: 'hex_grass',
   [HexTileType.GRASS_CLIFF_LOW_C]: 'hex_grass',
 }
+
+/**
+ * Tile types to include in WFC and geometry loading
+ * Tiles not in this list are excluded from both WFC solving and GLB loading
+ */
+export const TILE_LIST = new Set([
+  // Base
+  HexTileType.GRASS,
+  // Roads
+  HexTileType.ROAD_A,
+  HexTileType.ROAD_B,
+  HexTileType.ROAD_D,
+  HexTileType.ROAD_E,
+  HexTileType.ROAD_F,
+  HexTileType.ROAD_H,
+  HexTileType.ROAD_J,
+  HexTileType.ROAD_M,
+  // Rivers
+  HexTileType.RIVER_A,
+  HexTileType.RIVER_A_CURVY,
+  HexTileType.RIVER_B,
+  HexTileType.RIVER_D,
+  HexTileType.RIVER_E,
+  HexTileType.RIVER_F,
+  HexTileType.RIVER_G,
+  HexTileType.RIVER_H,
+  // Crossings
+  HexTileType.RIVER_CROSSING_A,
+  HexTileType.RIVER_CROSSING_B,
+  // Coasts & Water
+  HexTileType.WATER,
+  HexTileType.COAST_A,
+  HexTileType.COAST_B,
+  HexTileType.COAST_C,
+  HexTileType.COAST_D,
+  HexTileType.COAST_E,
+  // High slopes
+  HexTileType.GRASS_SLOPE_HIGH,
+  HexTileType.ROAD_A_SLOPE_HIGH,
+  HexTileType.GRASS_CLIFF,
+  HexTileType.GRASS_CLIFF_C,
+  // Low slopes
+  HexTileType.GRASS_SLOPE_LOW,
+  HexTileType.ROAD_A_SLOPE_LOW,
+  HexTileType.GRASS_CLIFF_LOW,
+])
 
 /**
  * HexTileGeometry - loads hex tile meshes from GLB
@@ -562,9 +632,10 @@ export class HexTileGeometry {
         }
       })
 
-      // Load geometries for each tile type
+      // Load geometries only for included tile types
       for (const [typeStr, meshName] of Object.entries(HexMeshNames)) {
         const type = parseInt(typeStr)
+        if (!TILE_LIST.has(type)) continue
         const result = this.findAndProcessGeometry(gltf.scene, meshName)
         if (result.geom) {
           this.geoms.set(type, result.geom)

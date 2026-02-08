@@ -2,6 +2,8 @@ import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
 import { Sounds } from './lib/Sounds.js'
 import { TileGeometry } from './Tiles.js'
 import { setSeed } from './SeededRandom.js'
+import { setTreeNoiseFrequency, setTreeThreshold } from './Decorations.js'
+import { HexTile } from './HexTiles.js'
 
 export class GUIManager {
   constructor(demo) {
@@ -65,6 +67,7 @@ export class GUIManager {
       hexGrid: false,
       tileLabels: false,
       floor: true,
+      levelColors: false,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
@@ -77,10 +80,14 @@ export class GUIManager {
       wfcSeed: 0,
       useHex: true,
       hexGridRadius: 6,
-      animateWFC: false,
+      animateWFC: true,
       animateDelay: 10,
       useLevels: true,
       showOutlines: true,
+    },
+    decoration: {
+      treeNoiseFreq: 0.05,
+      treeThreshold: 0.5,
     },
   }
 
@@ -129,6 +136,10 @@ export class GUIManager {
     gui.add(allParams.debug, 'floor').name('Floor').onChange((v) => {
       if (demo.city.floor) demo.city.floor.visible = v
     })
+    gui.add(allParams.debug, 'levelColors').name('Level Colors').onChange((v) => {
+      HexTile.debugLevelColors = v
+      demo.city.updateTileColors()
+    })
 
     // DPR dropdown (default 1)
     allParams.renderer.dpr = 1
@@ -144,7 +155,7 @@ export class GUIManager {
       demo.city.regenerate({
         animate: allParams.roads.animateWFC,
         animateDelay: allParams.roads.animateDelay,
-        levelsCount: allParams.roads.useLevels ? 3 : 1,
+        levelsCount: 4,
       })
       // Restore hex helper visibility from GUI state
       demo.city.setHelpersVisible(allParams.debug.hexGrid)
@@ -180,10 +191,19 @@ export class GUIManager {
 
     // Roads folder
     const mapFolder = gui.addFolder('Map').close()
-    mapFolder.add(allParams.roads, 'wfcSeed', 0, 9999, 1).name('WFC Seed')
-    mapFolder.add(allParams.roads, 'useLevels').name('Use Levels')
     mapFolder.add(allParams.roads, 'animateWFC').name('Animate WFC')
     mapFolder.add(allParams.roads, 'animateDelay', 5, 40).name('Anim Delay (ms)')
+
+    // Decoration folder
+    const decorationFolder = gui.addFolder('Decoration').close()
+    decorationFolder.add(allParams.decoration, 'treeNoiseFreq', 0.01, 0.2, 0.01).name('Tree Noise Freq').onChange((v) => {
+      setTreeNoiseFrequency(v)
+      demo.city.repopulateDecorations()
+    })
+    decorationFolder.add(allParams.decoration, 'treeThreshold', 0, 1, 0.05).name('Tree Threshold').onChange((v) => {
+      setTreeThreshold(v)
+      demo.city.repopulateDecorations()
+    })
 
     // Lights folder
     const lightsFolder = gui.addFolder('Lights').close()

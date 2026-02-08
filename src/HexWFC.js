@@ -9,6 +9,7 @@ import {
 } from './HexTiles.js'
 import { offsetToCube, cubeToOffset } from './HexGridConnector.js'
 import { random } from './SeededRandom.js'
+import { log } from './Demo.js'
 
 /**
  * Check if two edges are compatible (edge type + level must match)
@@ -18,8 +19,12 @@ import { random } from './SeededRandom.js'
  * @param {number} levelB - Level of edge B
  */
 function edgesCompatible(edgeTypeA, levelA, edgeTypeB, levelB) {
-  // Both edge type and level must match
-  return edgeTypeA === edgeTypeB && levelA === levelB
+  // Edge types must match
+  if (edgeTypeA !== edgeTypeB) return false
+  // Grass edges can connect at any level (height jumps look OK)
+  if (edgeTypeA === 'grass') return true
+  // Other edges (road, water, etc.) must match levels
+  return levelA === levelB
 }
 
 // Cache for rotated high edges: Map<"type_rotation", Set<dir>>
@@ -505,7 +510,7 @@ export class HexWFCSolver {
   solve(seedTiles = [], gridId = '') {
     const baseAttempt = this.options.attemptNum ?? 1
     const tryNum = baseAttempt + this.restartCount
-    console.log(`%cWFC START (try ${tryNum}, ${seedTiles.length} seeds)`, 'color: blue')
+    log(`WFC START (try ${tryNum}, ${seedTiles.length} seeds)`, 'color: blue')
 
     this.init()
 
@@ -522,11 +527,11 @@ export class HexWFCSolver {
     // Propagate seed constraints
     if (seedTiles.length > 0 && !this.propagate()) {
       const getTileName = (type) => Object.entries(HexTileType).find(([, v]) => v === type)?.[0] || type
-      console.log(`%cWFC failed - propagation failed after seeding`, 'color: red')
+      log('WFC failed - propagation failed after seeding', 'color: red')
       if (this.lastContradiction) {
         const c = this.lastContradiction
         const failG = this.toGlobalCoords(c.failedX, c.failedZ)
-        console.log(`%c  FAILED CELL: (${failG.col},${failG.row})`, 'color: red')
+        log(`  FAILED CELL: (${failG.col},${failG.row})`, 'color: red')
         // // Log ALL collapsed neighbors and their edge requirements
         // for (const dir of HexDir) {
         //   const offset = getHexNeighborOffset(c.failedX, c.failedZ, dir)
@@ -555,7 +560,6 @@ export class HexWFCSolver {
 
       // All collapsed - success!
       if (!target) {
-        console.log(`%cWFC SUCCESS`, 'color: green')
         return this.extractResult()
       }
 
@@ -568,10 +572,9 @@ export class HexWFCSolver {
       if (!this.propagate()) {
         // Contradiction during solve - restart with fresh grid
         this.restartCount++
-        console.log(`${gridId} WFC fail (contradiction)`)
+        log(`${gridId} WFC fail (contradiction)`)
         if (this.restartCount >= this.options.maxRestarts) {
-          console.log(`%cWFC FAILED - MAX TRIES REACHED (${this.options.maxRestarts})`, 'color: red')
-          return null
+          return null  // Caller will log the failure with dropped seed info
         }
         // Recursive call to restart with incremented try count
         return this.solve(seedTiles, gridId)

@@ -1,4 +1,4 @@
-import { Object3D, BatchedMesh } from 'three/webgpu'
+import { Object3D, BatchedMesh, Color } from 'three/webgpu'
 import { HexTileGeometry, HexTileType, HexTileDefinitions } from './HexTiles.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 import { random } from './SeededRandom.js'
@@ -8,9 +8,31 @@ import { random } from './SeededRandom.js'
 let globalNoiseA = null
 let globalNoiseB = null
 
-export function initGlobalTreeNoise() {
-  globalNoiseA = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
-  globalNoiseB = new FastSimplexNoise({ frequency: 0.05, min: 0, max: 1, random })
+let currentTreeNoiseFreq = 0.05
+let currentTreeThreshold = 0.5
+
+export function initGlobalTreeNoise(frequency = 0.05) {
+  currentTreeNoiseFreq = frequency
+  globalNoiseA = new FastSimplexNoise({ frequency, min: 0, max: 1, random })
+  globalNoiseB = new FastSimplexNoise({ frequency, min: 0, max: 1, random })
+}
+
+export function setTreeNoiseFrequency(frequency) {
+  currentTreeNoiseFreq = frequency
+  globalNoiseA = new FastSimplexNoise({ frequency, min: 0, max: 1, random })
+  globalNoiseB = new FastSimplexNoise({ frequency, min: 0, max: 1, random })
+}
+
+export function getTreeNoiseFrequency() {
+  return currentTreeNoiseFreq
+}
+
+export function setTreeThreshold(threshold) {
+  currentTreeThreshold = threshold
+}
+
+export function getTreeThreshold() {
+  return currentTreeThreshold
 }
 
 // Check if a tile type has any road edges
@@ -18,6 +40,31 @@ function hasRoadEdge(tileType) {
   const def = HexTileDefinitions[tileType]
   if (!def) return false
   return Object.values(def.edges).some(edge => edge === 'road')
+}
+
+// Check if a tile is a road dead-end (exactly 1 road edge) and return the exit direction
+// Returns { isDeadEnd: true, exitDir } or { isDeadEnd: false }
+function getRoadDeadEndInfo(tileType, rotation) {
+  const def = HexTileDefinitions[tileType]
+  if (!def) return { isDeadEnd: false }
+
+  // Count road edges and find the exit direction
+  const dirs = ['NE', 'E', 'SE', 'SW', 'W', 'NW']
+  const roadDirs = []
+  for (const dir of dirs) {
+    if (def.edges[dir] === 'road') {
+      roadDirs.push(dir)
+    }
+  }
+
+  if (roadDirs.length !== 1) return { isDeadEnd: false }
+
+  // Apply rotation to find actual exit direction
+  const baseDirIndex = dirs.indexOf(roadDirs[0])
+  const rotatedIndex = (baseDirIndex + rotation) % 6
+  const exitDir = dirs[rotatedIndex]
+
+  return { isDeadEnd: true, exitDir }
 }
 
 // Tree meshes organized by type and density (single -> small -> medium -> large)
@@ -41,6 +88,9 @@ const BridgeMeshNames = [
   'building_bridge_A',
   'building_bridge_B',
 ]
+
+// Default white color for decorations (no tinting)
+const WHITE = new Color(0xffffff)
 
 export class Decorations {
   constructor(scene, worldOffset = { x: 0, z: 0 }) {
@@ -87,6 +137,7 @@ export class Decorations {
     this.treeMesh = new BatchedMesh(maxTrees, totalV * 2, totalI * 2, material)
     this.treeMesh.castShadow = true
     this.treeMesh.receiveShadow = true
+    this.treeMesh.frustumCulled = false
     this.scene.add(this.treeMesh)
 
     // Register geometries
@@ -94,6 +145,16 @@ export class Decorations {
       const geomId = this.treeMesh.addGeometry(geom)
       this.treeGeomIds.set(name, geomId)
     }
+
+    // Initialize color buffer with a dummy white instance (fixes WebGPU color sync issue)
+    // This ensures setColorAt is called before first render
+    const firstGeomId = this.treeGeomIds.values().next().value
+    this.treeMesh._dummyInstanceId = this.treeMesh.addInstance(firstGeomId)
+    this.treeMesh.setColorAt(this.treeMesh._dummyInstanceId, WHITE)
+    this.dummy.position.set(0, -1000, 0) // Hide off-screen
+    this.dummy.scale.setScalar(0)
+    this.dummy.updateMatrix()
+    this.treeMesh.setMatrixAt(this.treeMesh._dummyInstanceId, this.dummy.matrix)
 
     // Load building geometries
     for (const meshName of BuildingMeshNames) {
@@ -112,12 +173,22 @@ export class Decorations {
       this.buildingMesh = new BatchedMesh(maxBuildings, bTotalV * 2, bTotalI * 2, material)
       this.buildingMesh.castShadow = true
       this.buildingMesh.receiveShadow = true
+      this.buildingMesh.frustumCulled = false
       this.scene.add(this.buildingMesh)
 
       for (const [name, geom] of this.buildingGeoms) {
         const geomId = this.buildingMesh.addGeometry(geom)
         this.buildingGeomIds.set(name, geomId)
       }
+
+      // Initialize color buffer with dummy instance
+      const firstBuildingGeomId = this.buildingGeomIds.values().next().value
+      this.buildingMesh._dummyInstanceId = this.buildingMesh.addInstance(firstBuildingGeomId)
+      this.buildingMesh.setColorAt(this.buildingMesh._dummyInstanceId, WHITE)
+      this.dummy.position.set(0, -1000, 0)
+      this.dummy.scale.setScalar(0)
+      this.dummy.updateMatrix()
+      this.buildingMesh.setMatrixAt(this.buildingMesh._dummyInstanceId, this.dummy.matrix)
     }
 
     // Load bridge geometries
@@ -137,12 +208,22 @@ export class Decorations {
       this.bridgeMesh = new BatchedMesh(maxBridges, brTotalV * 2, brTotalI * 2, material)
       this.bridgeMesh.castShadow = true
       this.bridgeMesh.receiveShadow = true
+      this.bridgeMesh.frustumCulled = false
       this.scene.add(this.bridgeMesh)
 
       for (const [name, geom] of this.bridgeGeoms) {
         const geomId = this.bridgeMesh.addGeometry(geom)
         this.bridgeGeomIds.set(name, geomId)
       }
+
+      // Initialize color buffer with dummy instance
+      const firstBridgeGeomId = this.bridgeGeomIds.values().next().value
+      this.bridgeMesh._dummyInstanceId = this.bridgeMesh.addInstance(firstBridgeGeomId)
+      this.bridgeMesh.setColorAt(this.bridgeMesh._dummyInstanceId, WHITE)
+      this.dummy.position.set(0, -1000, 0)
+      this.dummy.scale.setScalar(0)
+      this.dummy.updateMatrix()
+      this.bridgeMesh.setMatrixAt(this.bridgeMesh._dummyInstanceId, this.dummy.matrix)
     }
   }
 
@@ -168,7 +249,7 @@ export class Decorations {
 
     const LEVEL_HEIGHT = 0.5
     const TILE_SURFACE = 1  // Height of tile mesh surface above base
-    const threshold = options.threshold ?? 0.5  // noise > threshold = tree
+    const threshold = currentTreeThreshold  // noise > threshold = tree
     const { x: offsetX, z: offsetZ } = this.worldOffset
 
     for (const tile of hexTiles) {
@@ -192,10 +273,10 @@ export class Decorations {
       // Skip if neither noise field is above threshold
       if (!aAbove && !bAbove) continue
 
-      // Determine tree type: if both overlap, randomly pick one
+      // Determine tree type: if both overlap, higher noise value wins
       let treeType, noiseVal
       if (aAbove && bAbove) {
-        treeType = random() < 0.5 ? 'A' : 'B'
+        treeType = noiseA >= noiseB ? 'A' : 'B'
         noiseVal = treeType === 'A' ? noiseA : noiseB
       } else if (aAbove) {
         treeType = 'A'
@@ -212,19 +293,21 @@ export class Decorations {
       const meshName = TreesByType[treeType][tierIndex]
       const geomId = this.treeGeomIds.get(meshName)
       const instanceId = this.treeMesh.addInstance(geomId)
+      this.treeMesh.setColorAt(instanceId, WHITE)
 
       // Position at tile center (local coords since mesh is in group)
+      const rotationY = random() * Math.PI * 2
       this.dummy.position.set(
         localPos.x,
         tile.level * LEVEL_HEIGHT + TILE_SURFACE,
         localPos.z
       )
-      this.dummy.rotation.y = random() * Math.PI * 2
+      this.dummy.rotation.y = rotationY
       this.dummy.scale.setScalar(1)
       this.dummy.updateMatrix()
 
       this.treeMesh.setMatrixAt(instanceId, this.dummy.matrix)
-      this.trees.push({ tile, meshName, instanceId })
+      this.trees.push({ tile, meshName, instanceId, rotationY })
     }
   }
 
@@ -238,18 +321,37 @@ export class Decorations {
     const maxBuildings = options.maxBuildings ?? (2 + Math.floor(random() * 11))
     const buildingNames = [...this.buildingGeomIds.keys()]
 
-    // Find grass tiles, preferring those adjacent to roads
-    const candidates = []
+    // Direction to angle mapping (building front is S/+Z, angle rotates to face direction)
+    const dirToAngle = {
+      'NE': Math.PI / 3,
+      'E': Math.PI / 2,
+      'SE': 2 * Math.PI / 3,
+      'SW': -2 * Math.PI / 3,
+      'W': -Math.PI / 2,
+      'NW': -Math.PI / 3,
+    }
+
+    const deadEndCandidates = []
+    const roadAdjacentCandidates = []
     const size = gridRadius * 2 + 1
 
     // Get tiles that already have trees
     const treeTileIds = new Set(this.trees.map(t => t.tile.id))
 
     for (const tile of hexTiles) {
-      if (tile.type !== HexTileType.GRASS) continue
-
       // Skip tiles that already have trees
       if (treeTileIds.has(tile.id)) continue
+
+      // Check for road dead-ends - place building facing the road exit
+      const deadEndInfo = getRoadDeadEndInfo(tile.type, tile.rotation)
+      if (deadEndInfo.isDeadEnd) {
+        const roadAngle = dirToAngle[deadEndInfo.exitDir] ?? 0
+        deadEndCandidates.push({ tile, roadAngle })
+        continue
+      }
+
+      // Only consider grass tiles for road-adjacent placement
+      if (tile.type !== HexTileType.GRASS) continue
 
       // Check if any neighbor has a road, track direction to road
       // Building front is S (+Z), so angle rotates front to face the road
@@ -277,15 +379,22 @@ export class Decorations {
 
       // Only include road-adjacent tiles
       if (roadAngle !== null) {
-        candidates.push({ tile, roadAngle })
+        roadAdjacentCandidates.push({ tile, roadAngle })
       }
     }
 
-    // Shuffle candidates
-    for (let i = candidates.length - 1; i > 0; i--) {
+    // Shuffle each group separately
+    for (let i = deadEndCandidates.length - 1; i > 0; i--) {
       const j = Math.floor(random() * (i + 1))
-      ;[candidates[i], candidates[j]] = [candidates[j], candidates[i]]
+      ;[deadEndCandidates[i], deadEndCandidates[j]] = [deadEndCandidates[j], deadEndCandidates[i]]
     }
+    for (let i = roadAdjacentCandidates.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1))
+      ;[roadAdjacentCandidates[i], roadAdjacentCandidates[j]] = [roadAdjacentCandidates[j], roadAdjacentCandidates[i]]
+    }
+
+    // Dead-ends first, then road-adjacent
+    const candidates = [...deadEndCandidates, ...roadAdjacentCandidates]
 
     // Place buildings
     for (let i = 0; i < Math.min(maxBuildings, candidates.length); i++) {
@@ -293,6 +402,7 @@ export class Decorations {
       const meshName = buildingNames[Math.floor(random() * buildingNames.length)]
       const geomId = this.buildingGeomIds.get(meshName)
       const instanceId = this.buildingMesh.addInstance(geomId)
+      this.buildingMesh.setColorAt(instanceId, WHITE)
 
       const localPos = HexTileGeometry.getWorldPosition(
         tile.gridX - gridRadius,
@@ -310,7 +420,7 @@ export class Decorations {
       this.dummy.updateMatrix()
 
       this.buildingMesh.setMatrixAt(instanceId, this.dummy.matrix)
-      this.buildings.push({ tile, meshName, instanceId })
+      this.buildings.push({ tile, meshName, instanceId, rotationY: roadAngle })
     }
   }
 
@@ -335,6 +445,7 @@ export class Decorations {
       if (geomId === undefined) continue
 
       const instanceId = this.bridgeMesh.addInstance(geomId)
+      this.bridgeMesh.setColorAt(instanceId, WHITE)
 
       const localPos = HexTileGeometry.getWorldPosition(
         tile.gridX - gridRadius,

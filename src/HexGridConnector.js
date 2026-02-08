@@ -241,22 +241,34 @@ export function extractEdgeTiles(hexGrid, gridRadius, direction) {
  * @param {string} returnDir - Direction the matching edge must face
  * @returns {Array} Array of { type, rotation, level } objects
  */
-export function findCompatibleTiles(rules, edgeType, edgeLevel, returnDir) {
-  // Use the byEdge index for O(1) lookup
-  const stateKeys = rules.getByEdge(edgeType, returnDir, edgeLevel)
+export function findCompatibleTiles(rules, edgeType, edgeLevel, returnDir, levelsCount = 4) {
   const results = []
 
-  if (!stateKeys || stateKeys.size === 0) {
-    // Debug: check if the edge type exists in the index at all
-    const hasType = rules.byEdge?.[edgeType]
-    const hasDir = rules.byEdge?.[edgeType]?.[returnDir]
-    const hasLevel = rules.byEdge?.[edgeType]?.[returnDir]?.[edgeLevel]
-    console.warn(`[findCompatibleTiles] No results for edge=${edgeType} dir=${returnDir} level=${edgeLevel}. hasType=${!!hasType} hasDir=${!!hasDir} hasLevel=${!!hasLevel}`)
-  }
+  // Grass edges ignore level - gather from all levels
+  if (edgeType === 'grass') {
+    for (let level = 0; level < levelsCount; level++) {
+      const stateKeys = rules.getByEdge(edgeType, returnDir, level)
+      for (const key of stateKeys) {
+        const state = HexWFCCell.parseKey(key)
+        results.push(state)
+      }
+    }
+  } else {
+    // Other edges require exact level match
+    const stateKeys = rules.getByEdge(edgeType, returnDir, edgeLevel)
 
-  for (const key of stateKeys) {
-    const state = HexWFCCell.parseKey(key)
-    results.push(state)
+    if (!stateKeys || stateKeys.size === 0) {
+      // Debug: check if the edge type exists in the index at all
+      const hasType = rules.byEdge?.[edgeType]
+      const hasDir = rules.byEdge?.[edgeType]?.[returnDir]
+      const hasLevel = rules.byEdge?.[edgeType]?.[returnDir]?.[edgeLevel]
+      console.warn(`[findCompatibleTiles] No results for edge=${edgeType} dir=${returnDir} level=${edgeLevel}. hasType=${!!hasType} hasDir=${!!hasDir} hasLevel=${!!hasLevel}`)
+    }
+
+    for (const key of stateKeys) {
+      const state = HexWFCCell.parseKey(key)
+      results.push(state)
+    }
   }
 
   return results
@@ -583,8 +595,8 @@ export function filterConflictingSeeds(seeds, gridRadius = 8, gridKey = '?', glo
           break
         }
 
-        // Check edge level
-        if (seedEdgeLevel !== neighborEdgeLevel) {
+        // Check edge level (grass edges ignore level - height jumps look OK)
+        if (seedEdge !== 'grass' && seedEdgeLevel !== neighborEdgeLevel) {
           hasConflict = true
           const seedGlobal = toGlobal(seed.x, seed.z)
           const neighborGlobal = toGlobal(neighborSeed.x, neighborSeed.z)
@@ -605,13 +617,15 @@ export function filterConflictingSeeds(seeds, gridRadius = 8, gridKey = '?', glo
       validSeeds.push(seed)
       seedMap.set(key, seed)
     } else if (conflictInfo) {
+      // Include actual seed object for replacement attempts
+      conflictInfo.seedObj = seed
       conflicts.push(conflictInfo)
     }
   }
 
-  // Log conflicts
+  // Log conflicts (these will be handled by replacement loop, not dropped here)
   if (conflicts.length > 0) {
-    console.log(`%cSEED CONFLICT - ${conflicts.length} seeds dropped`, 'color: red')
+    console.log(`%cSEED CONFLICT - ${conflicts.length} adjacent seed conflicts detected`, 'color: orange')
     for (const c of conflicts) {
       const s = c.seed
       const n = c.neighbor
@@ -621,7 +635,7 @@ export function filterConflictingSeeds(seeds, gridRadius = 8, gridKey = '?', glo
     }
   }
 
-  return validSeeds
+  return { validSeeds, conflicts }
 }
 
 /**
@@ -752,9 +766,13 @@ export function validateSeedConflicts(seeds, rules, gridRadius = 8, gridKey = '?
 export function findReplacementTile(seed, sourceHexGrid, gridRadius, conflictEdgeType, conflictEdgeLevel, conflictDir, rules) {
   const { sourceX, sourceZ, type: currentType, rotation: currentRotation, level: currentLevel } = seed
 
+  const currentTypeName = TileTypeName[currentType] || currentType
+  console.log(`%c  Finding replacement for ${currentTypeName} rot=${currentRotation} @ source(${sourceX},${sourceZ}), want ${conflictEdgeType}@${conflictEdgeLevel} on ${conflictDir || 'any'}`, 'color: gray')
+
   // conflictDir is from the conflict CELL's perspective (e.g., "SW" means cell needs edge on its SW)
   // From the SEED's perspective, that's the opposite direction
-  const seedEdgeDir = HexOpposite[conflictDir]
+  // If conflictDir is null, we don't know which edge to change - just find any different tile
+  const seedEdgeDir = conflictDir ? HexOpposite[conflictDir] : null
 
   // Get current tile's edges
   const currentEdges = rotateHexEdges(HexTileDefinitions[currentType]?.edges || {}, currentRotation)
@@ -764,7 +782,7 @@ export function findReplacementTile(seed, sourceHexGrid, gridRadius, conflictEdg
   const lockedEdges = {} // dir -> { type, level }
   for (const dir of HexDir) {
     // Skip the edge facing the conflict cell - that's what we're trying to change
-    if (dir === seedEdgeDir) continue
+    if (seedEdgeDir && dir === seedEdgeDir) continue
 
     const offset = getHexNeighborOffset(sourceX, sourceZ, dir)
     const nx = sourceX + offset.dx
@@ -775,19 +793,26 @@ export function findReplacementTile(seed, sourceHexGrid, gridRadius, conflictEdg
       // This direction has a neighbor - edge must be preserved
       const edgeType = currentEdges[dir]
       const edgeLevel = getEdgeLevelForTile(currentType, currentRotation, dir, currentLevel)
-      lockedEdges[dir] = { type: edgeType, level: edgeLevel }
+      // Grass edges ignore level
+      if (edgeType === 'grass') {
+        lockedEdges[dir] = { type: edgeType, level: null }  // null = any level OK
+      } else {
+        lockedEdges[dir] = { type: edgeType, level: edgeLevel }
+      }
     }
   }
 
   // Search all tile types and rotations for a replacement
-  let matchedLockedCount = 0
-  let matchedConflictCount = 0
+  const candidates = []
 
   for (const [typeName, tileType] of Object.entries(HexTileType)) {
     const def = HexTileDefinitions[tileType]
     if (!def) continue
 
     for (let rot = 0; rot < 6; rot++) {
+      // Skip if it's the same as current tile
+      if (tileType === currentType && rot === currentRotation) continue
+
       const edges = rotateHexEdges(def.edges, rot)
 
       // Check if this tile matches all locked edges
@@ -795,29 +820,43 @@ export function findReplacementTile(seed, sourceHexGrid, gridRadius, conflictEdg
       for (const [dir, required] of Object.entries(lockedEdges)) {
         const edgeType = edges[dir]
         const edgeLevel = getEdgeLevelForTile(tileType, rot, dir, currentLevel)
-        if (edgeType !== required.type || edgeLevel !== required.level) {
+        // Type must match; level must match unless it's grass (null = any level OK)
+        if (edgeType !== required.type) {
+          matchesLocked = false
+          break
+        }
+        if (required.level !== null && edgeType !== 'grass' && edgeLevel !== required.level) {
           matchesLocked = false
           break
         }
       }
       if (!matchesLocked) continue
-      matchedLockedCount++
 
-      // Check if this tile has compatible edge toward conflict cell
-      const newEdge = edges[seedEdgeDir]
-      const newLevel = getEdgeLevelForTile(tileType, rot, seedEdgeDir, currentLevel)
-
-      if (newEdge === conflictEdgeType && newLevel === conflictEdgeLevel) {
-        matchedConflictCount++
-        // Skip if it's the same as current tile
-        if (tileType === currentType && rot === currentRotation) continue
-
-        return { type: tileType, rotation: rot, level: currentLevel }
+      // If we have a specific conflict direction, check that edge matches requirements
+      if (seedEdgeDir) {
+        const newEdge = edges[seedEdgeDir]
+        const newLevel = getEdgeLevelForTile(tileType, rot, seedEdgeDir, currentLevel)
+        // For grass, ignore level
+        const levelMatches = conflictEdgeType === 'grass' || newLevel === conflictEdgeLevel
+        if (newEdge === conflictEdgeType && levelMatches) {
+          console.log(`%c  → Found replacement: ${typeName} rot=${rot}`, 'color: green')
+          return { type: tileType, rotation: rot, level: currentLevel }
+        }
+      } else {
+        // No specific conflict direction - collect all candidates
+        candidates.push({ type: tileType, rotation: rot, level: currentLevel })
       }
     }
   }
 
-  return null // No replacement found
+  // If no conflict direction, return first candidate (or null)
+  if (candidates.length > 0) {
+    const c = candidates[0]
+    console.log(`%c  → Found replacement: ${TileTypeName[c.type]} rot=${c.rotation}`, 'color: green')
+    return c
+  }
+  console.log(`%c  → No replacement found (${Object.keys(lockedEdges).length} locked edges)`, 'color: orange')
+  return null
 }
 
 /**

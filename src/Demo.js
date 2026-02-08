@@ -21,6 +21,23 @@ import { Lighting } from './Lighting.js'
 import { PostFX } from './PostFX.js'
 import { setSeed } from './SeededRandom.js'
 
+// Global status update function
+export function setStatus(text) {
+  if (Demo.instance?.statusElement) {
+    Demo.instance.statusElement.textContent = text
+  }
+}
+
+// Log to both console and status bar
+export function log(text, style = '') {
+  if (style) {
+    console.log(`%c${text}`, style)
+  } else {
+    console.log(text)
+  }
+  setStatus(text)
+}
+
 export class Demo {
   static instance = null
 
@@ -74,13 +91,14 @@ export class Demo {
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
-    const seed = Math.floor(Math.random() * 1000000)
+    const seed = 274707
     setSeed(seed)
 
     this.initCamera()
     this.initPostProcessing()
     this.initStats()
     this.initCSSRenderer()
+    this.initStatusOverlay()
 
     this.onResize()
     this.pointerHandler = new Pointer(
@@ -265,6 +283,22 @@ export class Demo {
     this.cssRenderer.domElement.style.left = '0'
     this.cssRenderer.domElement.style.pointerEvents = 'none'
     document.body.appendChild(this.cssRenderer.domElement)
+  }
+
+  initStatusOverlay() {
+    this.statusElement = document.createElement('div')
+    this.statusElement.style.cssText = `
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      color: white;
+      font-family: monospace;
+      font-size: 12px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+      pointer-events: none;
+      z-index: 1000;
+    `
+    document.body.appendChild(this.statusElement)
   }
 
   onResize(_e, toSize) {
