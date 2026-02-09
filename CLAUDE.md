@@ -17,18 +17,12 @@ a hex map builder toy
 
 ## TODO
 
-- test for failing WFC (seeds incompatible) X
-- use bigger world noise fields for water, mountains + forests, cities? 
-- [ ] Investigate level 2 not showing - Weight imbalance? Edge constraints? Seeding?
-- [ ] Figure out levels 4 + 5 (need more slope tile types to reach higher heights)
-- fix drop in build anim 
-- [ ] Use continuous noise field for tree placement - Instead of per-tile random X
+- Figure out how to get less wFC fails
+- [ ] Add new TILES: River dead-end, road slope dead-ends (low/high). river slopes? coast slopes. branching bridges? Allows easier transitions to grass, helps tile replacement resolve conflicts.
 
+- use bigger world noise fields for water, mountains + forests, cities? 
 - add rocks + plants
 - add stepped rocks by cliffs
-
-
-- [ ] Add new TILES: River dead-end, road slope dead-ends (low/high). river slopes? coast slopes. branching bridges? Allows easier transitions to grass, helps tile replacement resolve conflicts.
 - [ ] Consider manual compositing passes instead of MRT (fixes transparency, enables half-res AO for perf)
 - [ ] Consider preventing road slopes from meeting (use 'road_slope' edge type instead of 'road')
 - [ ] **Edge biasing for coast/ocean** - Pre-seed boundary cells with water before solving, or use position-based weights to boost ocean/coast near edges and grass near center
@@ -50,11 +44,14 @@ a hex map builder toy
 - add better skybox - styormy skies
 - make tile hex edges less deep/visible in blender?
 - [ ] Update to latest threejs
-- [ ] Fix regen destroyed texture crash - WebGPU textures disposed before GPU queue finishes, needs device.queue.onSubmittedWorkDone()
 - [ ] **Consider switching to global cell coords** - Avoid world position math for coordinate conversion. Offset coords have stagger issues; cube/axial coords are linear and additive. See Red Blob Games article.
-- put grid gen ina worker - show spinner  / building anim
-- add dec to hide road/river discontuities. Add a big house/watermill?ok
+- add dec to hide road/river discontuities? Add a big house/watermill?
 
+
+### Debug Label Colors
+- Purple = WFC failed cell (0 possibilities)
+- Orange = Replaced seed
+- Red = Dropped seed
 
 ## Current Work: Multi-Grid WFC Connection
 
@@ -73,6 +70,46 @@ Expandable hex map where clicking placeholder helpers spawns new grids that seam
 - `Map` manages a collection of `HexGrid` instances keyed by "x,z" grid coordinates
 - Clicking a placeholder generates seeds from adjacent grid edge and creates new grid
 - Seeds ensure seamless edge matching between adjacent grids
+
+## WFC (Wave Function Collapse) Implementation
+
+### Core Algorithm
+1. **Initialization**: All cells start with ALL possible states (tile × 6 rotations × levels)
+2. **Collapse**: Pick cell with lowest entropy (log(possibilities) + noise), randomly select weighted state
+3. **Propagate**: Remove incompatible states from neighbors via edge matching
+4. **Repeat**: Until all cells collapsed or contradiction detected
+5. **Recovery**: On contradiction, restart with incremented try count (max 5 restarts)
+
+### Edge Matching System
+- Each tile defines 6 edges (NE, E, SE, SW, W, NW) with types: `grass | road | river | ocean | coast | cliff | cliff_road`
+- Compatibility: edges must match type AND level (except grass which allows any level)
+- Slopes have `highEdges` array - edges facing uphill have `baseLevel + levelIncrement`
+
+### Multi-Grid Seeding
+When expanding to adjacent grids:
+1. Extract edge tiles from populated neighbor via `HexGridConnector.getNeighborSeeds()`
+2. Transform coordinates: offset → cube → global cube → new grid local → offset
+3. Pass seeds to new grid's WFC solver to constrain edge tiles
+4. Result: seamless edge matching between grids
+
+### Conflict Resolution (3 phases)
+1. **Adjacent Seed Conflicts**: Seeds from different grids placed next to each other with incompatible edges
+   - Detection: `filterConflictingSeeds()` checks edge compatibility
+   - Resolution: `findReplacementTile()` searches for alternative tile in source grid that preserves its neighbors but presents compatible edge toward conflict
+
+2. **Multi-Seed Cell Conflicts**: Cell adjacent to 2+ seeds with mutually incompatible requirements
+   - Detection: `validateSeedConflicts()` pre-validates before WFC
+   - Resolution: Try replacement, drop seed if no replacement found
+
+3. **WFC Failure Recovery**: When propagation creates contradiction mid-solve
+   - Detection: Cell has 0 possibilities, `lastContradiction` stores failure info
+   - Resolution: `findAdjacentSeeds()` identifies problematic seed, remove and retry (graduated retry, max 10 attempts)
+
+### Key Optimizations
+- **3D byEdge index**: O(1) lookup for compatible tiles by `edgeType → dir → level`
+- **Precomputed neighbors**: Cached at init, includes return direction
+- **High edge caching**: Avoid repeated rotation calculations
+- **Web Worker**: WFC solver runs in worker thread (HexWFCWorker.js) for non-blocking UI
 
 ## Naming Conventions
 

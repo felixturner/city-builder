@@ -81,7 +81,7 @@ export class GUIManager {
       useHex: true,
       hexGridRadius: 6,
       animateWFC: true,
-      animateDelay: 10,
+      animateDelay: 6,
       useLevels: true,
       showOutlines: true,
     },
@@ -155,7 +155,6 @@ export class GUIManager {
       demo.city.regenerate({
         animate: allParams.roads.animateWFC,
         animateDelay: allParams.roads.animateDelay,
-        levelsCount: 4,
       })
       // Restore hex helper visibility from GUI state
       demo.city.setHelpersVisible(allParams.debug.hexGrid)

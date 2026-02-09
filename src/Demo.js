@@ -282,6 +282,7 @@ export class Demo {
     this.cssRenderer.domElement.style.top = '0'
     this.cssRenderer.domElement.style.left = '0'
     this.cssRenderer.domElement.style.pointerEvents = 'none'
+    this.cssRenderer.domElement.style.zIndex = '1'  // Below GUI (lil-gui uses z-index 9999)
     document.body.appendChild(this.cssRenderer.domElement)
   }
 

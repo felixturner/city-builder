@@ -1,5 +1,6 @@
 import { Object3D, BatchedMesh, Color } from 'three/webgpu'
-import { HexTileGeometry, HexTileType, HexTileDefinitions } from './HexTiles.js'
+import { HexTileType, HexTileDefinitions } from './HexTileData.js'
+import { HexTileGeometry } from './HexTiles.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 import { random } from './SeededRandom.js'
 
@@ -92,6 +93,11 @@ const BridgeMeshNames = [
 // Default white color for decorations (no tinting)
 const WHITE = new Color(0xffffff)
 
+// Instance limits for BatchedMesh
+const MAX_TREES = 300
+const MAX_BUILDINGS = 20
+const MAX_BRIDGES = 20
+
 export class Decorations {
   constructor(scene, worldOffset = { x: 0, z: 0 }) {
     this.scene = scene
@@ -133,8 +139,7 @@ export class Decorations {
       totalI += geom.index ? geom.index.count : 0
     }
 
-    const maxTrees = 300
-    this.treeMesh = new BatchedMesh(maxTrees, totalV * 2, totalI * 2, material)
+    this.treeMesh = new BatchedMesh(MAX_TREES, totalV * 2, totalI * 2, material)
     this.treeMesh.castShadow = true
     this.treeMesh.receiveShadow = true
     this.treeMesh.frustumCulled = false
@@ -169,8 +174,7 @@ export class Decorations {
         bTotalI += geom.index ? geom.index.count : 0
       }
 
-      const maxBuildings = 20
-      this.buildingMesh = new BatchedMesh(maxBuildings, bTotalV * 2, bTotalI * 2, material)
+      this.buildingMesh = new BatchedMesh(MAX_BUILDINGS, bTotalV * 2, bTotalI * 2, material)
       this.buildingMesh.castShadow = true
       this.buildingMesh.receiveShadow = true
       this.buildingMesh.frustumCulled = false
@@ -204,8 +208,7 @@ export class Decorations {
         brTotalI += geom.index ? geom.index.count : 0
       }
 
-      const maxBridges = 20
-      this.bridgeMesh = new BatchedMesh(maxBridges, brTotalV * 2, brTotalI * 2, material)
+      this.bridgeMesh = new BatchedMesh(MAX_BRIDGES, brTotalV * 2, brTotalI * 2, material)
       this.bridgeMesh.castShadow = true
       this.bridgeMesh.receiveShadow = true
       this.bridgeMesh.frustumCulled = false
@@ -284,6 +287,12 @@ export class Decorations {
       } else {
         treeType = 'B'
         noiseVal = noiseB
+      }
+
+      // Check instance limit before adding
+      if (this.trees.length >= MAX_TREES - 1) {  // -1 for dummy instance
+        console.warn(`Decorations: Tree instance limit (${MAX_TREES}) reached`)
+        break
       }
 
       // Map noise value to density tier (0-3)

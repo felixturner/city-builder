@@ -16,18 +16,17 @@ import { random } from './SeededRandom.js'
 import { log } from './Demo.js'
 import { Sounds } from './lib/Sounds.js'
 import {
-  HexTile,
-  HexTileGeometry,
   HexTileType,
   HexDir,
   getHexNeighborOffset,
-  isInHexRadius,
   TILE_LIST,
-} from './HexTiles.js'
+  LEVELS_COUNT,
+} from './HexTileData.js'
+import { HexTile, HexTileGeometry, isInHexRadius } from './HexTiles.js'
 import { Decorations } from './Decorations.js'
 import { HexGridHelper } from './HexGridHelper.js'
 import { Placeholder } from './Placeholder.js'
-import { offsetToCube, cubeToOffset } from './HexGridConnector.js'
+import { localToGlobalCoords } from './HexGridConnector.js'
 
 /**
  * HexGrid states
@@ -232,10 +231,10 @@ export class HexGrid {
   }
 
   /**
-   * Set helper visibility (only applies in POPULATED state)
+   * Set helper visibility (works for both POPULATED and PLACEHOLDER states)
    */
   setHelperVisible(visible) {
-    if (this.state === HexGridState.POPULATED && this.gridHelper) {
+    if (this.gridHelper) {
       if (visible) {
         this.gridHelper.show()
       } else {
@@ -329,10 +328,11 @@ export class HexGrid {
     this.hexGrid = Array.from({ length: baseSize }, () => Array(baseSize).fill(null))
 
     const tileTypes = options.tileTypes ?? this.getDefaultTileTypes()
-    const levelsCount = options.levelsCount ?? 2
     const weights = { ...options.weights }
     const seed = options.seed ?? null
     const onSeedDropped = options.onSeedDropped ?? null
+    const onCellFailed = options.onCellFailed ?? null
+    const onTryReplaceSeed = options.onTryReplaceSeed ?? null  // Callback to attempt seed replacement
     let replacedCount = options.replacedCount ?? 0
 
     // Separate neighbor seeds (outside grid) from internal seeds
@@ -403,93 +403,134 @@ export class HexGrid {
     let result = null
     let resultCollapseOrder = []
     let attempt = 0
-    const maxAttempts = 10
-    let solver = null
+    const replacedSeedKeys = new Set()  // Track seeds already replaced
 
     // Get async solver from options (provided by HexMap)
     const solveWfcAsync = options.solveWfcAsync ?? null
+
+    // Helper to convert seed coords to global (uses shared utility, adjusted for padding)
+    const toGlobalCoords = (x, z) => localToGlobalCoords(x - padding, z - padding, this.gridRadius, globalCenterCube)
+
+    // Helper to run WFC and return result
+    const runWfc = async () => {
+      attempt++
+      const solverOptions = {
+        attemptNum: attempt,
+        weights,
+        seed,
+        maxRestarts: 1,
+        tileTypes,
+        padding,
+        gridRadius: this.gridRadius,
+        globalCenterCube,
+        gridId,
+      }
+
+      // Filter out dropped seeds for WFC (they failed, don't constrain WFC with them)
+      const activeSeeds = currentSeeds.filter(s => !s.dropped)
+
+      if (solveWfcAsync) {
+        const workerResult = await solveWfcAsync(wfcSize, wfcSize, activeSeeds, solverOptions)
+        if (workerResult.success) {
+          return { success: true, tiles: workerResult.tiles, collapseOrder: workerResult.collapseOrder || [] }
+        }
+        if (workerResult.lastContradiction) {
+          const { failedX, failedZ } = workerResult.lastContradiction
+          const failedGlobal = toGlobalCoords(failedX, failedZ)
+          onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
+        }
+        return { success: false }
+      } else {
+        const solver = new HexWFCSolver(wfcSize, wfcSize, rules, solverOptions)
+        const tiles = solver.solve(activeSeeds, gridId)
+        if (tiles) {
+          return { success: true, tiles, collapseOrder: solver.collapseOrder }
+        }
+        if (solver.lastContradiction) {
+          const { failedX, failedZ } = solver.lastContradiction
+          const failedGlobal = toGlobalCoords(failedX, failedZ)
+          onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
+        }
+        return { success: false }
+      }
+    }
+
+    // Shuffle seeds for random order
+    const shuffleArray = (arr) => {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1))
+        ;[arr[i], arr[j]] = [arr[j], arr[i]]
+      }
+      return arr
+    }
 
     // Notify solve start (for placeholder animation)
     options.onSolveStart?.()
 
     try {
-      // Graduated retry: remove problem seeds one at a time
-      while (!result && attempt < maxAttempts) {
-        attempt++
+      // Initial WFC attempt
+      log(`WFC Phase 0: Initial attempt`, 'color: gray')
+      const initialResult = await runWfc()
+      if (initialResult.success) {
+        result = initialResult.tiles
+        resultCollapseOrder = initialResult.collapseOrder
+      } else {
+        // Phase 1: Try replacing each seed one by one
+        log(`WFC Phase 1: Trying replacements (${currentSeeds.length} seeds)`, 'color: gray')
+        const shuffledForReplace = shuffleArray([...currentSeeds])
 
-        const solverOptions = {
-          attemptNum: attempt,
-          weights,
-          seed,
-          maxRestarts: 1,
-          tileTypes,
-          levelsCount,
-          padding,
-          gridRadius: this.gridRadius,
-          globalCenterCube,
-          gridId,
+        for (const seedToReplace of shuffledForReplace) {
+          if (result) break
+
+          const seedGlobal = toGlobalCoords(seedToReplace.x, seedToReplace.z)
+          const globalKey = `${seedGlobal.col},${seedGlobal.row}`
+
+          // Skip if already replaced
+          if (replacedSeedKeys.has(globalKey)) continue
+
+          // Try replacement
+          if (onTryReplaceSeed) {
+            const replaced = onTryReplaceSeed(seedToReplace, currentSeeds)
+            if (replaced) {
+              log(`Phase 1: Replaced seed (${globalKey})`, 'color: orange')
+              replacedCount++
+              replacedSeedKeys.add(globalKey)
+
+              // Run WFC after replacement
+              const wfcResult = await runWfc()
+              if (wfcResult.success) {
+                result = wfcResult.tiles
+                resultCollapseOrder = wfcResult.collapseOrder
+              }
+            }
+          }
         }
 
-        // Helper to convert seed coords to global (same logic as solver.toGlobalCoords)
-        const toGlobalCoords = (x, z) => {
-          const localCol = x - padding - this.gridRadius
-          const localRow = z - padding - this.gridRadius
-          const localCube = offsetToCube(localCol, localRow)
-          const globalCube = {
-            q: localCube.q + globalCenterCube.q,
-            r: localCube.r + globalCenterCube.r,
-            s: localCube.s + globalCenterCube.s
-          }
-          return cubeToOffset(globalCube.q, globalCube.r, globalCube.s)
-        }
+        // Phase 2: Try dropping each seed one by one
+        if (!result) {
+          log(`WFC Phase 2: Trying drops`, 'color: gray')
+          const shuffledForDrop = shuffleArray(
+            currentSeeds.filter(s => !s.dropped)
+          )
 
-        let lastContradiction = null
+          for (const seedToDrop of shuffledForDrop) {
+            if (result) break
 
-        // Use async worker if available, otherwise sync solver
-        if (solveWfcAsync) {
-          const workerResult = await solveWfcAsync(wfcSize, wfcSize, currentSeeds, solverOptions)
-          if (workerResult.success) {
-            result = workerResult.tiles
-            resultCollapseOrder = workerResult.collapseOrder || []
-          }
-          lastContradiction = workerResult.lastContradiction
-        } else {
-          // Sync solver (fallback when worker unavailable)
-          solver = new HexWFCSolver(wfcSize, wfcSize, rules, solverOptions)
-          result = solver.solve(currentSeeds, gridId)
-          resultCollapseOrder = solver.collapseOrder
-          lastContradiction = solver.lastContradiction
-        }
-
-        if (!result && lastContradiction && currentSeeds.length > 0) {
-          // Find seeds adjacent to the failed cell
-          const { failedX, failedZ } = lastContradiction
-          const problemSeeds = this.findAdjacentSeeds(currentSeeds, failedX, failedZ)
-
-          // Pick the seed to handle
-          let seedToHandle = null
-          if (problemSeeds.length > 0) {
-            seedToHandle = problemSeeds[0]
-          } else if (currentSeeds.length > 0) {
-            const randomIdx = Math.floor(random() * currentSeeds.length)
-            seedToHandle = currentSeeds[randomIdx]
-          }
-
-          if (seedToHandle) {
-            const seedGlobal = toGlobalCoords(seedToHandle.x, seedToHandle.z)
+            const seedGlobal = toGlobalCoords(seedToDrop.x, seedToDrop.z)
             const globalKey = `${seedGlobal.col},${seedGlobal.row}`
 
-            // Drop the problematic seed
-            log(`WFC FAILED - Dropping seed (${globalKey})`, 'color: red')
+            log(`Phase 2: Dropping seed (${globalKey})`, 'color: red')
             onSeedDropped?.(globalKey)
             droppedCount++
-            currentSeeds = currentSeeds.filter(s => s !== seedToHandle)
-          } else {
-            log(`WFC FAILED - No seeds left to drop`, 'color: red')
-            break
+            seedToDrop.dropped = true
+
+            // Run WFC after drop
+            const wfcResult = await runWfc()
+            if (wfcResult.success) {
+              result = wfcResult.tiles
+              resultCollapseOrder = wfcResult.collapseOrder
+            }
           }
-        } else if (!result) {
-          break
         }
       }
     } finally {
@@ -632,6 +673,32 @@ export class HexGrid {
   }
 
   /**
+   * Find the seed nearest to a given cell position
+   * Uses hex distance (max of cube coord differences)
+   */
+  findNearestSeed(seeds, cellX, cellZ) {
+    if (seeds.length === 0) return null
+
+    let nearest = null
+    let minDist = Infinity
+
+    for (const seed of seeds) {
+      // Calculate hex distance using offset coords
+      const dx = seed.x - cellX
+      const dz = seed.z - cellZ
+      // Approximate hex distance (good enough for comparison)
+      const dist = Math.abs(dx) + Math.abs(dz) + Math.abs(dx + dz)
+
+      if (dist < minDist) {
+        minDist = dist
+        nearest = seed
+      }
+    }
+
+    return nearest
+  }
+
+  /**
    * Place a single tile
    */
   placeTile(placement) {
@@ -733,7 +800,7 @@ export class HexGrid {
     const LEVEL_HEIGHT = 0.5
     const DROP_HEIGHT = 5
     const ANIM_DURATION = 0.4
-    const DEC_DELAY = 1500 // Decoration drops 1.5s after its tile
+    const DEC_DELAY = 400 // Decoration drops after its tile
     const dummy = new Object3D()
 
     // Build decoration lookup by tile position
@@ -759,7 +826,7 @@ export class HexGrid {
         gsap.to(anim, {
           y: targetY,
           duration: ANIM_DURATION,
-          ease: 'bounce.out',
+          ease: 'power1.out',
           onUpdate: () => {
             dummy.position.set(pos.x, anim.y, pos.z)
             dummy.rotation.y = rotationY
@@ -864,7 +931,7 @@ export class HexGrid {
         y: item.y,
         scale: 1,
         duration: ANIM_DURATION,
-        ease: 'bounce.out',
+        ease: 'power1.out',
         onUpdate: () => {
           dummy.position.set(item.x, anim.y, item.z)
           dummy.rotation.y = item.rotationY
