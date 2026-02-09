@@ -12,7 +12,7 @@ import { uniform, varyingProperty, materialColor, vec3 } from 'three/tsl'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import { HexWFCAdjacencyRules, edgesCompatible, getEdgeLevel } from './HexWFC.js'
 import { setStatus } from './Demo.js'
-import { HexTileType, HexTileDefinitions, TILE_LIST, HexDir, HexOpposite, getHexNeighborOffset, rotateHexEdges } from './HexTileData.js'
+import { TILE_LIST, TileType, HexDir, HexOpposite, getHexNeighborOffset, rotateHexEdges } from './HexTileData.js'
 import { HexTileGeometry, isInHexRadius } from './HexTiles.js'
 import { HexGrid, HexGridState } from './HexGrid.js'
 import {
@@ -176,8 +176,8 @@ export class HexMap {
       // Resolve pending promise by ID
       const resolve = this.wfcPendingResolvers.get(id)
       if (resolve) {
-        const { lastContradiction } = e.data
-        resolve({ success, tiles, collapseOrder, lastContradiction })
+        const { seedingContradiction } = e.data
+        resolve({ success, tiles, collapseOrder, seedingContradiction })
         this.wfcPendingResolvers.delete(id)
       }
     }
@@ -227,7 +227,7 @@ export class HexMap {
    * Get default tile types for WFC
    */
   getDefaultTileTypes() {
-    return [...TILE_LIST]
+    return TILE_LIST.map((_, i) => i)
   }
 
   createFloor() {
@@ -336,9 +336,9 @@ export class HexMap {
 
         // Try each candidate until we find one compatible with adjacent seeds
         for (const replacement of candidates) {
-          const replacementEdges = rotateHexEdges(HexTileDefinitions[replacement.type]?.edges || {}, replacement.rotation)
+          const replacementEdges = rotateHexEdges(TILE_LIST[replacement.type]?.edges || {}, replacement.rotation)
           let compatibleWithSeeds = true
-          const typeName = Object.entries(HexTileType).find(([,v]) => v === replacement.type)?.[0]
+          const typeName = TILE_LIST[replacement.type]?.name
 
           // Log all 6 directions for this candidate
           const seedGlobal = seedToGlobal(seed)
@@ -356,11 +356,11 @@ export class HexMap {
 
             if (adjacentSeed) {
               // Check edge compatibility
-              const adjacentEdges = rotateHexEdges(HexTileDefinitions[adjacentSeed.type]?.edges || {}, adjacentSeed.rotation)
+              const adjacentEdges = rotateHexEdges(TILE_LIST[adjacentSeed.type]?.edges || {}, adjacentSeed.rotation)
               const theirEdge = adjacentEdges[HexOpposite[dir]]
               const theirLevel = getEdgeLevel(adjacentSeed.type, adjacentSeed.rotation, HexOpposite[dir], adjacentSeed.level ?? 0)
 
-              const adjTypeName = Object.entries(HexTileType).find(([,v]) => v === adjacentSeed.type)?.[0]
+              const adjTypeName = TILE_LIST[adjacentSeed.type]?.name
               const isMatch = edgesCompatible(myEdge, myLevel, theirEdge, theirLevel)
               const droppedFlag = adjacentSeed.dropped ? ' [DROPPED]' : ''
               console.log(`%c      ${dir}: ${myEdge}@${myLevel} vs ${adjTypeName}${seedGlobalStr(adjacentSeed)}${droppedFlag} ${HexOpposite[dir]}→${theirEdge}@${theirLevel} ${isMatch ? '✓' : '✗'}`, isMatch ? 'color: blue' : 'color: red')
@@ -622,7 +622,7 @@ export class HexMap {
 
       // Try each candidate until we find one compatible with adjacent seeds
       for (const replacement of candidates) {
-        const replacementEdges = rotateHexEdges(HexTileDefinitions[replacement.type]?.edges || {}, replacement.rotation)
+        const replacementEdges = rotateHexEdges(TILE_LIST[replacement.type]?.edges || {}, replacement.rotation)
         let compatibleWithSeeds = true
 
         for (const dir of HexDir) {
@@ -633,7 +633,7 @@ export class HexMap {
           // Find if there's another seed at this adjacent position
           const adjacentSeed = neighborSeeds.find(s => s.x === nx && s.z === nz && s !== seed)
           if (adjacentSeed) {
-            const adjacentEdges = rotateHexEdges(HexTileDefinitions[adjacentSeed.type]?.edges || {}, adjacentSeed.rotation)
+            const adjacentEdges = rotateHexEdges(TILE_LIST[adjacentSeed.type]?.edges || {}, adjacentSeed.rotation)
             const myEdge = replacementEdges[dir]
             const theirEdge = adjacentEdges[HexOpposite[dir]]
             const myLevel = getEdgeLevel(replacement.type, replacement.rotation, dir, replacement.level)
@@ -653,7 +653,7 @@ export class HexMap {
           seed.type = replacement.type
           seed.rotation = replacement.rotation
           seed.level = replacement.level
-          const typeName = Object.entries(HexTileType).find(([,v]) => v === replacement.type)?.[0] || replacement.type
+          const typeName = TILE_LIST[replacement.type]?.name || replacement.type
           console.log(`%cReplaced tile (${globalKey}) with ${typeName} rot=${replacement.rotation}`, 'color: blue')
           return true
         }
@@ -731,8 +731,8 @@ export class HexMap {
         const neighborKey = `${seed.x + offset.dx},${seed.z + offset.dz}`
         const neighborSeed = seedMapDebug.get(neighborKey)
         if (neighborSeed && neighborSeed !== seed) {
-          const seedEdges = rotateHexEdges(HexTileDefinitions[seed.type]?.edges || {}, seed.rotation)
-          const neighborEdges = rotateHexEdges(HexTileDefinitions[neighborSeed.type]?.edges || {}, neighborSeed.rotation)
+          const seedEdges = rotateHexEdges(TILE_LIST[seed.type]?.edges || {}, seed.rotation)
+          const neighborEdges = rotateHexEdges(TILE_LIST[neighborSeed.type]?.edges || {}, neighborSeed.rotation)
           const seedEdge = seedEdges[dir]
           const neighborEdge = neighborEdges[HexOpposite[dir]]
           const seedLevel = getEdgeLevel(seed.type, seed.rotation, dir, seed.level ?? 0)
@@ -740,8 +740,8 @@ export class HexMap {
           if (!edgesCompatible(seedEdge, seedLevel, neighborEdge, neighborLevel)) {
             const sGlobal = seedToGlobal(seed)
             const nGlobal = seedToGlobal(neighborSeed)
-            const sType = Object.entries(HexTileType).find(([,v]) => v === seed.type)?.[0]
-            const nType = Object.entries(HexTileType).find(([,v]) => v === neighborSeed.type)?.[0]
+            const sType = TILE_LIST[seed.type]?.name
+            const nType = TILE_LIST[neighborSeed.type]?.name
             console.log(`%c  CONFLICT: (${sGlobal.col},${sGlobal.row}) ${sType} ${dir}→${seedEdge}@${seedLevel} vs (${nGlobal.col},${nGlobal.row}) ${nType} ${HexOpposite[dir]}→${neighborEdge}@${neighborLevel}`, 'color: red')
           }
         }
@@ -1039,7 +1039,7 @@ export class HexMap {
             tile.gridZ - gridRadius
           )
 
-          const def = HexTileDefinitions[tile.type]
+          const def = TILE_LIST[tile.type]
           const isSlope = def?.highEdges?.length > 0
           const baseLevel = tile.level ?? 0
 

@@ -1,8 +1,7 @@
 import {
+  TILE_LIST,
   HexDir,
   HexOpposite,
-  HexTileDefinitions,
-  HexTileType,
   getHexNeighborOffset,
   rotateHexEdges,
   LEVELS_COUNT,
@@ -10,11 +9,6 @@ import {
 import { isInHexRadius } from './HexTiles.js'
 import { random } from './SeededRandom.js'
 import { HexWFCCell, edgesCompatible, getEdgeLevel } from './HexWFC.js'
-
-// Reverse lookup: type number → name
-const TileTypeName = Object.fromEntries(
-  Object.entries(HexTileType).map(([name, num]) => [num, name])
-)
 
 // Re-export isInHexRadius for convenience
 export { isInHexRadius }
@@ -599,8 +593,8 @@ export function filterConflictingSeeds(seeds, gridRadius = 8, gridKey = '?', glo
 
       if (neighborSeed) {
         // Check if edges are compatible (type AND level must match)
-        const seedEdges = rotateHexEdges(HexTileDefinitions[seed.type]?.edges || {}, seed.rotation)
-        const neighborEdges = rotateHexEdges(HexTileDefinitions[neighborSeed.type]?.edges || {}, neighborSeed.rotation)
+        const seedEdges = rotateHexEdges(TILE_LIST[seed.type]?.edges || {}, seed.rotation)
+        const neighborEdges = rotateHexEdges(TILE_LIST[neighborSeed.type]?.edges || {}, neighborSeed.rotation)
 
         const seedEdge = seedEdges[dir]
         const neighborEdge = neighborEdges[HexOpposite[dir]]
@@ -616,8 +610,8 @@ export function filterConflictingSeeds(seeds, gridRadius = 8, gridKey = '?', glo
           const neighborGlobal = localToGlobalCoords(neighborSeed.x, neighborSeed.z, gridRadius, globalCenterCube)
           const reason = seedEdge !== neighborEdge ? 'edge type' : 'edge level'
           conflictInfo = {
-            seed: { global: `${seedGlobal.col},${seedGlobal.row}`, type: TileTypeName[seed.type] || seed.type, rot: seed.rotation, level: seed.level ?? 0 },
-            neighbor: { global: `${neighborGlobal.col},${neighborGlobal.row}`, type: TileTypeName[neighborSeed.type] || neighborSeed.type, rot: neighborSeed.rotation, level: neighborSeed.level ?? 0 },
+            seed: { global: `${seedGlobal.col},${seedGlobal.row}`, type: TILE_LIST[seed.type]?.name || seed.type, rot: seed.rotation, level: seed.level ?? 0 },
+            neighbor: { global: `${neighborGlobal.col},${neighborGlobal.row}`, type: TILE_LIST[neighborSeed.type]?.name || neighborSeed.type, rot: neighborSeed.rotation, level: neighborSeed.level ?? 0 },
             dir,
             seedEdge: `${seedEdge}@${seedEdgeLevel}`,
             neighborEdge: `${neighborEdge}@${neighborEdgeLevel}`,
@@ -703,7 +697,7 @@ export function validateSeedConflicts(seeds, rules, gridRadius = 8, gridKey = '?
 
     // Build edge requirements from all adjacent seeds
     const requirements = neighbors.map(({ seed, dir }) => {
-      const seedEdges = rotateHexEdges(HexTileDefinitions[seed.type]?.edges || {}, seed.rotation)
+      const seedEdges = rotateHexEdges(TILE_LIST[seed.type]?.edges || {}, seed.rotation)
       const edgeType = seedEdges[HexOpposite[dir]] // The edge the seed is presenting
       const edgeLevel = getEdgeLevel(seed.type, seed.rotation, HexOpposite[dir], seed.level ?? 0)
       return { edgeType, edgeLevel, dir, seed }
@@ -732,7 +726,7 @@ export function validateSeedConflicts(seeds, rules, gridRadius = 8, gridKey = '?
           const g = localToGlobalCoords(seed.x, seed.z, gridRadius, globalCenterCube)
           return {
             global: `${g.col},${g.row}`,
-            type: TileTypeName[seed.type] || seed.type,
+            type: TILE_LIST[seed.type]?.name || seed.type,
             rotation: seed.rotation,
             level: seed.level ?? 0
           }
@@ -768,7 +762,7 @@ export function validateSeedConflicts(seeds, rules, gridRadius = 8, gridKey = '?
 export function findReplacementTiles(seed, sourceHexGrid, gridRadius, sourceGlobalCenterCube = { q: 0, r: 0, s: 0 }) {
   const { sourceX, sourceZ, type: currentType, rotation: currentRotation, level: currentLevel } = seed
 
-  const currentTypeName = TileTypeName[currentType] || currentType
+  const currentTypeName = TILE_LIST[currentType]?.name || currentType
   const globalCoords = localToGlobalCoords(sourceX, sourceZ, gridRadius, sourceGlobalCenterCube)
   console.log(`%c  Finding replacements for ${currentTypeName} rot=${currentRotation} @ (${globalCoords.col},${globalCoords.row})`, 'color: gray')
 
@@ -783,7 +777,7 @@ export function findReplacementTiles(seed, sourceHexGrid, gridRadius, sourceGlob
 
     if (neighbor) {
       // Read the NEIGHBOR's edge facing back toward us
-      const neighborDef = HexTileDefinitions[neighbor.type]
+      const neighborDef = TILE_LIST[neighbor.type]
       if (!neighborDef) continue
       const neighborEdges = rotateHexEdges(neighborDef.edges, neighbor.rotation)
       const oppositeDir = HexOpposite[dir]
@@ -799,15 +793,22 @@ export function findReplacementTiles(seed, sourceHexGrid, gridRadius, sourceGlob
     }
   }
 
-  // Search all tile types and rotations for replacements
+  // Search active tile types and rotations for replacements
   const candidates = []
 
-  for (const [typeName, tileType] of Object.entries(HexTileType)) {
-    const def = HexTileDefinitions[tileType]
-    if (!def) continue
+  for (let tileType = 0; tileType < TILE_LIST.length; tileType++) {
+    const def = TILE_LIST[tileType]
 
     // Skip same tile type entirely to avoid oscillation (e.g., WATER rot=0 -> WATER rot=1)
     if (tileType === currentType) continue
+
+    // Skip if currentLevel is invalid for this tile type (e.g. high slope only valid at level 0)
+    const isSlope = def.highEdges?.length > 0
+    if (isSlope) {
+      const increment = def.levelIncrement ?? 1
+      const maxBaseLevel = LEVELS_COUNT - 1 - increment
+      if (currentLevel > maxBaseLevel) continue
+    }
 
     for (let rot = 0; rot < 6; rot++) {
       const edges = rotateHexEdges(def.edges, rot)
@@ -880,7 +881,7 @@ export function generateAdjacentGridSeeds(hexGrid, gridRadius, direction, rules,
   let skippedGrass = 0
   for (const { tile, outwardDirs } of edgeTiles) {
     // Get edge info from source tile
-    const def = HexTileDefinitions[tile.type]
+    const def = TILE_LIST[tile.type]
     if (!def) {
       console.warn(`[EdgeSeed] No definition for tile type ${tile.type}`)
       continue
@@ -925,7 +926,7 @@ export function generateAdjacentGridSeeds(hexGrid, gridRadius, direction, rules,
       if (failCount <= 5) {
         const srcX = tile.gridX - gridRadius
         const srcZ = tile.gridZ - gridRadius
-        const srcName = TileTypeName[tile.type] || `type${tile.type}`
+        const srcName = TILE_LIST[tile.type]?.name || `type${tile.type}`
         const edgeDesc = constraints.map(c => `${c.outwardDir}=${c.edgeType}`).join(', ')
         console.warn(`[EdgeSeed] No compatible tiles for edges [${edgeDesc}] (tile at ${srcX},${srcZ} ${srcName} rot=${tile.rotation})`)
       }
@@ -963,7 +964,7 @@ export function generateAdjacentGridSeeds(hexGrid, gridRadius, direction, rules,
     let selected
     if (useWeightedRandom && compatibleTiles.length > 1) {
       const weights = compatibleTiles.map(s =>
-        HexTileDefinitions[s.type]?.weight ?? 1
+        TILE_LIST[s.type]?.weight ?? 1
       )
       const totalWeight = weights.reduce((a, b) => a + b, 0)
       let roll = random() * totalWeight
@@ -992,7 +993,7 @@ export function generateAdjacentGridSeeds(hexGrid, gridRadius, direction, rules,
     const srcZ = tile.gridZ - gridRadius
     const seedX = newPosition.col - gridRadius
     const seedZ = newPosition.row - gridRadius
-    const tileName = TileTypeName[selected.type] || `type${selected.type}`
+    const tileName = TILE_LIST[selected.type]?.name || `type${selected.type}`
     const edgeDesc = constraints.map(c => `${c.outwardDir}=${c.edgeType}`).join(', ')
     console.log(`[EdgeSeed] Source (${srcX},${srcZ}) [${edgeDesc}] → Seed (${seedX},${seedZ}): ${tileName} rot=${selected.rotation} level=${selected.level}`)
 

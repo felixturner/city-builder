@@ -1,13 +1,12 @@
 import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Color } from 'three/webgpu'
 import {
-  HexTileType,
+  TILE_LIST,
+  TileType,
   HexDir,
   HexOpposite,
-  HexTileDefinitions,
   getHexNeighborOffset,
   rotateHexEdges,
-  TILE_LIST,
 } from './HexTileData.js'
 
 /**
@@ -100,7 +99,7 @@ export class HexTile {
    * Get edges for this tile at its current rotation
    */
   getEdges() {
-    const baseDef = HexTileDefinitions[this.type]
+    const baseDef = TILE_LIST[this.type]
     if (!baseDef) return null
     return rotateHexEdges(baseDef.edges, this.rotation)
   }
@@ -110,7 +109,7 @@ export class HexTile {
    * Returns a Set of direction strings, or null if not a slope tile
    */
   getHighEdges() {
-    const baseDef = HexTileDefinitions[this.type]
+    const baseDef = TILE_LIST[this.type]
     if (!baseDef || !baseDef.highEdges) return null
 
     // Rotate high edges by the tile's rotation
@@ -127,74 +126,9 @@ export class HexTile {
    * Check if this tile is a slope tile
    */
   isSlope() {
-    const baseDef = HexTileDefinitions[this.type]
+    const baseDef = TILE_LIST[this.type]
     return baseDef && baseDef.highEdges && baseDef.highEdges.length > 0
   }
-}
-
-/**
- * Mesh name mapping: HexTileType -> GLB mesh name
- */
-export const HexMeshNames = {
-  // Base
-  [HexTileType.GRASS]: 'hex_grass',
-  [HexTileType.WATER]: 'hex_water',
-
-  // Roads
-  [HexTileType.ROAD_A]: 'hex_road_A',
-  [HexTileType.ROAD_B]: 'hex_road_B',
-  [HexTileType.ROAD_C]: 'hex_road_C',
-  [HexTileType.ROAD_D]: 'hex_road_D',
-  [HexTileType.ROAD_E]: 'hex_road_E',
-  [HexTileType.ROAD_F]: 'hex_road_F',
-  [HexTileType.ROAD_G]: 'hex_road_G',
-  [HexTileType.ROAD_H]: 'hex_road_H',
-  [HexTileType.ROAD_I]: 'hex_road_I',
-  [HexTileType.ROAD_J]: 'hex_road_J',
-  [HexTileType.ROAD_K]: 'hex_road_K',
-  [HexTileType.ROAD_L]: 'hex_road_L',
-  [HexTileType.ROAD_M]: 'hex_road_M',
-
-  // Rivers
-  [HexTileType.RIVER_A]: 'hex_river_A',
-  [HexTileType.RIVER_A_CURVY]: 'hex_river_A_curvy',
-  [HexTileType.RIVER_B]: 'hex_river_B',
-  [HexTileType.RIVER_C]: 'hex_river_C',
-  [HexTileType.RIVER_D]: 'hex_river_D',
-  [HexTileType.RIVER_E]: 'hex_river_E',
-  [HexTileType.RIVER_F]: 'hex_river_F',
-  [HexTileType.RIVER_G]: 'hex_river_G',
-  [HexTileType.RIVER_H]: 'hex_river_H',
-  [HexTileType.RIVER_I]: 'hex_river_I',
-  [HexTileType.RIVER_J]: 'hex_river_J',
-  [HexTileType.RIVER_K]: 'hex_river_K',
-  [HexTileType.RIVER_L]: 'hex_river_L',
-  [HexTileType.RIVER_M]: 'hex_river_M',
-
-  // Coasts
-  [HexTileType.COAST_A]: 'hex_coast_A',
-  [HexTileType.COAST_B]: 'hex_coast_B',
-  [HexTileType.COAST_C]: 'hex_coast_C',
-  [HexTileType.COAST_D]: 'hex_coast_D',
-  [HexTileType.COAST_E]: 'hex_coast_E',
-
-  // Crossings
-  [HexTileType.RIVER_CROSSING_A]: 'hex_river_crossing_A',
-  [HexTileType.RIVER_CROSSING_B]: 'hex_river_crossing_B',
-
-  // High slopes (1u rise)
-  [HexTileType.GRASS_SLOPE_HIGH]: 'hex_grass_sloped_high',
-  [HexTileType.ROAD_A_SLOPE_HIGH]: 'hex_road_A_sloped_high',
-  [HexTileType.GRASS_CLIFF]: 'hex_grass',  // Reuse flat grass for vertical cliff
-  [HexTileType.GRASS_CLIFF_B]: 'hex_grass',
-  [HexTileType.GRASS_CLIFF_C]: 'hex_grass',
-
-  // Low slopes (0.5u rise)
-  [HexTileType.GRASS_SLOPE_LOW]: 'hex_grass_sloped_low',
-  [HexTileType.ROAD_A_SLOPE_LOW]: 'hex_road_A_sloped_low',
-  [HexTileType.GRASS_CLIFF_LOW]: 'hex_grass',  // Reuse flat grass for vertical cliff
-  [HexTileType.GRASS_CLIFF_LOW_B]: 'hex_grass',
-  [HexTileType.GRASS_CLIFF_LOW_C]: 'hex_grass',
 }
 
 /**
@@ -228,18 +162,17 @@ export class HexTileGeometry {
         }
       })
 
-      // Load geometries only for included tile types
-      for (const [typeStr, meshName] of Object.entries(HexMeshNames)) {
-        const type = parseInt(typeStr)
-        if (!TILE_LIST.has(type)) continue
-        const result = this.findAndProcessGeometry(gltf.scene, meshName)
+      // Load geometries for all active tile types
+      for (let type = 0; type < TILE_LIST.length; type++) {
+        const tile = TILE_LIST[type]
+        const result = this.findAndProcessGeometry(gltf.scene, tile.mesh)
         if (result.geom) {
           this.geoms.set(type, result.geom)
         }
       }
 
       // Calculate hex dimensions from grass tile
-      const grassGeom = this.geoms.get(HexTileType.GRASS)
+      const grassGeom = this.geoms.get(TileType.GRASS)
       if (grassGeom) {
         grassGeom.computeBoundingBox()
         const bb = grassGeom.boundingBox

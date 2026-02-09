@@ -9,67 +9,169 @@
 export const LEVELS_COUNT = 3
 
 /**
- * Hex tile type enum - matches Blender mesh names
+ * Consolidated tile definitions - single source of truth
+ * Array index IS the tile's numeric ID (used internally during a session only)
+ * Each entry: { name, mesh, edges, weight, highEdges?, levelIncrement? }
  */
-export const HexTileType = {
+export const TILE_LIST = [
   // Base
-  GRASS: 0,
-  WATER: 1,
+  { name: 'GRASS', mesh: 'hex_grass',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 300 },
+  { name: 'WATER', mesh: 'hex_water',
+    edges: { NE: 'ocean', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'ocean', NW: 'ocean' },
+    weight: 50 },
 
-  // Roads (10-29)
-  ROAD_A: 10,
-  ROAD_B: 11,
-  ROAD_C: 12,
-  ROAD_D: 13,
-  ROAD_E: 14,
-  ROAD_F: 15,
-  ROAD_G: 16,
-  ROAD_H: 17,
-  ROAD_I: 18,
-  ROAD_J: 19,
-  ROAD_K: 20,
-  ROAD_L: 21,
-  ROAD_M: 22,
+  // Roads
+  { name: 'ROAD_A', mesh: 'hex_road_A',
+    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 10 },
+  { name: 'ROAD_B', mesh: 'hex_road_B',
+    edges: { NE: 'road', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 8 },
+  // { name: 'ROAD_C', mesh: 'hex_road_C',  // removed from GLB
+  //   edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'road' },
+  //   weight: 1 },
+  { name: 'ROAD_D', mesh: 'hex_road_D',
+    edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 2 },
+  { name: 'ROAD_E', mesh: 'hex_road_E',
+    edges: { NE: 'road', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 2 },
+  { name: 'ROAD_F', mesh: 'hex_road_F',
+    edges: { NE: 'grass', E: 'road', SE: 'road', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 2 },
+  // { name: 'ROAD_G', mesh: 'hex_road_G',  // removed from GLB
+  //   edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'road', W: 'road', NW: 'road' },
+  //   weight: 2 },
+  { name: 'ROAD_H', mesh: 'hex_road_H',
+    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'road', W: 'road', NW: 'road' },
+    weight: 2 },
+  // { name: 'ROAD_I', mesh: 'hex_road_I',  // removed from GLB
+  //   edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'road', W: 'grass', NW: 'road' },
+  //   weight: 2 },
+  { name: 'ROAD_J', mesh: 'hex_road_J',
+    edges: { NE: 'grass', E: 'road', SE: 'road', SW: 'road', W: 'road', NW: 'grass' },
+    weight: 1 },
+  // { name: 'ROAD_K', mesh: 'hex_road_K',  // removed from GLB
+  //   edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'road', W: 'road', NW: 'road' },
+  //   weight: 1 },
+  // { name: 'ROAD_L', mesh: 'hex_road_L',  // removed from GLB
+  //   edges: { NE: 'road', E: 'road', SE: 'road', SW: 'road', W: 'road', NW: 'road' },
+  //   weight: 1 },
+  { name: 'ROAD_M', mesh: 'hex_road_M',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 4 },
 
-  // Rivers (30-49)
-  RIVER_A: 30,
-  RIVER_A_CURVY: 31,
-  RIVER_B: 32,
-  RIVER_C: 33,
-  RIVER_D: 34,
-  RIVER_E: 35,
-  RIVER_F: 36,
-  RIVER_G: 37,
-  RIVER_H: 38,
-  RIVER_I: 39,
-  RIVER_J: 40,
-  RIVER_K: 41,
-  RIVER_L: 42,
-  RIVER_M: 43,
+  // Rivers
+  { name: 'RIVER_A', mesh: 'hex_river_A',
+    edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 20 },
+  { name: 'RIVER_A_CURVY', mesh: 'hex_river_A_curvy',
+    edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 20 },
+  { name: 'RIVER_B', mesh: 'hex_river_B',
+    edges: { NE: 'river', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 60 },
+  // { name: 'RIVER_C', mesh: 'hex_river_C',  // removed from GLB
+  //   edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'river' },
+  //   weight: 8 },
+  { name: 'RIVER_D', mesh: 'hex_river_D',
+    edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 4 },
+  { name: 'RIVER_E', mesh: 'hex_river_E',
+    edges: { NE: 'river', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 4 },
+  { name: 'RIVER_F', mesh: 'hex_river_F',
+    edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 4 },
+  { name: 'RIVER_G', mesh: 'hex_river_G',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'river', W: 'river', NW: 'river' },
+    weight: 4 },
+  { name: 'RIVER_H', mesh: 'hex_river_H',
+    edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'river', W: 'river', NW: 'river' },
+    weight: 2 },
+  // { name: 'RIVER_I', mesh: 'hex_river_I',  // removed from GLB
+  //   edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'grass', NW: 'river' },
+  //   weight: 2 },
+  // { name: 'RIVER_J', mesh: 'hex_river_J',  // removed from GLB
+  //   edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'grass' },
+  //   weight: 2 },
+  // { name: 'RIVER_K', mesh: 'hex_river_K',  // removed from GLB
+  //   edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'river', NW: 'river' },
+  //   weight: 2 },
+  // { name: 'RIVER_L', mesh: 'hex_river_L',  // removed from GLB
+  //   edges: { NE: 'river', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'river' },
+  //   weight: 2 },
+  // { name: 'RIVER_M', mesh: 'hex_river_M',  // removed from GLB
+  //   edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
+  //   weight: 8 },
 
-  // Coasts (50-59)
-  COAST_A: 50,
-  COAST_B: 51,
-  COAST_C: 52,
-  COAST_D: 53,
-  COAST_E: 54,
+  // Coasts
+  { name: 'COAST_A', mesh: 'hex_coast_A',
+    edges: { NE: 'grass', E: 'coast', SE: 'ocean', SW: 'coast', W: 'grass', NW: 'grass' },
+    weight: 20 },
+  { name: 'COAST_B', mesh: 'hex_coast_B',
+    edges: { NE: 'grass', E: 'coast', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'grass' },
+    weight: 15 },
+  { name: 'COAST_C', mesh: 'hex_coast_C',
+    edges: { NE: 'coast', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'grass' },
+    weight: 15 },
+  { name: 'COAST_D', mesh: 'hex_coast_D',
+    edges: { NE: 'ocean', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'coast' },
+    weight: 15 },
+  { name: 'COAST_E', mesh: 'hex_coast_E',
+    edges: { NE: 'grass', E: 'grass', SE: 'coast', SW: 'coast', W: 'grass', NW: 'grass' },
+    weight: 10 },
 
-  // Crossings (60-69)
-  RIVER_CROSSING_A: 60,
-  RIVER_CROSSING_B: 61,
+  // Crossings
+  { name: 'RIVER_CROSSING_A', mesh: 'hex_river_crossing_A',
+    edges: { NE: 'grass', E: 'river', SE: 'road', SW: 'grass', W: 'river', NW: 'road' },
+    weight: 4 },
+  { name: 'RIVER_CROSSING_B', mesh: 'hex_river_crossing_B',
+    edges: { NE: 'road', E: 'river', SE: 'grass', SW: 'road', W: 'river', NW: 'grass' },
+    weight: 4 },
 
-  // Slopes (70-89)
-  GRASS_SLOPE_HIGH: 70,
-  ROAD_A_SLOPE_HIGH: 71,
-  GRASS_CLIFF: 72,
-  GRASS_CLIFF_B: 73,
-  GRASS_CLIFF_C: 74,
-  GRASS_SLOPE_LOW: 75,
-  ROAD_A_SLOPE_LOW: 76,
-  GRASS_CLIFF_LOW: 77,
-  GRASS_CLIFF_LOW_B: 78,
-  GRASS_CLIFF_LOW_C: 79,
-}
+  // High slopes (2-level rise)
+  { name: 'GRASS_SLOPE_HIGH', mesh: 'hex_grass_sloped_high',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 100, highEdges: ['NE', 'E', 'SE'], levelIncrement: 2 },
+  { name: 'ROAD_A_SLOPE_HIGH', mesh: 'hex_road_A_sloped_high',
+    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 60, highEdges: ['NE', 'E', 'SE'], levelIncrement: 2 },
+  { name: 'GRASS_CLIFF', mesh: 'hex_grass',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 30, highEdges: ['NE', 'E', 'SE'], levelIncrement: 2 },
+  { name: 'GRASS_CLIFF_B', mesh: 'hex_grass',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 30, highEdges: ['NE', 'E', 'SE', 'SW'], levelIncrement: 2 },
+  { name: 'GRASS_CLIFF_C', mesh: 'hex_grass',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 30, highEdges: ['E'], levelIncrement: 2 },
+
+  // Low slopes (1-level rise)
+  { name: 'GRASS_SLOPE_LOW', mesh: 'hex_grass_sloped_low',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 100, highEdges: ['NE', 'E', 'SE'], levelIncrement: 1 },
+  { name: 'ROAD_A_SLOPE_LOW', mesh: 'hex_road_A_sloped_low',
+    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
+    weight: 60, highEdges: ['NE', 'E', 'SE'], levelIncrement: 1 },
+  { name: 'GRASS_CLIFF_LOW', mesh: 'hex_grass',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 30, highEdges: ['NE', 'E', 'SE'], levelIncrement: 1 },
+  { name: 'GRASS_CLIFF_LOW_B', mesh: 'hex_grass',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 30, highEdges: ['NE', 'E', 'SE', 'SW'], levelIncrement: 1 },
+  { name: 'GRASS_CLIFF_LOW_C', mesh: 'hex_grass',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
+    weight: 30, highEdges: ['E'], levelIncrement: 1 },
+]
+
+/**
+ * Name → index lookup (derived from TILE_LIST)
+ * e.g. TileType.GRASS === 0, TileType.WATER === 1
+ */
+export const TileType = Object.fromEntries(TILE_LIST.map((t, i) => [t.name, i]))
 
 /**
  * Hex directions (6 edges) for pointy-top orientation
@@ -127,261 +229,3 @@ export function rotateHexEdges(edges, rotation) {
   }
   return rotated
 }
-
-/**
- * Tile definitions with edge patterns
- */
-export const HexTileDefinitions = {
-  [HexTileType.GRASS]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 300,
-  },
-  [HexTileType.WATER]: {
-    edges: { NE: 'ocean', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'ocean', NW: 'ocean' },
-    weight: 50,
-  },
-  [HexTileType.ROAD_A]: {
-    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 10,
-  },
-  [HexTileType.ROAD_B]: {
-    edges: { NE: 'road', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 8,
-  },
-  [HexTileType.ROAD_C]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'road' },
-    weight: 1,
-  },
-  [HexTileType.ROAD_D]: {
-    edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 2,
-  },
-  [HexTileType.ROAD_E]: {
-    edges: { NE: 'road', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 2,
-  },
-  [HexTileType.ROAD_F]: {
-    edges: { NE: 'grass', E: 'road', SE: 'road', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 2,
-  },
-  [HexTileType.ROAD_G]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'road', W: 'road', NW: 'road' },
-    weight: 2,
-  },
-  [HexTileType.ROAD_H]: {
-    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'road', W: 'road', NW: 'road' },
-    weight: 2,
-  },
-  [HexTileType.ROAD_I]: {
-    edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'road', W: 'grass', NW: 'road' },
-    weight: 2,
-  },
-  [HexTileType.ROAD_J]: {
-    edges: { NE: 'grass', E: 'road', SE: 'road', SW: 'road', W: 'road', NW: 'grass' },
-    weight: 1,
-  },
-  [HexTileType.ROAD_K]: {
-    edges: { NE: 'road', E: 'grass', SE: 'road', SW: 'road', W: 'road', NW: 'road' },
-    weight: 1,
-  },
-  [HexTileType.ROAD_L]: {
-    edges: { NE: 'road', E: 'road', SE: 'road', SW: 'road', W: 'road', NW: 'road' },
-    weight: 1,
-  },
-  [HexTileType.ROAD_M]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 4,
-  },
-  [HexTileType.RIVER_A]: {
-    edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 20,
-  },
-  [HexTileType.RIVER_A_CURVY]: {
-    edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 20,
-  },
-  [HexTileType.RIVER_B]: {
-    edges: { NE: 'river', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 60,
-  },
-  [HexTileType.RIVER_C]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'river' },
-    weight: 8,
-  },
-  [HexTileType.RIVER_D]: {
-    edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 4,
-  },
-  [HexTileType.RIVER_E]: {
-    edges: { NE: 'river', E: 'river', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 4,
-  },
-  [HexTileType.RIVER_F]: {
-    edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 4,
-  },
-  [HexTileType.RIVER_G]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'river', W: 'river', NW: 'river' },
-    weight: 4,
-  },
-  [HexTileType.RIVER_H]: {
-    edges: { NE: 'grass', E: 'river', SE: 'grass', SW: 'river', W: 'river', NW: 'river' },
-    weight: 2,
-  },
-  [HexTileType.RIVER_I]: {
-    edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'grass', NW: 'river' },
-    weight: 2,
-  },
-  [HexTileType.RIVER_J]: {
-    edges: { NE: 'grass', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'grass' },
-    weight: 2,
-  },
-  [HexTileType.RIVER_K]: {
-    edges: { NE: 'river', E: 'grass', SE: 'river', SW: 'river', W: 'river', NW: 'river' },
-    weight: 2,
-  },
-  [HexTileType.RIVER_L]: {
-    edges: { NE: 'river', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'river' },
-    weight: 2,
-  },
-  [HexTileType.RIVER_M]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-    weight: 8,
-  },
-  [HexTileType.COAST_A]: {
-    edges: { NE: 'grass', E: 'coast', SE: 'ocean', SW: 'coast', W: 'grass', NW: 'grass' },
-    weight: 20,
-  },
-  [HexTileType.COAST_B]: {
-    edges: { NE: 'grass', E: 'coast', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'grass' },
-    weight: 15,
-  },
-  [HexTileType.COAST_C]: {
-    edges: { NE: 'coast', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'grass' },
-    weight: 15,
-  },
-  [HexTileType.COAST_D]: {
-    edges: { NE: 'ocean', E: 'ocean', SE: 'ocean', SW: 'ocean', W: 'coast', NW: 'coast' },
-    weight: 15,
-  },
-  [HexTileType.COAST_E]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'coast', SW: 'coast', W: 'grass', NW: 'grass' },
-    weight: 10,
-  },
-  [HexTileType.RIVER_CROSSING_A]: {
-    edges: { NE: 'grass', E: 'river', SE: 'road', SW: 'grass', W: 'river', NW: 'road' },
-    weight: 4,
-  },
-  [HexTileType.RIVER_CROSSING_B]: {
-    edges: { NE: 'road', E: 'river', SE: 'grass', SW: 'road', W: 'river', NW: 'grass' },
-    weight: 4,
-  },
-  [HexTileType.GRASS_SLOPE_HIGH]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 100,
-    highEdges: ['NE', 'E', 'SE'],
-    levelIncrement: 2,
-  },
-  [HexTileType.ROAD_A_SLOPE_HIGH]: {
-    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 60,
-    highEdges: ['NE', 'E', 'SE'],
-    levelIncrement: 2,
-  },
-  [HexTileType.GRASS_CLIFF]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 30,
-    highEdges: ['NE', 'E', 'SE'],
-    levelIncrement: 2,
-  },
-  [HexTileType.GRASS_CLIFF_B]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 30,
-    highEdges: ['NE', 'E', 'SE', 'SW'],
-    levelIncrement: 2,
-  },
-  [HexTileType.GRASS_CLIFF_C]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 30,
-    highEdges: ['E'],
-    levelIncrement: 2,
-  },
-  [HexTileType.GRASS_SLOPE_LOW]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 100,
-    highEdges: ['NE', 'E', 'SE'],
-    levelIncrement: 1,
-  },
-  [HexTileType.ROAD_A_SLOPE_LOW]: {
-    edges: { NE: 'grass', E: 'road', SE: 'grass', SW: 'grass', W: 'road', NW: 'grass' },
-    weight: 60,
-    highEdges: ['NE', 'E', 'SE'],
-    levelIncrement: 1,
-  },
-  [HexTileType.GRASS_CLIFF_LOW]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 30,
-    highEdges: ['NE', 'E', 'SE'],
-    levelIncrement: 1,
-  },
-  [HexTileType.GRASS_CLIFF_LOW_B]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 30,
-    highEdges: ['NE', 'E', 'SE', 'SW'],
-    levelIncrement: 1,
-  },
-  [HexTileType.GRASS_CLIFF_LOW_C]: {
-    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'grass', NW: 'grass' },
-    weight: 30,
-    highEdges: ['E'],
-    levelIncrement: 1,
-  },
-}
-
-/**
- * Tile types to include in WFC - THE MASTER LIST
- */
-export const TILE_LIST = new Set([
-  // Base
-  HexTileType.GRASS,
-  // Roads
-  HexTileType.ROAD_A,
-  HexTileType.ROAD_B,
-  HexTileType.ROAD_D,
-  HexTileType.ROAD_E,
-  HexTileType.ROAD_F,
-  HexTileType.ROAD_H,
-  HexTileType.ROAD_J,
-  HexTileType.ROAD_M,
-  // Rivers
-  HexTileType.RIVER_A,
-  HexTileType.RIVER_A_CURVY,
-  HexTileType.RIVER_B,
-  HexTileType.RIVER_D,
-  HexTileType.RIVER_E,
-  HexTileType.RIVER_F,
-  HexTileType.RIVER_G,
-  HexTileType.RIVER_H,
-  // Crossings
-  HexTileType.RIVER_CROSSING_A,
-  HexTileType.RIVER_CROSSING_B,
-  // Coasts & Water
-  HexTileType.WATER,
-  HexTileType.COAST_A,
-  HexTileType.COAST_B,
-  HexTileType.COAST_C,
-  HexTileType.COAST_D,
-  HexTileType.COAST_E,
-  // High slopes
-  HexTileType.GRASS_SLOPE_HIGH,
-  HexTileType.ROAD_A_SLOPE_HIGH,
-  HexTileType.GRASS_CLIFF,
-  HexTileType.GRASS_CLIFF_B,
-  HexTileType.GRASS_CLIFF_C,
-  // Low slopes
-  HexTileType.GRASS_SLOPE_LOW,
-  HexTileType.ROAD_A_SLOPE_LOW,
-  HexTileType.GRASS_CLIFF_LOW,
-  HexTileType.GRASS_CLIFF_LOW_B,
-  HexTileType.GRASS_CLIFF_LOW_C,
-])

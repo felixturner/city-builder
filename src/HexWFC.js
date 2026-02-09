@@ -1,6 +1,6 @@
 import {
-  HexTileDefinitions,
-  HexTileType,
+  TILE_LIST,
+  TileType,
   HexDir,
   HexOpposite,
   getHexNeighborOffset,
@@ -38,7 +38,7 @@ export const highEdgeCache = new Map()
  * Uses levelIncrement from tile definition (default 1)
  */
 export function getEdgeLevel(tileType, rotation, dir, baseLevel) {
-  const def = HexTileDefinitions[tileType]
+  const def = TILE_LIST[tileType]
   if (!def || !def.highEdges) {
     // Non-slope tile: all edges at base level
     return baseLevel
@@ -124,7 +124,7 @@ export class HexWFCAdjacencyRules {
   }
 
   /**
-   * Build adjacency rules from HexTileDefinitions
+   * Build adjacency rules from TILE_LIST
    * Two tiles are compatible if their edge types AND levels match
    * Only builds byEdge index - propagation uses this directly (O(n) instead of O(n²))
    * @param {number[]} tileTypes - Tile types to include
@@ -133,12 +133,12 @@ export class HexWFCAdjacencyRules {
     const rules = new HexWFCAdjacencyRules()
 
     // Use provided tile types or all defined types
-    const types = tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
+    const types = tileTypes ?? TILE_LIST.map((_, i) => i)
 
     // Generate all (type, rotation, level) combinations
     const allStates = []
     for (const type of types) {
-      const def = HexTileDefinitions[type]
+      const def = TILE_LIST[type]
       if (!def) continue
 
       const isSlope = def.highEdges && def.highEdges.length > 0
@@ -166,7 +166,7 @@ export class HexWFCAdjacencyRules {
     // stateEdges: stateKey → { dir: { type, level } }
     for (const state of allStates) {
       const stateKey = HexWFCCell.stateKey(state)
-      const edges = rotateHexEdges(HexTileDefinitions[state.type].edges, state.rotation)
+      const edges = rotateHexEdges(TILE_LIST[state.type].edges, state.rotation)
       const stateEdgeInfo = {}
 
       for (const dir of HexDir) {
@@ -239,6 +239,7 @@ export class HexWFCSolver {
     this.restartCount = 0
     this.collapseOrder = []  // Track order of tile placements for visualization
     this.lastContradiction = null  // Track last contradiction for debugging
+    this.seedingContradiction = null  // Only seeding failures (not mid-solve noise)
   }
 
   /**
@@ -264,12 +265,12 @@ export class HexWFCSolver {
   init() {
     this.collapseOrder = []  // Reset on each attempt
     // Get tile types to use
-    const types = this.options.tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
+    const types = this.options.tileTypes ?? TILE_LIST.map((_, i) => i)
 
     // Generate all states (type × 6 rotations × levels)
     const allStates = []
     for (const type of types) {
-      const def = HexTileDefinitions[type]
+      const def = TILE_LIST[type]
       if (!def) continue
 
       const isSlope = def.highEdges && def.highEdges.length > 0
@@ -387,7 +388,7 @@ export class HexWFCSolver {
       const state = HexWFCCell.parseKey(key)
       // Use custom weight or default from tile definition
       const customWeight = this.options.weights[state.type]
-      const defaultWeight = HexTileDefinitions[state.type]?.weight ?? 1
+      const defaultWeight = TILE_LIST[state.type]?.weight ?? 1
       return customWeight ?? defaultWeight
     })
     const totalWeight = weights.reduce((a, b) => a + b, 0)
@@ -485,7 +486,7 @@ export class HexWFCSolver {
             // What was allowed before this step removed everything
             lastAllowed: [...allowedInNeighbor].slice(0, 10).map(k => {
               const s = HexWFCCell.parseKey(k)
-              const name = Object.entries(HexTileType).find(([, v]) => v === s.type)?.[0] || s.type
+              const name = TILE_LIST[s.type]?.name || s.type
               return `${name} r${s.rotation} l${s.level}`
             })
           }
@@ -527,9 +528,10 @@ export class HexWFCSolver {
     }
     // Propagate seed constraints
     if (seedTiles.length > 0 && !this.propagate()) {
-      const getTileName = (type) => Object.entries(HexTileType).find(([, v]) => v === type)?.[0] || type
+      this.seedingContradiction = this.lastContradiction
+      const getTileName = (type) => TILE_LIST[type]?.name || type
       this.options.log('WFC failed - propagation failed after seeding', 'color: red')
-      if (this.lastContradiction) {
+      if (this.seedingContradiction) {
         const c = this.lastContradiction
         const failG = this.toGlobalCoords(c.failedX, c.failedZ)
         this.options.log(`  FAILED CELL: (${failG.col},${failG.row})`, 'color: red')

@@ -5,8 +5,7 @@
 
 // Import from pure data module (no browser dependencies)
 import {
-  HexTileType,
-  HexTileDefinitions,
+  TILE_LIST,
   HexDir,
   HexOpposite,
   getHexNeighborOffset,
@@ -45,7 +44,7 @@ const highEdgeCache = new Map()
  * Slopes have different levels on high vs low edges
  */
 function getEdgeLevel(tileType, rotation, dir, baseLevel) {
-  const def = HexTileDefinitions[tileType]
+  const def = TILE_LIST[tileType]
   if (!def || !def.highEdges) {
     return baseLevel
   }
@@ -117,11 +116,11 @@ class HexWFCAdjacencyRules {
 
   static fromTileDefinitions(tileTypes = null) {
     const rules = new HexWFCAdjacencyRules()
-    const types = tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
+    const types = tileTypes ?? TILE_LIST.map((_, i) => i)
 
     const allStates = []
     for (const type of types) {
-      const def = HexTileDefinitions[type]
+      const def = TILE_LIST[type]
       if (!def) continue
 
       const isSlope = def.highEdges && def.highEdges.length > 0
@@ -143,7 +142,7 @@ class HexWFCAdjacencyRules {
 
     for (const state of allStates) {
       const stateKey = HexWFCCell.stateKey(state)
-      const edges = rotateHexEdges(HexTileDefinitions[state.type].edges, state.rotation)
+      const edges = rotateHexEdges(TILE_LIST[state.type].edges, state.rotation)
       const stateEdgeInfo = {}
 
       for (const dir of HexDir) {
@@ -194,6 +193,7 @@ class HexWFCSolver {
     this.propagationStack = []
     this.restartCount = 0
     this.lastContradiction = null
+    this.seedingContradiction = null
     this.collapseOrder = []
   }
 
@@ -215,11 +215,11 @@ class HexWFCSolver {
 
   init() {
     this.collapseOrder = []
-    const types = this.options.tileTypes ?? Object.keys(HexTileDefinitions).map(Number)
+    const types = this.options.tileTypes ?? TILE_LIST.map((_, i) => i)
 
     const allStates = []
     for (const type of types) {
-      const def = HexTileDefinitions[type]
+      const def = TILE_LIST[type]
       if (!def) continue
 
       const isSlope = def.highEdges && def.highEdges.length > 0
@@ -307,7 +307,7 @@ class HexWFCSolver {
     const weights = possArray.map(key => {
       const state = HexWFCCell.parseKey(key)
       const customWeight = this.options.weights[state.type]
-      const defaultWeight = HexTileDefinitions[state.type]?.weight ?? 1
+      const defaultWeight = TILE_LIST[state.type]?.weight ?? 1
       return customWeight ?? defaultWeight
     })
     const totalWeight = weights.reduce((a, b) => a + b, 0)
@@ -384,7 +384,7 @@ class HexWFCSolver {
             }))],
             lastAllowed: [...allowedInNeighbor].slice(0, 10).map(k => {
               const s = HexWFCCell.parseKey(k)
-              const name = Object.entries(HexTileType).find(([, v]) => v === s.type)?.[0] || s.type
+              const name = TILE_LIST[s.type]?.name || s.type
               return `${name} r${s.rotation} l${s.level}`
             })
           }
@@ -414,7 +414,7 @@ class HexWFCSolver {
 
         // Validate that this state exists in the rules
         if (!this.rules.stateEdges.has(stateKey)) {
-          const tileName = Object.entries(HexTileType).find(([,v]) => v === state.type)?.[0] || state.type
+          const tileName = TILE_LIST[state.type]?.name || state.type
           this.log(`  WARNING: Seed state "${stateKey}" (${tileName} r${state.rotation} l${state.level}) not in rules!`)
         }
 
@@ -425,8 +425,9 @@ class HexWFCSolver {
     }
 
     if (seedTiles.length > 0 && !this.propagate()) {
+      this.seedingContradiction = this.lastContradiction
       this.log('WFC failed - propagation failed after seeding')
-      if (this.lastContradiction) {
+      if (this.seedingContradiction) {
         const c = this.lastContradiction
         const failG = this.toGlobalCoords(c.failedX, c.failedZ)
         this.log(`  FAILED CELL: (${failG.col},${failG.row})`)
@@ -440,7 +441,7 @@ class HexWFCSolver {
           const neighbor = this.grid[nx]?.[nz]
           if (neighbor && neighbor.collapsed) {
             const neighborState = HexWFCCell.parseKey([...neighbor.possibilities][0])
-            const neighborName = Object.entries(HexTileType).find(([,v]) => v === neighborState.type)?.[0] || neighborState.type
+            const neighborName = TILE_LIST[neighborState.type]?.name || neighborState.type
             const oppositeDir = HexOpposite[dir]
 
             // Try stateEdges first, fallback to computing directly from tile definition
@@ -449,7 +450,7 @@ class HexWFCSolver {
 
             if (!requiredEdge) {
               // Compute edge directly from tile definition
-              const def = HexTileDefinitions[neighborState.type]
+              const def = TILE_LIST[neighborState.type]
               if (def) {
                 const rotatedEdges = rotateHexEdges(def.edges, neighborState.rotation)
                 const edgeType = rotatedEdges[oppositeDir]
@@ -542,7 +543,7 @@ self.onmessage = function(e) {
 
     const result = solver.solve(seeds, options?.gridId)
     const collapseOrder = solver.collapseOrder || []
-    const lastContradiction = solver.lastContradiction
+    const seedingContradiction = solver.seedingContradiction
 
     self.postMessage({
       type: 'result',
@@ -550,7 +551,7 @@ self.onmessage = function(e) {
       success: result !== null,
       tiles: result,
       collapseOrder,
-      lastContradiction
+      seedingContradiction
     })
   }
 }

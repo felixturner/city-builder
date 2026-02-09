@@ -16,7 +16,7 @@ import { random } from './SeededRandom.js'
 import { log } from './Demo.js'
 import { Sounds } from './lib/Sounds.js'
 import {
-  HexTileType,
+  TileType,
   HexDir,
   getHexNeighborOffset,
   TILE_LIST,
@@ -389,7 +389,7 @@ export class HexGrid {
     if (adjustedSeeds.length === 0) {
       const centerX = Math.floor(wfcSize / 2)
       const centerZ = Math.floor(wfcSize / 2)
-      adjustedSeeds.push({ x: centerX, z: centerZ, type: HexTileType.GRASS, rotation: 0, level: 0 })
+      adjustedSeeds.push({ x: centerX, z: centerZ, type: TileType.GRASS, rotation: 0, level: 0 })
     }
 
     // Optionally seed water edge (on internal grid, not padding)
@@ -434,8 +434,8 @@ export class HexGrid {
         if (workerResult.success) {
           return { success: true, tiles: workerResult.tiles, collapseOrder: workerResult.collapseOrder || [] }
         }
-        if (workerResult.lastContradiction) {
-          const { failedX, failedZ } = workerResult.lastContradiction
+        if (workerResult.seedingContradiction) {
+          const { failedX, failedZ } = workerResult.seedingContradiction
           const failedGlobal = toGlobalCoords(failedX, failedZ)
           onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
         }
@@ -446,8 +446,8 @@ export class HexGrid {
         if (tiles) {
           return { success: true, tiles, collapseOrder: solver.collapseOrder }
         }
-        if (solver.lastContradiction) {
-          const { failedX, failedZ } = solver.lastContradiction
+        if (solver.seedingContradiction) {
+          const { failedX, failedZ } = solver.seedingContradiction
           const failedGlobal = toGlobalCoords(failedX, failedZ)
           onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
         }
@@ -607,7 +607,7 @@ export class HexGrid {
    * Get default tile types for WFC
    */
   getDefaultTileTypes() {
-    return [...TILE_LIST]
+    return TILE_LIST.map((_, i) => i)
   }
 
   /**
@@ -647,7 +647,7 @@ export class HexGrid {
 
         if (edgeIndex === selectedEdge) {
           // Add padding offset for WFC grid coordinates
-          seedTiles.push({ x: col + padding, z: row + padding, type: HexTileType.WATER, rotation: 0, level: 0 })
+          seedTiles.push({ x: col + padding, z: row + padding, type: TileType.WATER, rotation: 0, level: 0 })
         }
       }
     }

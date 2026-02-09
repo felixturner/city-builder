@@ -1,5 +1,5 @@
 import { Object3D, BatchedMesh, Color } from 'three/webgpu'
-import { HexTileType, HexTileDefinitions } from './HexTileData.js'
+import { TILE_LIST, TileType } from './HexTileData.js'
 import { HexTileGeometry } from './HexTiles.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 import { random } from './SeededRandom.js'
@@ -38,7 +38,7 @@ export function getTreeThreshold() {
 
 // Check if a tile type has any road edges
 function hasRoadEdge(tileType) {
-  const def = HexTileDefinitions[tileType]
+  const def = TILE_LIST[tileType]
   if (!def) return false
   return Object.values(def.edges).some(edge => edge === 'road')
 }
@@ -46,7 +46,7 @@ function hasRoadEdge(tileType) {
 // Check if a tile is a road dead-end (exactly 1 road edge) and return the exit direction
 // Returns { isDeadEnd: true, exitDir } or { isDeadEnd: false }
 function getRoadDeadEndInfo(tileType, rotation) {
-  const def = HexTileDefinitions[tileType]
+  const def = TILE_LIST[tileType]
   if (!def) return { isDeadEnd: false }
 
   // Count road edges and find the exit direction
@@ -257,7 +257,7 @@ export class Decorations {
 
     for (const tile of hexTiles) {
       // Only flat grass tiles (not slopes)
-      if (tile.type !== HexTileType.GRASS) continue
+      if (tile.type !== TileType.GRASS) continue
 
       // Get local position (relative to grid group)
       const localPos = HexTileGeometry.getWorldPosition(
@@ -360,7 +360,7 @@ export class Decorations {
       }
 
       // Only consider grass tiles for road-adjacent placement
-      if (tile.type !== HexTileType.GRASS) continue
+      if (tile.type !== TileType.GRASS) continue
 
       // Check if any neighbor has a road, track direction to road
       // Building front is S (+Z), so angle rotates front to face the road
@@ -442,11 +442,11 @@ export class Decorations {
 
     for (const tile of hexTiles) {
       // Only river crossing tiles
-      if (tile.type !== HexTileType.RIVER_CROSSING_A &&
-          tile.type !== HexTileType.RIVER_CROSSING_B) continue
+      if (tile.type !== TileType.RIVER_CROSSING_A &&
+          tile.type !== TileType.RIVER_CROSSING_B) continue
 
       // Pick matching bridge mesh
-      const meshName = tile.type === HexTileType.RIVER_CROSSING_A
+      const meshName = tile.type === TileType.RIVER_CROSSING_A
         ? 'building_bridge_A'
         : 'building_bridge_B'
 
