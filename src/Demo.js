@@ -92,14 +92,17 @@ export class Demo {
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
-    const seed = Math.floor(Math.random() * 1000000)
+    const seed = 351921 // Math.floor(Math.random() * 1000000)
     setSeed(seed)
+    this.seed = seed
 
     this.initCamera()
     this.initPostProcessing()
     this.initStats()
     this.initCSSRenderer()
     this.initStatusOverlay()
+
+    this.seedElement.textContent = `seed: ${seed}`
 
     this.onResize()
     this.pointerHandler = new Pointer(
@@ -301,6 +304,21 @@ export class Demo {
       z-index: 1000;
     `
     document.body.appendChild(this.statusElement)
+
+    // Seed display (bottom-right)
+    this.seedElement = document.createElement('div')
+    this.seedElement.style.cssText = `
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      color: white;
+      font-family: monospace;
+      font-size: 12px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+      pointer-events: none;
+      z-index: 1000;
+    `
+    document.body.appendChild(this.seedElement)
   }
 
   onResize(_e, toSize) {

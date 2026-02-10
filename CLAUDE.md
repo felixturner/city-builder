@@ -48,14 +48,13 @@ a hex map builder toy
 - add better skybox - styormy skies
 - make tile hex edges less deep/visible in blender?
 - Update to latest threejs
-- Consider switching to global cell coords - Avoid world position math for coordinate conversion. Offset coords have stagger issues; cube/axial coords are linear and additive. See Red Blob Games article.
 - add dec to hide road/river discontuities? Add a big house/watermill?
 
 
 ### Debug Label Colors
 - Purple = WFC failed cell (0 possibilities)
-- Orange = Replaced seed
-- Red = Dropped seed
+- Orange = Replaced fixed cell
+- Red = Dropped fixed cell
 
 ## WFC (Wave Function Collapse) Implementation
 
@@ -71,31 +70,22 @@ a hex map builder toy
 - Compatibility: edges must match type AND level (except grass which allows any level)
 - Slopes have `highEdges` array - edges facing uphill have `baseLevel + levelIncrement`
 
-### Multi-Grid Seeding
-When expanding to adjacent grids:
-1. Extract edge tiles from populated neighbor via `HexGridConnector.getNeighborSeeds()`
-2. Transform coordinates: offset → cube → global cube → new grid local → offset
-3. Pass seeds to new grid's WFC solver to constrain edge tiles
-4. Result: seamless edge matching between grids
-
-### Conflict Resolution (3 phases)
-1. Adjacent Seed Conflicts: Seeds from different grids placed next to each other with incompatible edges
-   - Detection: `filterConflictingSeeds()` checks edge compatibility, returns `{ validSeeds, conflicts }`
-   - Resolution: `findReplacementTiles()` searches for alternative tile in source grid that preserves its neighbors but presents compatible edge toward conflict
-
-2. Multi-Seed Cell Conflicts: Cell adjacent to 2+ seeds with mutually incompatible requirements
-   - Detection: `validateSeedConflicts()` pre-validates before WFC
-   - Resolution: Try replacement, drop seed if no replacement found
-
-3. WFC Failure Recovery: When propagation creates contradiction mid-solve
-   - Detection: Cell has 0 possibilities, `lastContradiction` stores failure info
-   - Resolution: `findAdjacentSeeds()` identifies problematic seed, remove and retry (graduated retry, max 10 attempts)
+### Multi-Grid Expansion (Global Cell Map)
+All solved tiles are stored in a global `Map<cubeKey, cell>` (`HexMap.globalCells`). When expanding to a new grid:
+1. Generate solve cells via `cubeCoordsInRadius(center, radius)`
+2. Find fixed cells: check 6 cube neighbors of each solve cell in `globalCells`
+3. Pre-WFC: filter adjacent fixed cell conflicts (`filterConflictingFixedCells`)
+4. Pre-WFC: validate multi-fixed-cell conflicts (`validateFixedCellConflicts`)
+5. Phase 0: Initial WFC attempt with validated fixed cells
+6. Phase 1: On failure, replace fixed cells adjacent to failed cell (`tryReplaceFixedCell` + `findReplacementTilesForCell`), re-run WFC
+7. Phase 2: Drop fixed cells one by one, re-run WFC
+8. On success: add results to `globalCells`, render via `grid.populateFromCubeResults()`
 
 ### Key Optimizations
 - 3D byEdge index: O(1) lookup for compatible tiles by `edgeType → dir → level`
 - Precomputed neighbors: Cached at init, includes return direction
 - High edge caching: Avoid repeated rotation calculations
-- Web Worker: WFC solver runs in worker thread (HexWFCWorker.js) for non-blocking UI
+- Web Worker: WFC solver runs in worker thread (wfc.worker.js) for non-blocking UI
 
 ## Naming Conventions
 
@@ -106,7 +96,8 @@ When expanding to adjacent grids:
 - GridPlaceholder - Clickable hexagonal button to expand into adjacent grid slot
 - Cell - A position in the grid that can hold a Tile (the small hexes within a HexGrid)
 - Tile - The actual mesh placed in a Cell (class: `HexTile` in `src/HexTiles.js`)
-- Seed - A tile from a neighboring grid brought into this grid's WFC solve to ensure edge matching across grids
+- Fixed Cell - A solved tile from a neighboring grid used as a read-only constraint during WFC solve
+- RNG Seed - The number that initializes the random number generator (randomized or hard-coded at startup, global)
 
 
 ## Coordinate Systems
@@ -135,15 +126,17 @@ When expanding to adjacent grids:
 ### Hex Coordinate Systems
 Two coordinate systems are used:
 
+Cube/Axial Coordinates (q, r, s where s = -q-r) — PRIMARY
+- Three axes at 60° angles, constraint: q + r + s = 0
+- Used for: WFC solver, global cell map, cross-grid references, distance/neighbor calculations
+- Hex distance = max(|q|, |r|, |s|)
+- Neighbors: simple addition via CUBE_DIRS (no row parity needed)
+- Shared utilities in `HexWFCCore.js`: cubeKey, parseCubeKey, cubeCoordsInRadius, cubeDistance
+
 Offset Coordinates (col, row)
 - Simple 2D array indexing
-- Best for: storage, iteration, array access, rendering positions
+- Used for: rendering positions, local grid tile placement
 - Row parity affects neighbor calculations (odd vs even rows have different neighbor offsets)
-
-Cube/Axial Coordinates (q, r, s where s = -q-r)
-- Three axes at 60° angles, constraint: q + r + s = 0
-- Best for: distance calculations, rotations, symmetry operations, hex math
-- Hex distance = max(|q|, |r|, |s|)
 
 Conversion (pointy-top odd-row offset):
 - Offset → Axial: `q = col - floor(row/2)`, `r = row`

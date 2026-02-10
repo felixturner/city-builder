@@ -10,9 +10,9 @@ import {
 import WFCWorker from './workers/wfc.worker.js?worker'
 import { uniform, varyingProperty, materialColor, vec3 } from 'three/tsl'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
-import { HexWFCAdjacencyRules, edgesCompatible, getEdgeLevel } from './HexWFCCore.js'
+import { HexWFCAdjacencyRules, HexWFCCell, CUBE_DIRS, cubeKey, parseCubeKey, cubeCoordsInRadius, cubeDistance, offsetToCube, cubeToOffset, localToGlobalCoords, edgesCompatible, getEdgeLevel } from './HexWFCCore.js'
 import { setStatus } from './Demo.js'
-import { TILE_LIST, TileType, HexDir, HexOpposite, getHexNeighborOffset, rotateHexEdges } from './HexTileData.js'
+import { TILE_LIST, TileType, HexDir, HexOpposite, rotateHexEdges, LEVELS_COUNT } from './HexTileData.js'
 import { HexTile, HexTileGeometry, isInHexRadius } from './HexTiles.js'
 import { HexGrid, HexGridState } from './HexGrid.js'
 import {
@@ -21,18 +21,11 @@ import {
   parseGridKey,
   getAdjacentGridKey,
   getGridWorldOffset,
-  getNeighborSeeds,
-  getOppositeDirection,
-  filterConflictingSeeds,
-  validateSeedConflicts,
-  findReplacementTiles,
   worldOffsetToGlobalCube,
-  offsetToCube,
-  cubeToOffset,
-  localToGlobalCoords,
 } from './HexGridConnector.js'
 import { Demo } from './Demo.js'
 import { initGlobalTreeNoise } from './Decorations.js'
+import { random, getSeed } from './SeededRandom.js'
 
 /**
  * HexMap - Manages the entire world of multiple HexGrid instances
@@ -65,14 +58,17 @@ export class HexMap {
     this.envRotation = uniform(0)
     this.envRotationX = uniform(0)
 
+    // Global cell map — all collapsed cells across all grids
+    // key: "q,r,s" cube coords, value: { q, r, s, type, rotation, level, gridKey }
+    this.globalCells = new Map()
+
     // Debug tile labels
     this.tileLabels = new Object3D()
     this.tileLabels.visible = false
     this.tileLabelMode = 'coords'
-    this.droppedSeeds = new Set()  // Track global coords of dropped seeds for label highlighting
     this.failedCells = new Set()   // Track global coords of cells that caused WFC failures
-    this.replacedSeeds = new Set() // Track global coords of replaced seeds for label highlighting
-    this.seedStats = { dropped: {}, replaced: {} } // Running tally by tile name
+    this.replacedCells = new Set() // Track global coords of replaced fixed cells (orange labels)
+    this.droppedCells = new Set()  // Track global coords of dropped fixed cells (red labels)
 
     // Interaction
     this.raycaster = new Raycaster()
@@ -171,9 +167,7 @@ export class HexMap {
     const { type, id, message, success, tiles, collapseOrder } = e.data
 
     if (type === 'log') {
-      // Stream log to status bar
-      console.log('[WFC Worker]', message)
-      setStatus(message)
+      // Worker logs handled by populateGrid status updates
     } else if (type === 'result') {
       // Resolve pending promise by ID
       const resolve = this.wfcPendingResolvers.get(id)
@@ -186,13 +180,15 @@ export class HexMap {
   }
 
   /**
-   * Solve WFC using Web Worker (async)
-   * Returns promise that resolves with { success, tiles, collapseOrder }
+   * Solve WFC using Web Worker (async, cube-coordinate based)
+   * @param {Array} solveCells - [{q,r,s}] cells to solve
+   * @param {Array} fixedCells - [{q,r,s,type,rotation,level}] collapsed neighbor constraints
+   * @param {Object} options - WFC options (seed, tileTypes, weights, initialCollapses, etc.)
+   * @returns {Promise<{success, tiles, collapseOrder}>}
    */
-  solveWfcAsync(width, height, seeds, options) {
+  solveWfcAsync(solveCells, fixedCells, options) {
     return new Promise((resolve) => {
       if (!this.wfcWorker) {
-        // No worker available, resolve with null to trigger fallback
         resolve({ success: false, tiles: null, collapseOrder: [] })
         return
       }
@@ -201,7 +197,7 @@ export class HexMap {
 
       // Set up timeout (10 seconds)
       const timeout = setTimeout(() => {
-        console.warn('WFC worker timeout, falling back to sync')
+        console.warn('WFC worker timeout')
         if (this.wfcPendingResolvers.has(id)) {
           this.wfcPendingResolvers.get(id)({ success: false, tiles: null, collapseOrder: [] })
           this.wfcPendingResolvers.delete(id)
@@ -217,12 +213,402 @@ export class HexMap {
       this.wfcWorker.postMessage({
         type: 'solve',
         id,
-        width,
-        height,
-        seeds,
+        solveCells,
+        fixedCells,
         options
       })
     })
+  }
+
+  /**
+   * Add solved tiles to the global cell map
+   * @param {string} gridKey - Grid key for tracking
+   * @param {Array} tiles - [{q,r,s,type,rotation,level}] solved tiles
+   */
+  addToGlobalCells(gridKey, tiles) {
+    for (const tile of tiles) {
+      const key = cubeKey(tile.q, tile.r, tile.s)
+      this.globalCells.set(key, {
+        q: tile.q, r: tile.r, s: tile.s,
+        type: tile.type, rotation: tile.rotation, level: tile.level,
+        gridKey
+      })
+    }
+  }
+
+  /**
+   * Get fixed cells (collapsed neighbors) for a set of solve cells
+   * Checks 6 cube neighbors of each solve cell in globalCells
+   * @param {Array} solveCells - [{q,r,s}] cells to solve
+   * @returns {Array} [{q,r,s,type,rotation,level}] unique fixed cells
+   */
+  getFixedCellsForRegion(solveCells) {
+    const solveSet = new Set(solveCells.map(c => cubeKey(c.q, c.r, c.s)))
+    const fixedMap = new Map()
+
+    for (const { q, r, s } of solveCells) {
+      for (const dir of CUBE_DIRS) {
+        const nq = q + dir.dq
+        const nr = r + dir.dr
+        const ns = s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+
+        // Skip if this neighbor is also a solve cell
+        if (solveSet.has(nKey)) continue
+        // Skip if already added
+        if (fixedMap.has(nKey)) continue
+
+        const existing = this.globalCells.get(nKey)
+        if (existing) {
+          fixedMap.set(nKey, {
+            q: nq, r: nr, s: ns,
+            type: existing.type, rotation: existing.rotation, level: existing.level
+          })
+        }
+      }
+    }
+
+    return [...fixedMap.values()]
+  }
+
+  /**
+   * Find replacement tiles for a fixed cell that preserve compatibility with its neighbors in globalCells
+   * Adapted from old findReplacementTiles() — uses globalCells instead of source grid hexGrid array
+   * @param {number} q - Cell cube q
+   * @param {number} r - Cell cube r
+   * @param {number} s - Cell cube s
+   * @param {number} currentType - Current tile type
+   * @param {number} currentRotation - Current rotation
+   * @param {number} currentLevel - Current level
+   * @returns {Array} Shuffled replacement candidates [{ type, rotation, level }]
+   */
+  findReplacementTilesForCell(q, r, s, currentType, currentRotation, currentLevel) {
+    // Find which edges connect to actual neighbors in globalCells
+    // These edges are "locked" — replacement must match them
+    const lockedEdges = {} // dir -> { type, level }
+    for (let i = 0; i < 6; i++) {
+      const dir = CUBE_DIRS[i]
+      const nq = q + dir.dq
+      const nr = r + dir.dr
+      const ns = s + dir.ds
+      const nKey = cubeKey(nq, nr, ns)
+      const neighbor = this.globalCells.get(nKey)
+
+      if (neighbor) {
+        // Read the NEIGHBOR's edge facing back toward us
+        const neighborDef = TILE_LIST[neighbor.type]
+        if (!neighborDef) continue
+        const neighborEdges = rotateHexEdges(neighborDef.edges, neighbor.rotation)
+        const oppositeDir = HexOpposite[HexDir[i]]
+        const neighborEdgeType = neighborEdges[oppositeDir]
+        const neighborEdgeLevel = getEdgeLevel(neighbor.type, neighbor.rotation, oppositeDir, neighbor.level ?? 0)
+
+        // Lock this edge to match what neighbor requires
+        if (neighborEdgeType === 'grass') {
+          lockedEdges[HexDir[i]] = { type: neighborEdgeType, level: null }  // null = any level OK
+        } else {
+          lockedEdges[HexDir[i]] = { type: neighborEdgeType, level: neighborEdgeLevel }
+        }
+      }
+    }
+
+    // Search active tile types and rotations for replacements
+    const candidates = []
+
+    for (let tileType = 0; tileType < TILE_LIST.length; tileType++) {
+      const def = TILE_LIST[tileType]
+
+      // Skip same tile type entirely to avoid oscillation
+      if (tileType === currentType) continue
+
+      // Skip if currentLevel is invalid for this tile type
+      const isSlope = def.highEdges?.length > 0
+      if (isSlope) {
+        const increment = def.levelIncrement ?? 1
+        const maxBaseLevel = LEVELS_COUNT - 1 - increment
+        if (currentLevel > maxBaseLevel) continue
+      }
+
+      for (let rot = 0; rot < 6; rot++) {
+        const edges = rotateHexEdges(def.edges, rot)
+
+        // Check if this tile matches all locked edges
+        let matchesLocked = true
+        for (const [dir, required] of Object.entries(lockedEdges)) {
+          const edgeType = edges[dir]
+          const edgeLevel = getEdgeLevel(tileType, rot, dir, currentLevel)
+          // Type must match; level must match unless it's grass (null = any level OK)
+          if (edgeType !== required.type) {
+            matchesLocked = false
+            break
+          }
+          if (required.level !== null && edgeType !== 'grass' && edgeLevel !== required.level) {
+            matchesLocked = false
+            break
+          }
+        }
+
+        if (matchesLocked) {
+          candidates.push({ type: tileType, rotation: rot, level: currentLevel })
+        }
+      }
+    }
+
+    // Shuffle candidates to avoid bias toward early-defined tile types
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1))
+      ;[candidates[i], candidates[j]] = [candidates[j], candidates[i]]
+    }
+
+    return candidates
+  }
+
+  /**
+   * Filter fixed cells that conflict with each other (incompatible adjacent edges)
+   * Happens when fixed cells from different source grids end up adjacent
+   * @param {Array} fixedCells - [{q,r,s,type,rotation,level}]
+   * @returns {Object} { validCells, conflicts }
+   */
+  filterConflictingFixedCells(fixedCells) {
+    if (fixedCells.length <= 1) return { validCells: fixedCells, conflicts: [] }
+
+    const cellMap = new Map()
+    const validCells = []
+    const conflicts = []
+
+    for (const cell of fixedCells) {
+      const key = cubeKey(cell.q, cell.r, cell.s)
+
+      // Check adjacency with already-validated cells
+      let hasConflict = false
+      let conflictInfo = null
+      for (let i = 0; i < 6; i++) {
+        const dir = CUBE_DIRS[i]
+        const nq = cell.q + dir.dq
+        const nr = cell.r + dir.dr
+        const ns = cell.s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+        const neighborCell = cellMap.get(nKey)
+
+        if (neighborCell) {
+          const cellEdges = rotateHexEdges(TILE_LIST[cell.type]?.edges || {}, cell.rotation)
+          const neighborEdges = rotateHexEdges(TILE_LIST[neighborCell.type]?.edges || {}, neighborCell.rotation)
+
+          const cellEdge = cellEdges[HexDir[i]]
+          const neighborEdge = neighborEdges[HexOpposite[HexDir[i]]]
+
+          const cellEdgeLevel = getEdgeLevel(cell.type, cell.rotation, HexDir[i], cell.level ?? 0)
+          const neighborEdgeLevel = getEdgeLevel(neighborCell.type, neighborCell.rotation, HexOpposite[HexDir[i]], neighborCell.level ?? 0)
+
+          if (!edgesCompatible(cellEdge, cellEdgeLevel, neighborEdge, neighborEdgeLevel)) {
+            hasConflict = true
+            const reason = cellEdge !== neighborEdge ? 'edge type' : 'edge level'
+            conflictInfo = {
+              cell,
+              neighbor: neighborCell,
+              dir: HexDir[i],
+              cellEdge: `${cellEdge}@${cellEdgeLevel}`,
+              neighborEdge: `${neighborEdge}@${neighborEdgeLevel}`,
+              reason,
+            }
+            break
+          }
+        }
+      }
+
+      if (!hasConflict) {
+        validCells.push(cell)
+        cellMap.set(key, cell)
+      } else if (conflictInfo) {
+        conflictInfo.cellObj = cell
+        conflicts.push(conflictInfo)
+      }
+    }
+
+    return { validCells, conflicts }
+  }
+
+  /**
+   * Validate that fixed cells don't create unsolvable constraints for solve cells between them
+   * A conflict occurs when a solve cell is adjacent to 2+ fixed cells whose edge requirements
+   * can't be satisfied by any single tile.
+   * @param {Array} solveCells - [{q,r,s}] cells to solve
+   * @param {Array} fixedCells - [{q,r,s,type,rotation,level}] fixed constraints
+   * @returns {Object} { valid, conflicts }
+   */
+  validateFixedCellConflicts(solveCells, fixedCells) {
+    if (fixedCells.length <= 1) return { valid: true, conflicts: [] }
+
+    const fixedMap = new Map()
+    for (const fc of fixedCells) {
+      fixedMap.set(cubeKey(fc.q, fc.r, fc.s), fc)
+    }
+
+    const solveSet = new Set(solveCells.map(c => cubeKey(c.q, c.r, c.s)))
+
+    // Find all solve cells adjacent to 2+ fixed cells
+    const cellNeighbors = new Map() // cubeKey -> [{ fixedCell, dir }]
+    for (const fc of fixedCells) {
+      for (let i = 0; i < 6; i++) {
+        const dir = CUBE_DIRS[i]
+        const nq = fc.q + dir.dq
+        const nr = fc.r + dir.dr
+        const ns = fc.s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+
+        // Only check solve cells (not other fixed cells)
+        if (!solveSet.has(nKey)) continue
+        if (fixedMap.has(nKey)) continue
+
+        if (!cellNeighbors.has(nKey)) {
+          cellNeighbors.set(nKey, [])
+        }
+        // dir from solve cell back toward the fixed cell
+        cellNeighbors.get(nKey).push({ fixedCell: fc, dir: HexOpposite[HexDir[i]] })
+      }
+    }
+
+    const conflicts = []
+
+    for (const [cellKey, neighbors] of cellNeighbors) {
+      if (neighbors.length < 2) continue
+
+      // Build edge requirements from all adjacent fixed cells
+      const requirements = neighbors.map(({ fixedCell, dir }) => {
+        const fcEdges = rotateHexEdges(TILE_LIST[fixedCell.type]?.edges || {}, fixedCell.rotation)
+        const edgeType = fcEdges[HexOpposite[dir]] // Edge the fixed cell is presenting
+        const edgeLevel = getEdgeLevel(fixedCell.type, fixedCell.rotation, HexOpposite[dir], fixedCell.level ?? 0)
+        return { edgeType, edgeLevel, dir, fixedCell }
+      })
+
+      // Find tiles that match ALL requirements (intersection)
+      let compatible = null
+      for (const { edgeType, edgeLevel, dir } of requirements) {
+        const matches = this.hexWfcRules.getByEdge(edgeType, dir, edgeLevel)
+        if (compatible === null) {
+          compatible = new Set(matches)
+        } else {
+          const filtered = new Set()
+          for (const k of compatible) {
+            if (matches.has(k)) filtered.add(k)
+          }
+          compatible = filtered
+        }
+        if (compatible.size === 0) break
+      }
+
+      if (!compatible || compatible.size === 0) {
+        const { q, r, s } = parseCubeKey(cellKey)
+        const co = cubeToOffset(q, r, s)
+        conflicts.push({
+          cell: { q, r, s, global: `${co.col},${co.row}` },
+          fixedCells: neighbors.map(({ fixedCell }) => {
+            const fo = cubeToOffset(fixedCell.q, fixedCell.r, fixedCell.s)
+            return {
+              q: fixedCell.q, r: fixedCell.r, s: fixedCell.s,
+              global: `${fo.col},${fo.row}`,
+              type: TILE_LIST[fixedCell.type]?.name || fixedCell.type,
+              rotation: fixedCell.rotation,
+              level: fixedCell.level ?? 0,
+            }
+          }),
+          requirements: requirements.map(r => `${r.dir}=${r.edgeType}@${r.edgeLevel}`),
+        })
+      }
+    }
+
+    return { valid: conflicts.length === 0, conflicts }
+  }
+
+  /**
+   * Try to replace a fixed cell with a compatible alternative
+   * Updates both globalCells and the rendered tile in the source grid
+   * @param {Object} fixedCell - {q,r,s,type,rotation,level} the cell to replace
+   * @param {Array} fixedCells - Current list of fixed cells (for adjacency checks)
+   * @param {Set} replacedKeys - Already-replaced cell keys (avoid replacing twice)
+   * @returns {boolean} True if replacement was found and applied
+   */
+  tryReplaceFixedCell(fixedCell, fixedCells, replacedKeys) {
+    const key = cubeKey(fixedCell.q, fixedCell.r, fixedCell.s)
+    if (replacedKeys.has(key)) return false
+
+    const candidates = this.findReplacementTilesForCell(
+      fixedCell.q, fixedCell.r, fixedCell.s,
+      fixedCell.type, fixedCell.rotation, fixedCell.level
+    )
+
+    // Build a map of other fixed cells for adjacency checks
+    const fixedMap = new Map()
+    for (const fc of fixedCells) {
+      if (fc !== fixedCell) {
+        fixedMap.set(cubeKey(fc.q, fc.r, fc.s), fc)
+      }
+    }
+
+    for (const replacement of candidates) {
+      const replacementEdges = rotateHexEdges(TILE_LIST[replacement.type]?.edges || {}, replacement.rotation)
+      let compatibleWithFixed = true
+
+      // Check compatibility with adjacent fixed cells
+      for (let i = 0; i < 6; i++) {
+        const dir = CUBE_DIRS[i]
+        const nq = fixedCell.q + dir.dq
+        const nr = fixedCell.r + dir.dr
+        const ns = fixedCell.s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+        const adjacentFixed = fixedMap.get(nKey)
+
+        if (adjacentFixed) {
+          const myEdge = replacementEdges[HexDir[i]]
+          const myLevel = getEdgeLevel(replacement.type, replacement.rotation, HexDir[i], replacement.level)
+          const adjacentEdges = rotateHexEdges(TILE_LIST[adjacentFixed.type]?.edges || {}, adjacentFixed.rotation)
+          const theirEdge = adjacentEdges[HexOpposite[HexDir[i]]]
+          const theirLevel = getEdgeLevel(adjacentFixed.type, adjacentFixed.rotation, HexOpposite[HexDir[i]], adjacentFixed.level ?? 0)
+
+          if (!edgesCompatible(myEdge, myLevel, theirEdge, theirLevel)) {
+            compatibleWithFixed = false
+            break
+          }
+        }
+      }
+
+      if (compatibleWithFixed) {
+        const co = cubeToOffset(fixedCell.q, fixedCell.r, fixedCell.s)
+        this.replacedCells.add(`${co.col},${co.row}`)
+
+        // Update globalCells
+        const existing = this.globalCells.get(key)
+        if (existing) {
+          existing.type = replacement.type
+          existing.rotation = replacement.rotation
+          existing.level = replacement.level
+
+          // Update rendered tile in source grid
+          const sourceGrid = this.grids.get(existing.gridKey)
+          if (sourceGrid) {
+            // Convert global cube to local grid coords
+            const localCube = {
+              q: fixedCell.q - sourceGrid.globalCenterCube.q,
+              r: fixedCell.r - sourceGrid.globalCenterCube.r,
+              s: fixedCell.s - sourceGrid.globalCenterCube.s,
+            }
+            const localOffset = cubeToOffset(localCube.q, localCube.r, localCube.s)
+            const gridX = localOffset.col + sourceGrid.gridRadius
+            const gridZ = localOffset.row + sourceGrid.gridRadius
+            sourceGrid.replaceTile(gridX, gridZ, replacement.type, replacement.rotation, replacement.level)
+          }
+        }
+
+        // Update the fixedCell object in place
+        fixedCell.type = replacement.type
+        fixedCell.rotation = replacement.rotation
+        fixedCell.level = replacement.level
+        replacedKeys.add(key)
+        return true
+      }
+    }
+
+    return false
   }
 
   /**
@@ -290,10 +676,10 @@ export class HexMap {
   }
 
   /**
-   * Populate a grid (transition from PLACEHOLDER to POPULATED)
+   * Populate a grid using global cube coordinates
+   * Includes Phase 0/1/2 retry loop for contradiction recovery
    * @param {HexGrid} grid - Grid to populate
-   * @param {Array} seedTiles - Optional seed tiles for WFC (including neighbor seeds)
-   * @param {Object} options - Optional WFC options (animate, animateDelay, etc.)
+   * @param {Object} options - { animate, animateDelay, initialCollapses }
    */
   async populateGrid(grid, seedTiles = [], options = {}) {
     if (grid.state === HexGridState.POPULATED) {
@@ -302,126 +688,314 @@ export class HexMap {
     }
 
     const params = Demo.instance?.params ?? this.params
+    const gridKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
+    const center = grid.globalCenterCube
 
-    await grid.populate(seedTiles, {
-      seed: params?.roads?.wfcSeed ?? null,
-      seedWaterEdge: seedTiles.length === 0,
-      tileTypes: this.getDefaultTileTypes(),
-      onSeedDropped: (globalCoord, seed) => {
-        this.droppedSeeds.add(globalCoord)
-        const name = TILE_LIST[seed?.type]?.name || '?'
-        this.seedStats.dropped[name] = (this.seedStats.dropped[name] || 0) + 1
-      },
-      onCellFailed: (globalCoord) => this.failedCells.add(globalCoord),
-      // Try to replace a seed tile instead of dropping it
-      onTryReplaceSeed: (seed, currentSeeds) => {
-        if (!seed?.sourceGridKey) return false
-        const sourceGrid = this.grids.get(seed.sourceGridKey)
-        if (!sourceGrid?.hexGrid) return false
+    // Generate solve cells: all cells in hex radius around grid center
+    const solveCells = cubeCoordsInRadius(center.q, center.r, center.s, this.hexGridRadius)
 
-        // Get all replacement candidates that match the source grid's interior
-        const candidates = findReplacementTiles(
-          seed,
-          sourceGrid.hexGrid,
-          sourceGrid.gridRadius,
-          sourceGrid.globalCenterCube
+    // Get fixed cells from already-populated neighbors
+    let fixedCells = this.getFixedCellsForRegion(solveCells)
+
+    // Build initial collapses for first grid
+    const initialCollapses = options.initialCollapses ?? []
+
+    // If no fixed cells and no initial collapses, seed center with grass
+    if (fixedCells.length === 0 && initialCollapses.length === 0) {
+      initialCollapses.push({ q: center.q, r: center.r, s: center.s, type: TileType.GRASS, rotation: 0, level: 0 })
+
+      // Optionally seed water edge
+      this.addWaterEdgeSeeds(initialCollapses, center, this.hexGridRadius)
+    }
+
+    const initialFixedCount = fixedCells.length
+    let replacedCount = 0
+    let droppedCount = 0
+
+    console.log(`%c[${gridKey}] POPULATING GRID (${solveCells.length} cells, ${initialFixedCount} fixed)`, 'color: blue')
+    setStatus(`[${gridKey}] Solving WFC...`)
+
+    // ---- Pre-WFC: Filter adjacent fixed cell conflicts ----
+    if (fixedCells.length > 1) {
+      const filterResult = this.filterConflictingFixedCells(fixedCells)
+      const conflicts = filterResult.conflicts
+      const preReplacedKeys = new Set()
+
+      // Try replacing conflicting cells, drop if irreplaceable
+      for (const conflict of conflicts) {
+        const cell = conflict.cellObj
+        if (this.tryReplaceFixedCell(cell, fixedCells, preReplacedKeys)) {
+          filterResult.validCells.push(cell)
+          replacedCount++
+        } else {
+          const co = cubeToOffset(cell.q, cell.r, cell.s)
+          this.droppedCells.add(`${co.col},${co.row}`)
+          droppedCount++
+        }
+      }
+      fixedCells = filterResult.validCells
+    }
+
+    // ---- Pre-WFC: Validate multi-fixed-cell conflicts ----
+    if (fixedCells.length > 1) {
+      let validation = this.validateFixedCellConflicts(solveCells, fixedCells)
+      const preReplacedKeys = new Set()
+      let maxIterations = 50
+
+      while (!validation.valid && fixedCells.length > 1 && maxIterations-- > 0) {
+        const conflict = validation.conflicts[0]
+        let replaced = false
+
+        // Try replacing each conflicting fixed cell
+        for (const fcInfo of conflict.fixedCells) {
+          const actualCell = fixedCells.find(fc =>
+            fc.q === fcInfo.q && fc.r === fcInfo.r && fc.s === fcInfo.s
+          )
+          if (actualCell && this.tryReplaceFixedCell(actualCell, fixedCells, preReplacedKeys)) {
+            replaced = true
+            replacedCount++
+            break
+          }
+        }
+
+        // Fall back to dropping if no replacement found
+        if (!replaced) {
+          const fcInfo = conflict.fixedCells[0]
+          fixedCells = fixedCells.filter(fc =>
+            !(fc.q === fcInfo.q && fc.r === fcInfo.r && fc.s === fcInfo.s)
+          )
+          this.droppedCells.add(fcInfo.global)
+          droppedCount++
+        }
+
+        validation = this.validateFixedCellConflicts(solveCells, fixedCells)
+      }
+    }
+
+    // Start placeholder spinning
+    grid.placeholder?.startSpinning()
+
+    // ---- Phase 0/1/2 WFC retry loop ----
+    const tileTypes = this.getDefaultTileTypes()
+    const phaseReplacedKeys = new Set()
+    let result = null
+    let resultCollapseOrder = []
+    let attempt = 0
+
+    // Shuffle helper
+    const shuffleArray = (arr) => {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1))
+        ;[arr[i], arr[j]] = [arr[j], arr[i]]
+      }
+      return arr
+    }
+
+    // Helper to run WFC
+    const runWfc = async () => {
+      attempt++
+      const activeFixed = fixedCells.filter(fc => !fc.dropped)
+      const wfcResult = await this.solveWfcAsync(solveCells, activeFixed, {
+        tileTypes,
+        weights: options.weights ?? {},
+        maxRestarts: initialFixedCount === 0 ? 10 : 1,
+        initialCollapses,
+        gridId: gridKey,
+        attemptNum: attempt,
+        seed: getSeed(),
+      })
+
+      if (wfcResult.success) {
+        return { success: true, tiles: wfcResult.tiles, collapseOrder: wfcResult.collapseOrder || [] }
+      }
+
+      // Track failed cell
+      const contradiction = wfcResult.seedingContradiction || wfcResult.lastContradiction
+      if (contradiction) {
+        this.failedCells.add(`${contradiction.failedCol},${contradiction.failedRow}`)
+      }
+      return {
+        success: false,
+        failedCell: contradiction ? { q: contradiction.failedQ, r: contradiction.failedR, s: contradiction.failedS } : null,
+      }
+    }
+
+    // Helper: find fixed cells adjacent to a failed cell
+    const findAdjacentFixed = (failedQ, failedR, failedS) => {
+      const adjacent = []
+      for (let i = 0; i < 6; i++) {
+        const dir = CUBE_DIRS[i]
+        const nq = failedQ + dir.dq
+        const nr = failedR + dir.dr
+        const ns = failedS + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+        const fc = fixedCells.find(c => !c.dropped && cubeKey(c.q, c.r, c.s) === nKey)
+        if (fc) adjacent.push(fc)
+      }
+      return adjacent
+    }
+
+    // Phase 0: Initial attempt
+    const initialResult = await runWfc()
+    if (initialResult.success) {
+      result = initialResult.tiles
+      resultCollapseOrder = initialResult.collapseOrder
+    } else {
+      // Phase 1: Replace fixed cells, prioritizing those adjacent to failed cells
+      const shuffledFallback = shuffleArray([...fixedCells])
+      let fallbackIndex = 0
+      let lastFailedCell = initialResult.failedCell
+
+      while (!result) {
+        let wfcResult = null
+
+        // First: try fixed cells adjacent to the last failed cell
+        if (lastFailedCell) {
+          const adjacent = findAdjacentFixed(lastFailedCell.q, lastFailedCell.r, lastFailedCell.s)
+          for (const fc of adjacent) {
+            if (this.tryReplaceFixedCell(fc, fixedCells, phaseReplacedKeys)) {
+              replacedCount++
+              // Re-validate after replacement
+              const activeFixed = fixedCells.filter(c => !c.dropped)
+              const validation = this.validateFixedCellConflicts(solveCells, activeFixed)
+              if (!validation.valid) {
+                for (const conflict of validation.conflicts) {
+                  const fcInfo = conflict.fixedCells[0]
+                  const toDropFC = fixedCells.find(c =>
+                    c.q === fcInfo.q && c.r === fcInfo.r && c.s === fcInfo.s && !c.dropped
+                  )
+                  if (toDropFC) {
+                    toDropFC.dropped = true
+                    droppedCount++
+                    this.droppedCells.add(fcInfo.global)
+                  }
+                }
+              }
+              wfcResult = await runWfc()
+              if (wfcResult) break
+            }
+          }
+        }
+
+        // Fallback: try next fixed cell from shuffled list
+        if (!wfcResult) {
+          while (fallbackIndex < shuffledFallback.length) {
+            const candidate = shuffledFallback[fallbackIndex++]
+            if (candidate.dropped) continue
+            if (this.tryReplaceFixedCell(candidate, fixedCells, phaseReplacedKeys)) {
+              replacedCount++
+              wfcResult = await runWfc()
+              if (wfcResult) break
+            }
+          }
+        }
+
+        if (!wfcResult) break  // No more cells to try
+
+        if (wfcResult.success) {
+          result = wfcResult.tiles
+          resultCollapseOrder = wfcResult.collapseOrder
+        } else {
+          lastFailedCell = wfcResult.failedCell
+        }
+      }
+
+      // Phase 2: Try dropping fixed cells one by one
+      if (!result) {
+        const shuffledForDrop = shuffleArray(
+          fixedCells.filter(fc => !fc.dropped)
         )
 
-        // Helper to get global coords for a seed
-        const seedToGlobal = (s) => {
-          if (s.sourceGridKey) {
-            const sg = this.grids.get(s.sourceGridKey)
-            if (sg) return localToGlobalCoords(s.sourceX, s.sourceZ, sg.gridRadius, sg.globalCenterCube)
-          }
-          return { col: '?', row: '?' }
-        }
-        const seedGlobalStr = (s) => {
-          const g = seedToGlobal(s)
-          return `(${g.col},${g.row})`
-        }
+        for (const fcToDrop of shuffledForDrop) {
+          if (result) break
 
-        // Try each candidate until we find one compatible with adjacent seeds
-        for (const replacement of candidates) {
-          const replacementEdges = rotateHexEdges(TILE_LIST[replacement.type]?.edges || {}, replacement.rotation)
-          let compatibleWithSeeds = true
-          const typeName = TILE_LIST[replacement.type]?.name
+          const co = cubeToOffset(fcToDrop.q, fcToDrop.r, fcToDrop.s)
+          this.droppedCells.add(`${co.col},${co.row}`)
+          fcToDrop.dropped = true
+          droppedCount++
 
-          for (const dir of HexDir) {
-            const offset = getHexNeighborOffset(seed.x, seed.z, dir)
-            const nx = seed.x + offset.dx
-            const nz = seed.z + offset.dz
-
-            // Find if there's another seed at this adjacent position
-            const adjacentSeed = currentSeeds?.find(s => s.x === nx && s.z === nz && s !== seed)
-            const myEdge = replacementEdges[dir]
-            const myLevel = getEdgeLevel(replacement.type, replacement.rotation, dir, replacement.level)
-
-            if (adjacentSeed) {
-              // Check edge compatibility
-              const adjacentEdges = rotateHexEdges(TILE_LIST[adjacentSeed.type]?.edges || {}, adjacentSeed.rotation)
-              const theirEdge = adjacentEdges[HexOpposite[dir]]
-              const theirLevel = getEdgeLevel(adjacentSeed.type, adjacentSeed.rotation, HexOpposite[dir], adjacentSeed.level ?? 0)
-
-              if (!edgesCompatible(myEdge, myLevel, theirEdge, theirLevel)) {
-                compatibleWithSeeds = false
-                break
-              }
-            }
-          }
-
-          if (compatibleWithSeeds) {
-            // Track replacement in seed stats
-            const origName = TILE_LIST[seed.type]?.name || '?'
-            this.seedStats.replaced[origName] = (this.seedStats.replaced[origName] || 0) + 1
-            // Found a compatible replacement
-            const seedGlobal = localToGlobalCoords(seed.sourceX, seed.sourceZ, sourceGrid.gridRadius, sourceGrid.globalCenterCube)
-            this.replacedSeeds.add(`${seedGlobal.col},${seedGlobal.row}`)
-
-            // Update source grid tile
-            sourceGrid.replaceTile(seed.sourceX, seed.sourceZ, replacement.type, replacement.rotation, replacement.level)
-            // Update seed in place
-            seed.type = replacement.type
-            seed.rotation = replacement.rotation
-            seed.level = replacement.level
-            return true
+          const wfcResult = await runWfc()
+          if (wfcResult.success) {
+            result = wfcResult.tiles
+            resultCollapseOrder = wfcResult.collapseOrder
           }
         }
-        return false  // No compatible candidate found for this edge type
-      },
-      // Validate seeds after replacement (catch new conflicts before running WFC)
-      onValidateSeeds: (seeds) => {
-        const activeSeeds = seeds.filter(s => !s.dropped)
-        const gKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
-        const validation = validateSeedConflicts(activeSeeds, this.hexWfcRules, grid.gridRadius, gKey, grid.globalCenterCube)
-        if (!validation.valid) {
-          // Drop the first conflicting seed
-          for (const conflict of validation.conflicts) {
-            const conflictSeed = activeSeeds.find(s => {
-              const g = localToGlobalCoords(s.x, s.z, grid.gridRadius, grid.globalCenterCube)
-              return `${g.col},${g.row}` === conflict.seeds[0].global
-            })
-            if (conflictSeed) {
-              const g = localToGlobalCoords(conflictSeed.x, conflictSeed.z, grid.gridRadius, grid.globalCenterCube)
-              const globalKey = `${g.col},${g.row}`
-              const name = TILE_LIST[conflictSeed.type]?.name || '?'
-              console.log(`%cPost-replace validation: dropping ${name} (${globalKey})`, 'color: red')
-              conflictSeed.dropped = true
-              this.droppedSeeds.add(globalKey)
-              this.seedStats.dropped[name] = (this.seedStats.dropped[name] || 0) + 1
-            }
-          }
-        }
-      },
-      // Pass worker solve function
-      solveWfcAsync: (w, h, s, o) => this.solveWfcAsync(w, h, s, o),
-      // Animation callbacks
-      onSolveStart: () => grid.placeholder?.startSpinning(),
-      onSolveEnd: () => grid.placeholder?.stopSpinning(),
-      ...options,  // Allow caller to override defaults
+      }
+    }
+
+    // Stop placeholder spinning
+    grid.placeholder?.stopSpinning()
+
+    if (!result) {
+      console.log(`%c[${gridKey}] WFC FAILED`, 'color: red')
+      setStatus(`[${gridKey}] WFC FAILED`)
+      const { Sounds } = await import('./lib/Sounds.js')
+      Sounds.play('incorrect')
+      return
+    }
+
+    // Log final status
+    const stats = [`${initialFixedCount} neighbours`]
+    if (attempt > 1) stats.push(`${attempt} attempts`)
+    if (replacedCount > 0) stats.push(`${replacedCount} replaced`)
+    if (droppedCount > 0) stats.push(`${droppedCount} dropped`)
+    const statusMsg = `[${gridKey}] WFC SUCCESS (${stats.join(', ')})`
+    if (droppedCount > 0) {
+      const prefix = stats.slice(0, -1).join(', ')
+      console.log(`%c[${gridKey}] WFC SUCCESS (${prefix}, %c${droppedCount} dropped%c)`, 'color: green', 'color: red', 'color: green')
+    } else {
+      console.log(`%c${statusMsg}`, 'color: green')
+    }
+    setStatus(statusMsg)
+
+    // Add results to global cell map
+    this.addToGlobalCells(gridKey, result)
+
+    // Populate grid from cube results
+    const animate = options.animate ?? (params?.roads?.animateWFC ?? false)
+    const animateDelay = options.animateDelay ?? (params?.roads?.animateDelay ?? 20)
+
+    await grid.populateFromCubeResults(result, resultCollapseOrder, center, {
+      animate,
+      animateDelay,
     })
 
     // Apply current helper visibility state
     grid.setHelperVisible(this.helpersVisible)
+  }
+
+  /**
+   * Add water edge seeds for first grid (50% chance, 1 random edge)
+   * @param {Array} initialCollapses - Array to push water seeds into
+   * @param {Object} center - {q,r,s} grid center cube coords
+   * @param {number} radius - Grid radius
+   */
+  addWaterEdgeSeeds(initialCollapses, center, radius) {
+    if (random() >= 0.5) return
+
+    const selectedEdge = Math.floor(random() * 6)
+
+    // Get all cells at the edge of the hex radius
+    const edgeCells = cubeCoordsInRadius(center.q, center.r, center.s, radius).filter(c => {
+      return cubeDistance(c.q, c.r, c.s, center.q, center.r, center.s) === radius
+    })
+
+    for (const cell of edgeCells) {
+      // Determine which "edge sector" (0-5) this cell is in by angle from center
+      const dq = cell.q - center.q
+      const dr = cell.r - center.r
+      // Convert cube delta to approximate world angle
+      // For pointy-top hex: q axis ~ east, r axis ~ south-east
+      const wx = dq + dr * 0.5
+      const wz = dr * (Math.sqrt(3) / 2)
+      const angle = Math.atan2(wz, wx)
+      const normalizedAngle = (angle + Math.PI) / (Math.PI * 2)
+      const edgeIndex = Math.floor(normalizedAngle * 6) % 6
+
+      if (edgeIndex === selectedEdge) {
+        initialCollapses.push({ q: cell.q, r: cell.r, s: cell.s, type: TileType.WATER, rotation: 0, level: 0 })
+      }
+    }
   }
 
   /**
@@ -574,215 +1148,12 @@ export class HexMap {
     if (grid.state !== HexGridState.PLACEHOLDER) return
 
     const gridKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
-
-    // Find ALL populated neighbors and collect their edge tiles as seeds
-    const neighborSeeds = []
-    for (let dir = 0; dir < 6; dir++) {
-      const adjacentKey = getAdjacentGridKey(gridKey, dir)
-      const adjacentGrid = this.grids.get(adjacentKey)
-      if (adjacentGrid?.state === HexGridState.POPULATED) {
-        // Get neighbor edge tiles as seeds
-        // 'dir' is the direction FROM new grid TO neighbor
-        // Pass cube coords for coordinate transformation (no stagger issues)
-        const seeds = getNeighborSeeds(
-          adjacentGrid.hexGrid,
-          adjacentGrid.gridRadius,
-          dir,
-          adjacentGrid.globalCenterCube,  // source grid's cube center
-          grid.globalCenterCube,          // new grid's cube center
-          adjacentKey                     // source grid key for tile replacement
-        )
-        neighborSeeds.push(...seeds)
-      }
-    }
-
-    console.log(`%c[${gridKey}] POPULATING GRID (${neighborSeeds.length} seeds)`, 'color: blue')
-    console.log('%c--------------------------------', 'color: blue')
-
-    // Helper to convert seed local coords to global (uses shared utility)
-    const seedToGlobal = (s) => localToGlobalCoords(s.x, s.z, grid.gridRadius, grid.globalCenterCube)
-
-    // Filter and detect adjacent seed conflicts (seeds from different grids that ended up next to each other)
-    const filterResult = filterConflictingSeeds(neighborSeeds, grid.gridRadius, gridKey, grid.globalCenterCube)
-    let validSeeds = filterResult.validSeeds
-    const adjacentConflicts = filterResult.conflicts
-
-    const replacedSeeds = new Set()  // Track seeds already replaced to avoid infinite loops
-    let maxIterations = 50  // Safety limit
-
-    // Helper to try replacing a seed tile
-    const tryReplaceSeed = (seed) => {
-      if (!seed?.sourceGridKey) {
-        console.log(`%c  → No sourceGridKey for seed`, 'color: gray')
-        return false
-      }
-      const sourceGrid = this.grids.get(seed.sourceGridKey)
-      if (!sourceGrid?.hexGrid) {
-        console.log(`%c  → Source grid not found: ${seed.sourceGridKey}`, 'color: gray')
-        return false
-      }
-
-      const seedGlobal = seedToGlobal(seed)
-      const globalKey = `${seedGlobal.col},${seedGlobal.row}`
-
-      // Skip if already replaced
-      if (replacedSeeds.has(globalKey)) return false
-
-      // Get all replacement candidates that match source grid's interior
-      const candidates = findReplacementTiles(
-        seed,
-        sourceGrid.hexGrid,
-        sourceGrid.gridRadius,
-        sourceGrid.globalCenterCube
-      )
-
-      // Try each candidate until we find one compatible with adjacent seeds
-      for (const replacement of candidates) {
-        const replacementEdges = rotateHexEdges(TILE_LIST[replacement.type]?.edges || {}, replacement.rotation)
-        let compatibleWithSeeds = true
-
-        for (const dir of HexDir) {
-          const offset = getHexNeighborOffset(seed.x, seed.z, dir)
-          const nx = seed.x + offset.dx
-          const nz = seed.z + offset.dz
-
-          // Find if there's another seed at this adjacent position
-          const adjacentSeed = neighborSeeds.find(s => s.x === nx && s.z === nz && s !== seed)
-          if (adjacentSeed) {
-            const adjacentEdges = rotateHexEdges(TILE_LIST[adjacentSeed.type]?.edges || {}, adjacentSeed.rotation)
-            const myEdge = replacementEdges[dir]
-            const theirEdge = adjacentEdges[HexOpposite[dir]]
-            const myLevel = getEdgeLevel(replacement.type, replacement.rotation, dir, replacement.level)
-            const theirLevel = getEdgeLevel(adjacentSeed.type, adjacentSeed.rotation, HexOpposite[dir], adjacentSeed.level ?? 0)
-
-            if (!edgesCompatible(myEdge, myLevel, theirEdge, theirLevel)) {
-              compatibleWithSeeds = false
-              break
-            }
-          }
-        }
-
-        if (compatibleWithSeeds) {
-          const origName = TILE_LIST[seed.type]?.name || seed.type
-          const typeName = TILE_LIST[replacement.type]?.name || replacement.type
-          this.seedStats.replaced[origName] = (this.seedStats.replaced[origName] || 0) + 1
-          replacedSeeds.add(globalKey)
-          this.replacedSeeds.add(globalKey)  // Track for label highlighting
-          sourceGrid.replaceTile(seed.sourceX, seed.sourceZ, replacement.type, replacement.rotation, replacement.level)
-          seed.type = replacement.type
-          seed.rotation = replacement.rotation
-          seed.level = replacement.level
-          console.log(`%cReplaced tile (${globalKey}) ${origName} → ${typeName} rot=${replacement.rotation}`, 'color: blue')
-          return true
-        }
-      }
-      return false
-    }
-
-    // Phase 1: Handle adjacent seed conflicts (try replacement, add to validSeeds if fixed)
-    for (const conflict of adjacentConflicts) {
-      if (maxIterations-- <= 0) break
-
-      const seed = conflict.seedObj
-      const seedGlobal = `${conflict.seed.global}`
-
-      // Try replacing the conflicting seed
-      if (tryReplaceSeed(seed)) {
-        // Seed was replaced, add it to valid seeds
-        validSeeds.push(seed)
-      } else {
-        // Couldn't replace - drop it
-        this.droppedSeeds.add(seedGlobal)
-        const droppedName = conflict.seed.type
-        this.seedStats.dropped[droppedName] = (this.seedStats.dropped[droppedName] || 0) + 1
-        console.log(`%cDropping seed (${seedGlobal}) ${droppedName} - adjacent conflict`, 'color: red')
-      }
-    }
-
-    // Phase 2: Handle multi-seed cell conflicts (validateSeedConflicts)
-    let validation = validateSeedConflicts(validSeeds, this.hexWfcRules, grid.gridRadius, gridKey, grid.globalCenterCube)
-    while (!validation.valid && validSeeds.length > 1 && maxIterations-- > 0) {
-      const conflict = validation.conflicts[0]
-      let replaced = false
-
-      // Try to replace each conflicting seed in order (skip already-replaced seeds)
-      for (let seedIdx = 0; seedIdx < conflict.seeds.length && !replaced; seedIdx++) {
-        const conflictSeedInfo = conflict.seeds[seedIdx]
-
-        // Find the actual seed object
-        const actualSeed = validSeeds.find(s => {
-          const g = seedToGlobal(s)
-          return `${g.col},${g.row}` === conflictSeedInfo.global
-        })
-
-        if (actualSeed && tryReplaceSeed(actualSeed)) {
-          replaced = true
-        }
-      }
-
-      // Fall back to removal if no replacement found
-      if (!replaced) {
-        const conflictSeedInfo = conflict.seeds[0]
-        const actualSeed = validSeeds.find(s => {
-          const g = seedToGlobal(s)
-          return `${g.col},${g.row}` === conflictSeedInfo.global
-        })
-        validSeeds = validSeeds.filter(s => s !== actualSeed)
-        this.droppedSeeds.add(conflictSeedInfo.global)
-        this.seedStats.dropped[conflictSeedInfo.type] = (this.seedStats.dropped[conflictSeedInfo.type] || 0) + 1
-        console.log(`%cDropping seed (${conflictSeedInfo.global}) ${conflictSeedInfo.type} - ${validSeeds.length} seeds remain`, 'color: red')
-      }
-
-      validation = validateSeedConflicts(validSeeds, this.hexWfcRules, grid.gridRadius, gridKey, grid.globalCenterCube)
-    }
-
-    if (maxIterations <= 0) {
-      console.warn('Seed conflict resolution hit max iterations limit')
-    }
-
-    // DEBUG: Final check for any remaining adjacent conflicts before WFC
-    // const seedMapDebug = new Map()
-    // for (const seed of validSeeds) seedMapDebug.set(`${seed.x},${seed.z}`, seed)
-    // for (const seed of validSeeds) {
-    //   for (const dir of HexDir) {
-    //     const offset = getHexNeighborOffset(seed.x, seed.z, dir)
-    //     const neighborSeed = seedMapDebug.get(`${seed.x + offset.dx},${seed.z + offset.dz}`)
-    //     if (neighborSeed && neighborSeed !== seed) {
-    //       const seedEdges = rotateHexEdges(TILE_LIST[seed.type]?.edges || {}, seed.rotation)
-    //       const neighborEdges = rotateHexEdges(TILE_LIST[neighborSeed.type]?.edges || {}, neighborSeed.rotation)
-    //       const seedEdge = seedEdges[dir], neighborEdge = neighborEdges[HexOpposite[dir]]
-    //       const seedLevel = getEdgeLevel(seed.type, seed.rotation, dir, seed.level ?? 0)
-    //       const neighborLevel = getEdgeLevel(neighborSeed.type, neighborSeed.rotation, HexOpposite[dir], neighborSeed.level ?? 0)
-    //       if (!edgesCompatible(seedEdge, seedLevel, neighborEdge, neighborLevel)) {
-    //         const sGlobal = seedToGlobal(seed), nGlobal = seedToGlobal(neighborSeed)
-    //         console.log(`%c  CONFLICT: (${sGlobal.col},${sGlobal.row}) ${TILE_LIST[seed.type]?.name} ${dir}→${seedEdge}@${seedLevel} vs (${nGlobal.col},${nGlobal.row}) ${TILE_LIST[neighborSeed.type]?.name} ${HexOpposite[dir]}→${neighborEdge}@${neighborLevel}`, 'color: red')
-    //       }
-    //     }
-    //   }
-    // }
-
-    // Populate this grid with neighbor seeds
     const params = Demo.instance?.params
-    await this.populateGrid(grid, validSeeds, {
-      replacedCount: replacedSeeds.size,
+
+    await this.populateGrid(grid, [], {
       animate: params?.roads?.animateWFC ?? false,
       animateDelay: params?.roads?.animateDelay ?? 20,
     })
-
-    // Log seed stats tally
-    const hasDropped = Object.keys(this.seedStats.dropped).length > 0
-    const hasReplaced = Object.keys(this.seedStats.replaced).length > 0
-    if (hasDropped || hasReplaced) {
-      console.log(`%c[SEED STATS] Running tally:`, 'color: blue; font-weight: bold')
-      if (hasDropped) {
-        const entries = Object.entries(this.seedStats.dropped).sort((a, b) => b[1] - a[1])
-        console.log(`%c  Dropped: ${entries.map(([name, count]) => `${name}×${count}`).join(', ')}`, 'color: red')
-      }
-      if (hasReplaced) {
-        const entries = Object.entries(this.seedStats.replaced).sort((a, b) => b[1] - a[1])
-        console.log(`%c  Replaced: ${entries.map(([name, count]) => `${name}×${count}`).join(', ')}`, 'color: blue')
-      }
-    }
 
     // Create placeholders around this newly populated grid
     this.createAdjacentPlaceholders(gridKey)
@@ -1012,11 +1383,11 @@ export class HexMap {
     // Set flag to prevent overlay rendering during disposal
     this.isRegenerating = true
 
-    // Clear debug tracking
-    this.droppedSeeds.clear()
+    // Clear global state
+    this.globalCells.clear()
     this.failedCells.clear()
-    this.replacedSeeds.clear()
-    this.seedStats = { dropped: {}, replaced: {} }
+    this.replacedCells.clear()
+    this.droppedCells.clear()
 
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
@@ -1135,11 +1506,14 @@ export class HexMap {
           div.className = 'tile-label'
           div.textContent = this.tileLabelMode === 'levels' ? `${baseLevel}` : `${globalOffset.col},${globalOffset.row}`
           const globalKey = `${globalOffset.col},${globalOffset.row}`
-          const isDropped = this.droppedSeeds.has(globalKey)
           const isFailed = this.failedCells.has(globalKey)
-          const isReplaced = this.replacedSeeds.has(globalKey)
-          // Purple = failed cell, Red = dropped seed, Orange = replaced seed, Gray = normal
-          const bgColor = isFailed ? 'rgba(150,50,200,0.9)' : isDropped ? 'rgba(200,0,0,0.8)' : isReplaced ? 'rgba(255,140,0,0.9)' : 'rgba(0,0,0,0.5)'
+          const isReplaced = this.replacedCells.has(globalKey)
+          const isDropped = this.droppedCells.has(globalKey)
+          // Purple = failed cell, Orange = replaced, Red = dropped, Gray = normal
+          const bgColor = isFailed ? 'rgba(150,50,200,0.9)'
+            : isDropped ? 'rgba(200,50,50,0.9)'
+            : isReplaced ? 'rgba(220,140,20,0.9)'
+            : 'rgba(0,0,0,0.5)'
           div.style.cssText = `
             color: white;
             font-family: monospace;
@@ -1183,12 +1557,15 @@ export class HexMap {
             div.className = 'tile-label'
             div.textContent = this.tileLabelMode === 'levels' ? `-` : `${globalOffset.col},${globalOffset.row}`
             const globalKey = `${globalOffset.col},${globalOffset.row}`
-            const isDropped = this.droppedSeeds.has(globalKey)
             const isFailed = this.failedCells.has(globalKey)
-            const isReplaced = this.replacedSeeds.has(globalKey)
-            const isHighlighted = isFailed || isDropped || isReplaced
-            // Purple = failed cell, Red = dropped seed, Orange = replaced seed, Gray = normal
-            const bgColor = isFailed ? 'rgba(150,50,200,0.9)' : isDropped ? 'rgba(200,0,0,0.8)' : isReplaced ? 'rgba(255,140,0,0.9)' : 'rgba(0,0,0,0.3)'
+            const isReplaced = this.replacedCells.has(globalKey)
+            const isDropped = this.droppedCells.has(globalKey)
+            const isHighlighted = isFailed || isReplaced || isDropped
+            // Purple = failed cell, Orange = replaced, Red = dropped, Gray = normal
+            const bgColor = isFailed ? 'rgba(150,50,200,0.9)'
+              : isDropped ? 'rgba(200,50,50,0.9)'
+              : isReplaced ? 'rgba(220,140,20,0.9)'
+              : 'rgba(0,0,0,0.3)'
             div.style.cssText = `
               color: ${isHighlighted ? 'white' : 'rgba(255,255,255,0.6)'};
               font-family: monospace;

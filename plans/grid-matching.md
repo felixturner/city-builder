@@ -56,4 +56,3 @@ Bias WFC weights to place simple tiles (grass, flat road) near grid edges. Preve
 Currently each replace/drop attempt runs WFC once (with `maxRestarts: 1`). Increasing retries per attempt would give the solver more chances to find a valid arrangement before moving on to the next seed. Cheap way to reduce failures without changing the matching logic.
 
 **Complexity:** Trivial. Increase `maxRestarts` in the solver options. ~1 line.
-

@@ -13,21 +13,12 @@ import {
 } from 'three/webgpu'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import gsap from 'gsap'
-import { random } from './SeededRandom.js'
-import { log } from './Demo.js'
-import { Sounds } from './lib/Sounds.js'
-import {
-  TileType,
-  HexDir,
-  getHexNeighborOffset,
-  TILE_LIST,
-  LEVELS_COUNT,
-} from './HexTileData.js'
+import { TILE_LIST } from './HexTileData.js'
 import { HexTile, HexTileGeometry, isInHexRadius } from './HexTiles.js'
 import { Decorations } from './Decorations.js'
 import { HexGridHelper } from './HexGridHelper.js'
 import { Placeholder } from './Placeholder.js'
-import { localToGlobalCoords } from './HexGridConnector.js'
+import { cubeToOffset } from './HexWFCCore.js'
 
 /**
  * HexGrid states
@@ -307,316 +298,67 @@ export class HexGrid {
   }
 
   /**
-   * Populate the grid using WFC
-   * @param {Array} seedTiles - Seed tiles for WFC [{ x, z, type, rotation, level }]
-   *   Seeds can include neighbor tiles from adjacent grids (may be outside hex radius)
-   * @param {Object} options - Options for WFC and animation
-   *   - solveWfcAsync: async function to solve WFC via worker (optional)
-   *   - onSolveStart: callback when solve starts (for animation)
-   *   - onSolveEnd: callback when solve ends (for animation)
+   * Populate from cube-coordinate WFC results
+   * @param {Array} tiles - [{q,r,s,type,rotation,level}] solved tiles in global cube coords
+   * @param {Array} collapseOrder - [{q,r,s,type,rotation,level}] in WFC collapse order for animation
+   * @param {Object} globalCenterCube - {q,r,s} grid center in global cube coords
+   * @param {Object} options - { animate, animateDelay }
    */
-  async populate(seedTiles = [], options = {}) {
+  async populateFromCubeResults(tiles, collapseOrder, globalCenterCube, options = {}) {
     // Ensure meshes are initialized
     if (!this.hexMesh) {
       await this.initMeshes(HexTileGeometry.geoms)
     }
 
-    // Keep in PLACEHOLDER state during solve (so spinner is visible)
-    // Will transition to POPULATED after solve completes
     const baseSize = this.gridRadius * 2 + 1
     this.hexTiles = []
     this.hexGrid = Array.from({ length: baseSize }, () => Array(baseSize).fill(null))
 
-    const tileTypes = options.tileTypes ?? this.getDefaultTileTypes()
-    const weights = { ...options.weights }
-    const seed = options.seed ?? null
-    const onSeedDropped = options.onSeedDropped ?? null
-    const onCellFailed = options.onCellFailed ?? null
-    const onTryReplaceSeed = options.onTryReplaceSeed ?? null  // Callback to attempt seed replacement
-    const onValidateSeeds = options.onValidateSeeds ?? null  // Callback to validate seeds after replacement
-    let replacedCount = options.replacedCount ?? 0
-
-    // Separate neighbor seeds (outside grid) from internal seeds
-    const neighborSeeds = []
-    const internalSeeds = []
-    for (const s of seedTiles) {
-      const offsetCol = s.x - this.gridRadius
-      const offsetRow = s.z - this.gridRadius
-      if (isInHexRadius(offsetCol, offsetRow, this.gridRadius)) {
-        internalSeeds.push(s)
-      } else {
-        neighborSeeds.push(s)
+    // Convert cube coords to local grid coords and place tiles
+    const placements = []
+    for (const tile of tiles) {
+      // Global cube → local cube (subtract center)
+      const localCube = {
+        q: tile.q - globalCenterCube.q,
+        r: tile.r - globalCenterCube.r,
+        s: tile.s - globalCenterCube.s
       }
-    }
+      // Local cube → offset
+      const offset = cubeToOffset(localCube.q, localCube.r, localCube.s)
+      // Offset → grid array indices
+      const gridX = offset.col + this.gridRadius
+      const gridZ = offset.row + this.gridRadius
 
-    // Grid identifier for logging
-    const gridId = this.gridCoords ? `${this.gridCoords.x},${this.gridCoords.z}` : '?'
-
-    const globalCenterCube = this.globalCenterCube ?? { q: 0, r: 0, s: 0 }
-
-    // Calculate padding needed to include neighbor seeds
-    // IMPORTANT: Use even padding to preserve row parity (hex neighbor rules depend on row parity)
-    let padding = 0
-    if (neighborSeeds.length > 0) {
-      for (const s of neighborSeeds) {
-        const overflowX = Math.max(0, s.x - (baseSize - 1), -s.x)
-        const overflowZ = Math.max(0, s.z - (baseSize - 1), -s.z)
-        padding = Math.max(padding, overflowX, overflowZ, 1)
-      }
-      // Round up to even number to preserve row parity
-      if (padding % 2 !== 0) padding++
-    }
-
-    // Expanded grid size with padding
-    const wfcSize = baseSize + padding * 2
-
-    // Adjust seed positions for padding offset (preserve source info for replacement callback)
-    const adjustedSeeds = []
-    for (const s of [...internalSeeds, ...neighborSeeds]) {
-      adjustedSeeds.push({
-        x: s.x + padding,
-        z: s.z + padding,
-        type: s.type,
-        rotation: s.rotation,
-        level: s.level ?? 0,
-        // Preserve source grid info for replacement callback
-        sourceGridKey: s.sourceGridKey,
-        sourceX: s.sourceX,
-        sourceZ: s.sourceZ,
+      placements.push({
+        gridX, gridZ,
+        type: tile.type,
+        rotation: tile.rotation,
+        level: tile.level,
       })
     }
 
-    // Add center grass seed if no seeds provided
-    if (adjustedSeeds.length === 0) {
-      const centerX = Math.floor(wfcSize / 2)
-      const centerZ = Math.floor(wfcSize / 2)
-      adjustedSeeds.push({ x: centerX, z: centerZ, type: TileType.GRASS, rotation: 0, level: 0 })
-    }
-
-    // Optionally seed water edge (on internal grid, not padding)
-    if (options.seedWaterEdge ?? false) {
-      this.addWaterEdgeSeeds(adjustedSeeds, baseSize, padding)
-    }
-
-    let currentSeeds = [...adjustedSeeds]
-    const initialSeedCount = currentSeeds.length
-    let droppedCount = 0
-    let result = null
-    let resultCollapseOrder = []
-    let attempt = 0
-    const replacedSeedKeys = new Set()  // Track seeds already replaced
-
-    // Async solver (provided by HexMap via worker)
-    const solveWfcAsync = options.solveWfcAsync
-
-    // Helper to convert seed coords to global (uses shared utility, adjusted for padding)
-    const toGlobalCoords = (x, z) => localToGlobalCoords(x - padding, z - padding, this.gridRadius, globalCenterCube)
-
-    // Helper to run WFC and return result (includes failed cell coords on failure)
-    const runWfc = async () => {
-      attempt++
-      const solverOptions = {
-        attemptNum: attempt,
-        weights,
-        seed,
-        maxRestarts: seedTiles.length === 0 ? 10 : 1, // First grid (no neighbor seeds) gets more retries
-        tileTypes,
-        padding,
-        gridRadius: this.gridRadius,
-        globalCenterCube,
-        gridId,
+    // Convert collapse order the same way
+    const localCollapseOrder = collapseOrder.map(tile => {
+      const localCube = {
+        q: tile.q - globalCenterCube.q,
+        r: tile.r - globalCenterCube.r,
+        s: tile.s - globalCenterCube.s
       }
-
-      // Filter out dropped seeds for WFC (they failed, don't constrain WFC with them)
-      const activeSeeds = currentSeeds.filter(s => !s.dropped)
-
-      const workerResult = await solveWfcAsync(wfcSize, wfcSize, activeSeeds, solverOptions)
-      if (workerResult.success) {
-        return { success: true, tiles: workerResult.tiles, collapseOrder: workerResult.collapseOrder || [] }
-      }
-      // Extract failed cell coords from either seeding or regular contradiction
-      const contradiction = workerResult.seedingContradiction || workerResult.lastContradiction
-      if (workerResult.seedingContradiction) {
-        const { failedX, failedZ } = workerResult.seedingContradiction
-        const failedGlobal = toGlobalCoords(failedX, failedZ)
-        onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
-      }
+      const offset = cubeToOffset(localCube.q, localCube.r, localCube.s)
       return {
-        success: false,
-        failedCell: contradiction ? { x: contradiction.failedX, z: contradiction.failedZ } : null
+        gridX: offset.col + this.gridRadius,
+        gridZ: offset.row + this.gridRadius,
+        type: tile.type,
+        rotation: tile.rotation,
+        level: tile.level,
       }
-    }
+    })
 
-    // Shuffle seeds for random order
-    const shuffleArray = (arr) => {
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1))
-        ;[arr[i], arr[j]] = [arr[j], arr[i]]
-      }
-      return arr
-    }
-
-    // Notify solve start (for placeholder animation)
-    options.onSolveStart?.()
-
-    // Helper: find seeds adjacent to a cell (in WFC padded coords)
-    const findAdjacentSeeds = (cellX, cellZ) => {
-      const adjacent = []
-      for (const dir of HexDir) {
-        const offset = getHexNeighborOffset(cellX, cellZ, dir)
-        const nx = cellX + offset.dx
-        const nz = cellZ + offset.dz
-        const seed = currentSeeds.find(s => s.x === nx && s.z === nz && !s.dropped)
-        if (seed) adjacent.push(seed)
-      }
-      return adjacent
-    }
-
-    // Helper: try replacing a seed and run WFC
-    const tryReplace = async (seedToReplace) => {
-      const seedGlobal = toGlobalCoords(seedToReplace.x, seedToReplace.z)
-      const globalKey = `${seedGlobal.col},${seedGlobal.row}`
-      if (replacedSeedKeys.has(globalKey)) return null
-      if (!onTryReplaceSeed) return null
-
-      const replaced = onTryReplaceSeed(seedToReplace, currentSeeds)
-      if (!replaced) return null
-
-      log(`Phase 1: Replaced seed (${globalKey})`, 'color: blue')
-      replacedCount++
-      replacedSeedKeys.add(globalKey)
-      onValidateSeeds?.(currentSeeds)
-      return await runWfc()
-    }
-
-    try {
-      // Initial WFC attempt
-      log(`WFC Phase 0: Initial attempt`, 'color: gray')
-      const initialResult = await runWfc()
-      if (initialResult.success) {
-        result = initialResult.tiles
-        resultCollapseOrder = initialResult.collapseOrder
-      } else {
-        // Phase 1: Replace seeds, prioritizing those adjacent to failed cells
-        log(`WFC Phase 1: Trying replacements (${currentSeeds.length} seeds)`, 'color: gray')
-        const shuffledFallback = shuffleArray([...currentSeeds])
-        let fallbackIndex = 0
-        let lastFailedCell = initialResult.failedCell
-
-        while (!result) {
-          let wfcResult = null
-
-          // First: try seeds adjacent to the last failed cell
-          if (lastFailedCell) {
-            const adjacent = findAdjacentSeeds(lastFailedCell.x, lastFailedCell.z)
-            for (const seed of adjacent) {
-              wfcResult = await tryReplace(seed)
-              if (wfcResult) break
-            }
-          }
-
-          // Fallback: try next seed from shuffled list
-          if (!wfcResult) {
-            while (fallbackIndex < shuffledFallback.length) {
-              const candidate = shuffledFallback[fallbackIndex++]
-              if (candidate.dropped) continue
-              wfcResult = await tryReplace(candidate)
-              if (wfcResult) break
-            }
-          }
-
-          if (!wfcResult) break  // No more seeds to try
-
-          if (wfcResult.success) {
-            result = wfcResult.tiles
-            resultCollapseOrder = wfcResult.collapseOrder
-          } else {
-            lastFailedCell = wfcResult.failedCell
-          }
-        }
-
-        // Phase 2: Try dropping each seed one by one
-        if (!result) {
-          log(`WFC Phase 2: Trying drops`, 'color: gray')
-          const shuffledForDrop = shuffleArray(
-            currentSeeds.filter(s => !s.dropped)
-          )
-
-          for (const seedToDrop of shuffledForDrop) {
-            if (result) break
-
-            const seedGlobal = toGlobalCoords(seedToDrop.x, seedToDrop.z)
-            const globalKey = `${seedGlobal.col},${seedGlobal.row}`
-
-            log(`Phase 2: Dropping seed (${globalKey})`, 'color: red')
-            onSeedDropped?.(globalKey, seedToDrop)
-            droppedCount++
-            seedToDrop.dropped = true
-
-            // Run WFC after drop
-            const wfcResult = await runWfc()
-            if (wfcResult.success) {
-              result = wfcResult.tiles
-              resultCollapseOrder = wfcResult.collapseOrder
-            }
-          }
-        }
-      }
-    } finally {
-      // Notify solve end (for placeholder animation)
-      options.onSolveEnd?.()
-    }
-
-    if (!result) {
-      log(`WFC FAILED - Grid not populated`, 'color: red')
-      Sounds.play('incorrect')
-      return false
-    }
-
-    // Log final status
-    const stats = [`${initialSeedCount} seeds`]
-    if (replacedCount > 0) stats.push(`${replacedCount} replaced`)
-    if (droppedCount > 0) stats.push(`${droppedCount} dropped`)
-    log(`WFC SUCCESS - ${stats.join(', ')}`, 'color: green')
-
-    // Transition to POPULATED state now that solve succeeded
+    // Transition to POPULATED state
     this.state = HexGridState.POPULATED
     this.updateVisibility()
 
-    // Filter results to only include tiles within original hex radius (exclude padding)
-    const filteredResult = result.filter(p => {
-      const origX = p.gridX - padding
-      const origZ = p.gridZ - padding
-      const offsetCol = origX - this.gridRadius
-      const offsetRow = origZ - this.gridRadius
-      return isInHexRadius(offsetCol, offsetRow, this.gridRadius)
-    }).map(p => ({
-      ...p,
-      gridX: p.gridX - padding,
-      gridZ: p.gridZ - padding
-    }))
-
-    // Get WFC collapse order for animation (filtered and adjusted for padding)
-    const collapseOrder = resultCollapseOrder.filter(p => {
-      const origX = p.gridX - padding
-      const origZ = p.gridZ - padding
-      const offsetCol = origX - this.gridRadius
-      const offsetRow = origZ - this.gridRadius
-      return isInHexRadius(offsetCol, offsetRow, this.gridRadius)
-    }).map(p => ({
-      ...p,
-      gridX: p.gridX - padding,
-      gridZ: p.gridZ - padding
-    }))
-
-    // Place tiles
-    const animate = options.animate ?? false
-    const animateDelay = options.animateDelay ?? 20
-
-    // Use filteredResult for placement, collapseOrder for animation
-    const placements = filteredResult
-
-    // Place all tiles first (synchronously in both paths)
+    // Place all tiles
     for (const placement of placements) {
       this.placeTile(placement)
     }
@@ -628,108 +370,15 @@ export class HexGrid {
       this.updateTileColors()
     }
 
+    const animate = options.animate ?? false
+    const animateDelay = options.animateDelay ?? 20
+
     if (animate) {
-      // Hide everything, then animate tiles dropping in (using WFC collapse order)
       this.hideAllInstances()
-      this.animatePlacements(collapseOrder, animateDelay)
+      this.animatePlacements(localCollapseOrder, animateDelay)
     }
 
     return true
-  }
-
-  /**
-   * Get default tile types for WFC
-   */
-  getDefaultTileTypes() {
-    return TILE_LIST.map((_, i) => i)
-  }
-
-  /**
-   * Add water edge seeds (50% chance, 1 random edge)
-   */
-  addWaterEdgeSeeds(seedTiles, size, padding = 0) {
-    if (random() >= 0.5) return
-
-    const gridRadius = this.gridRadius
-    const selectedEdge = Math.floor(random() * 6)
-
-    for (let col = 0; col < size; col++) {
-      for (let row = 0; row < size; row++) {
-        const offsetCol = col - gridRadius
-        const offsetRow = row - gridRadius
-        if (!isInHexRadius(offsetCol, offsetRow, gridRadius)) continue
-
-        // Check if edge tile
-        const neighborOffsets = (row % 2 === 0)
-          ? [[-1, -1], [0, -1], [-1, 0], [1, 0], [-1, 1], [0, 1]]
-          : [[0, -1], [1, -1], [-1, 0], [1, 0], [0, 1], [1, 1]]
-
-        let isEdge = false
-        for (const [dx, dz] of neighborOffsets) {
-          if (!isInHexRadius(offsetCol + dx, offsetRow + dz, gridRadius)) {
-            isEdge = true
-            break
-          }
-        }
-        if (!isEdge) continue
-
-        // Get world position and determine which edge (0-5) based on angle
-        const worldPos = HexTileGeometry.getWorldPosition(offsetCol, offsetRow)
-        const angle = Math.atan2(worldPos.z, worldPos.x)
-        const normalizedAngle = (angle + Math.PI) / (Math.PI * 2)
-        const edgeIndex = Math.floor(normalizedAngle * 6) % 6
-
-        if (edgeIndex === selectedEdge) {
-          // Add padding offset for WFC grid coordinates
-          seedTiles.push({ x: col + padding, z: row + padding, type: TileType.WATER, rotation: 0, level: 0 })
-        }
-      }
-    }
-  }
-
-  /**
-   * Find seeds adjacent to a given cell position
-   * Used for graduated retry - identifies which seeds to remove when WFC fails
-   */
-  findAdjacentSeeds(seeds, cellX, cellZ) {
-    const adjacent = []
-    for (const seed of seeds) {
-      // Check if seed is adjacent to the failed cell
-      for (const dir of HexDir) {
-        const offset = getHexNeighborOffset(cellX, cellZ, dir)
-        if (seed.x === cellX + offset.dx && seed.z === cellZ + offset.dz) {
-          adjacent.push(seed)
-          break
-        }
-      }
-    }
-    return adjacent
-  }
-
-  /**
-   * Find the seed nearest to a given cell position
-   * Uses hex distance (max of cube coord differences)
-   */
-  findNearestSeed(seeds, cellX, cellZ) {
-    if (seeds.length === 0) return null
-
-    let nearest = null
-    let minDist = Infinity
-
-    for (const seed of seeds) {
-      // Calculate hex distance using offset coords
-      const dx = seed.x - cellX
-      const dz = seed.z - cellZ
-      // Approximate hex distance (good enough for comparison)
-      const dist = Math.abs(dx) + Math.abs(dz) + Math.abs(dx + dz)
-
-      if (dist < minDist) {
-        minDist = dist
-        nearest = seed
-      }
-    }
-
-    return nearest
   }
 
   /**

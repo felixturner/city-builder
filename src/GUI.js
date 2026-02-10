@@ -65,7 +65,8 @@ export class GUIManager {
       originHelper: false,
       debugCam: true,
       hexGrid: false,
-      tileLabels: 'off',
+      tileLabels: false,
+      tileLabelMode: 'coords',
       floor: true,
       levelColors: false,
     },
@@ -137,9 +138,12 @@ export class GUIManager {
     gui.add(allParams.roads, 'showOutlines').name('Show Outlines').onChange((v) => {
       demo.city?.setOutlinesVisible(v)
     })
-    gui.add(allParams.debug, 'tileLabels', ['off', 'coords', 'levels']).name('Tile Labels').onChange((v) => {
+    gui.add(allParams.debug, 'tileLabels').name('Tile Labels').onChange((v) => {
+      demo.city.setTileLabelsVisible(v)
+    })
+    gui.add(allParams.debug, 'tileLabelMode', ['coords', 'levels']).name('Label Mode').onChange((v) => {
       demo.city.tileLabelMode = v
-      demo.city.setTileLabelsVisible(v !== 'off')
+      if (allParams.debug.tileLabels) demo.city.createTileLabels()
     })
     gui.add(allParams.debug, 'levelColors').name('Level Colors').onChange((v) => {
       HexTile.debugLevelColors = v

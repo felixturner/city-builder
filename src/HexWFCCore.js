@@ -11,6 +11,93 @@ import {
 } from './HexTileData.js'
 import { random } from './SeededRandom.js'
 
+// ============================================================================
+// Cube Coordinate Utilities
+// ============================================================================
+
+/**
+ * Cube direction vectors for pointy-top hex (matching HexDir order: NE, E, SE, SW, W, NW)
+ */
+export const CUBE_DIRS = [
+  { name: 'NE', dq: +1, dr: -1, ds: 0 },
+  { name: 'E',  dq: +1, dr: 0,  ds: -1 },
+  { name: 'SE', dq: 0,  dr: +1, ds: -1 },
+  { name: 'SW', dq: -1, dr: +1, ds: 0 },
+  { name: 'W',  dq: -1, dr: 0,  ds: +1 },
+  { name: 'NW', dq: 0,  dr: -1, ds: +1 },
+]
+
+/**
+ * Create a string key from cube coordinates
+ */
+export function cubeKey(q, r, s) {
+  return `${q},${r},${s}`
+}
+
+/**
+ * Parse a cube key string back to {q, r, s}
+ */
+export function parseCubeKey(key) {
+  const [q, r, s] = key.split(',').map(Number)
+  return { q, r, s }
+}
+
+/**
+ * Convert offset coordinates (col, row) to cube coordinates (q, r, s)
+ * Using odd-r offset (pointy-top hex tiles)
+ */
+export function offsetToCube(col, row) {
+  const q = col - Math.floor(row / 2)
+  const r = row
+  const s = -q - r
+  return { q, r, s }
+}
+
+/**
+ * Convert cube coordinates to offset coordinates
+ */
+export function cubeToOffset(q, r, s) {
+  const col = q + Math.floor(r / 2)
+  const row = r
+  return { col, row }
+}
+
+/**
+ * Convert local grid coordinates to global offset coordinates
+ */
+export function localToGlobalCoords(x, z, gridRadius, globalCenterCube) {
+  const localCol = x - gridRadius
+  const localRow = z - gridRadius
+  const localCube = offsetToCube(localCol, localRow)
+  const globalCube = {
+    q: localCube.q + globalCenterCube.q,
+    r: localCube.r + globalCenterCube.r,
+    s: localCube.s + globalCenterCube.s
+  }
+  return cubeToOffset(globalCube.q, globalCube.r, globalCube.s)
+}
+
+/**
+ * Get all cube coordinates within a hex radius of a center point
+ */
+export function cubeCoordsInRadius(cq, cr, cs, radius) {
+  const coords = []
+  for (let q = -radius; q <= radius; q++) {
+    for (let r = Math.max(-radius, -q - radius); r <= Math.min(radius, -q + radius); r++) {
+      const s = -q - r
+      coords.push({ q: cq + q, r: cr + r, s: cs + s })
+    }
+  }
+  return coords
+}
+
+/**
+ * Calculate hex distance between two cube coordinates
+ */
+export function cubeDistance(q1, r1, s1, q2, r2, s2) {
+  return Math.max(Math.abs(q1 - q2), Math.abs(r1 - r2), Math.abs(s1 - s2))
+}
+
 /**
  * Check if two edges are compatible (edge type + level must match)
  * @param {string} edgeTypeA - Edge type (grass, road, etc.)

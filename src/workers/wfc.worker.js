@@ -7,53 +7,39 @@ import {
   TILE_LIST,
   HexDir,
   HexOpposite,
-  getHexNeighborOffset,
-  rotateHexEdges,
   LEVELS_COUNT,
 } from '../HexTileData.js'
 import { setSeed, random } from '../SeededRandom.js'
 import {
-  getEdgeLevel,
   HexWFCCell,
   HexWFCAdjacencyRules,
+  CUBE_DIRS,
+  cubeKey,
+  parseCubeKey,
+  cubeToOffset,
 } from '../HexWFCCore.js'
 
-// Coordinate conversion (inlined - small functions, avoid import chain)
-function offsetToCube(col, row) {
-  const q = col - Math.floor(row / 2)
-  const r = row
-  const s = -q - r
-  return { q, r, s }
-}
-
-function cubeToOffset(q, r, s) {
-  const col = q + Math.floor(r / 2)
-  const row = r
-  return { col, row }
-}
-
 // ============================================================================
-// WFC Solver (worker-only)
+// WFC Solver (cube-coordinate based)
 // ============================================================================
 
 class HexWFCSolver {
-  constructor(width, height, rules, options = {}) {
-    this.width = width
-    this.height = height
+  constructor(rules, options = {}) {
     this.rules = rules
     this.options = {
       maxRestarts: options.maxRestarts ?? 10,
       tileTypes: options.tileTypes ?? null,
-      padding: options.padding ?? 0,
-      gridRadius: options.gridRadius ?? 0,
-      globalCenterCube: options.globalCenterCube ?? { q: 0, r: 0, s: 0 },
       weights: options.weights ?? {},
       log: options.log ?? (() => {}),
       attemptNum: options.attemptNum ?? 0,
     }
     this.log = this.options.log
-    this.grid = []
-    this.neighbors = []
+    // Map<cubeKey, HexWFCCell> — cells to solve
+    this.cells = new Map()
+    // Map<cubeKey, {type, rotation, level}> — collapsed neighbors (read-only constraints)
+    this.fixedCells = new Map()
+    // Map<cubeKey, [{key, dir, returnDir}]> — precomputed neighbors
+    this.neighbors = new Map()
     this.propagationStack = []
     this.restartCount = 0
     this.lastContradiction = null
@@ -61,20 +47,7 @@ class HexWFCSolver {
     this.collapseOrder = []
   }
 
-  toGlobalCoords(x, z) {
-    const { padding, gridRadius, globalCenterCube } = this.options
-    const localCol = x - padding - gridRadius
-    const localRow = z - padding - gridRadius
-    const localCube = offsetToCube(localCol, localRow)
-    const globalCube = {
-      q: localCube.q + globalCenterCube.q,
-      r: localCube.r + globalCenterCube.r,
-      s: localCube.s + globalCenterCube.s
-    }
-    return cubeToOffset(globalCube.q, globalCube.r, globalCube.s)
-  }
-
-  init() {
+  init(solveCells, fixedCells) {
     this.collapseOrder = []
     const types = this.options.tileTypes ?? TILE_LIST.map((_, i) => i)
 
@@ -100,63 +73,84 @@ class HexWFCSolver {
       }
     }
 
-    this.grid = []
-    this.neighbors = []
-    for (let x = 0; x < this.width; x++) {
-      this.grid[x] = []
-      this.neighbors[x] = []
-      for (let z = 0; z < this.height; z++) {
-        this.grid[x][z] = new HexWFCCell(allStates)
-        this.neighbors[x][z] = this.computeNeighbors(x, z)
+    // Create solve cells with full possibility space
+    this.cells = new Map()
+    for (const { q, r, s } of solveCells) {
+      const key = cubeKey(q, r, s)
+      this.cells.set(key, new HexWFCCell(allStates))
+    }
+
+    // Store fixed cells
+    this.fixedCells = new Map()
+    for (const fc of fixedCells) {
+      const key = cubeKey(fc.q, fc.r, fc.s)
+      this.fixedCells.set(key, { type: fc.type, rotation: fc.rotation, level: fc.level })
+    }
+
+    // Precompute neighbors for all solve cells
+    this.neighbors = new Map()
+    for (const { q, r, s } of solveCells) {
+      const key = cubeKey(q, r, s)
+      const nbrs = []
+      for (let i = 0; i < 6; i++) {
+        const dir = CUBE_DIRS[i]
+        const nq = q + dir.dq
+        const nr = r + dir.dr
+        const ns = s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+        // Neighbor can be in cells (constrainable) or fixedCells (read-only) or absent (open)
+        if (this.cells.has(nKey) || this.fixedCells.has(nKey)) {
+          nbrs.push({ key: nKey, dir: HexDir[i], returnDir: HexOpposite[HexDir[i]] })
+        }
       }
+      this.neighbors.set(key, nbrs)
+    }
+
+    // Also build neighbor entries for fixed cells (pointing to solve cells only)
+    // so propagation FROM fixed cells can constrain adjacent solve cells
+    for (const fc of fixedCells) {
+      const key = cubeKey(fc.q, fc.r, fc.s)
+      const nbrs = []
+      for (let i = 0; i < 6; i++) {
+        const dir = CUBE_DIRS[i]
+        const nq = fc.q + dir.dq
+        const nr = fc.r + dir.dr
+        const ns = fc.s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+        if (this.cells.has(nKey)) {
+          nbrs.push({ key: nKey, dir: HexDir[i], returnDir: HexOpposite[HexDir[i]] })
+        }
+      }
+      this.neighbors.set(key, nbrs)
     }
 
     this.propagationStack = []
   }
 
-  computeNeighbors(x, z) {
-    const neighbors = []
-    for (const dir of HexDir) {
-      const offset = getHexNeighborOffset(x, z, dir)
-      const nx = x + offset.dx
-      const nz = z + offset.dz
-      if (nx >= 0 && nx < this.width && nz >= 0 && nz < this.height) {
-        neighbors.push({ x: nx, z: nz, dir, returnDir: HexOpposite[dir] })
-      }
-    }
-    return neighbors
-  }
-
   findLowestEntropyCell() {
     let minEntropy = Infinity
-    let minCell = null
-    let minX = -1, minZ = -1
+    let minKey = null
 
-    for (let x = 0; x < this.width; x++) {
-      for (let z = 0; z < this.height; z++) {
-        const cell = this.grid[x][z]
-        if (!cell.collapsed && cell.possibilities.size > 0) {
-          const entropy = cell.entropy
-          if (entropy < minEntropy) {
-            minEntropy = entropy
-            minCell = cell
-            minX = x
-            minZ = z
-          }
+    for (const [key, cell] of this.cells) {
+      if (!cell.collapsed && cell.possibilities.size > 0) {
+        const entropy = cell.entropy
+        if (entropy < minEntropy) {
+          minEntropy = entropy
+          minKey = key
         }
       }
     }
 
-    return minCell ? { cell: minCell, x: minX, z: minZ } : null
+    return minKey
   }
 
-  collapse(x, z) {
-    const cell = this.grid[x][z]
-    if (cell.collapsed || cell.possibilities.size === 0) return false
+  collapse(key) {
+    const cell = this.cells.get(key)
+    if (!cell || cell.collapsed || cell.possibilities.size === 0) return false
 
     const possArray = Array.from(cell.possibilities)
-    const weights = possArray.map(key => {
-      const state = HexWFCCell.parseKey(key)
+    const weights = possArray.map(k => {
+      const state = HexWFCCell.parseKey(k)
       const customWeight = this.options.weights[state.type]
       const defaultWeight = TILE_LIST[state.type]?.weight ?? 1
       return customWeight ?? defaultWeight
@@ -174,25 +168,55 @@ class HexWFCSolver {
 
     const state = HexWFCCell.parseKey(selectedKey)
     cell.collapse(state)
-    this.propagationStack.push({ x, z })
-    this.collapseOrder.push({ gridX: x, gridZ: z, type: state.type, rotation: state.rotation, level: state.level })
+    this.propagationStack.push(key)
+    const { q, r: cr, s } = parseCubeKey(key)
+    this.collapseOrder.push({ q, r: cr, s, type: state.type, rotation: state.rotation, level: state.level })
 
     return true
   }
 
+  /**
+   * Get edge info for a given state at a given direction.
+   * Works for both solve cells (by stateKey) and fixed cells (by stored data).
+   */
+  getFixedCellEdge(key, dir) {
+    const fc = this.fixedCells.get(key)
+    if (!fc) return null
+    const stateKey = HexWFCCell.stateKey(fc)
+    const edgeInfo = this.rules.stateEdges.get(stateKey)?.[dir]
+    return edgeInfo
+  }
+
   propagate() {
     while (this.propagationStack.length > 0) {
-      const { x, z } = this.propagationStack.pop()
-      const cell = this.grid[x][z]
+      const key = this.propagationStack.pop()
 
-      for (const { x: nx, z: nz, dir, returnDir } of this.neighbors[x][z]) {
-        const neighbor = this.grid[nx][nz]
-        if (neighbor.collapsed) continue
+      // Determine if this is a solve cell or fixed cell
+      const cell = this.cells.get(key)
+      const isFixed = !cell
+      let possibilities
+
+      if (isFixed) {
+        // Fixed cell: create a single-element set from its state
+        const fc = this.fixedCells.get(key)
+        if (!fc) continue
+        possibilities = new Set([HexWFCCell.stateKey(fc)])
+      } else {
+        possibilities = cell.possibilities
+      }
+
+      const nbrs = this.neighbors.get(key)
+      if (!nbrs) continue
+
+      for (const { key: nKey, dir, returnDir } of nbrs) {
+        const neighbor = this.cells.get(nKey)
+        // Only constrain solve cells (never modify fixed cells)
+        if (!neighbor || neighbor.collapsed) continue
 
         const allowedInNeighbor = new Set()
         const lookedUp = {}
 
-        for (const stateKey of cell.possibilities) {
+        for (const stateKey of possibilities) {
           const edgeInfo = this.rules.stateEdges.get(stateKey)?.[dir]
           if (!edgeInfo) continue
 
@@ -202,7 +226,7 @@ class HexWFCSolver {
           lookedUp[edgeInfo.type][edgeInfo.level] = true
 
           const matches = this.rules.getByEdge(edgeInfo.type, returnDir, edgeInfo.level)
-          for (const key of matches) allowedInNeighbor.add(key)
+          for (const k of matches) allowedInNeighbor.add(k)
         }
 
         let changed = false
@@ -214,133 +238,95 @@ class HexWFCSolver {
         }
 
         if (neighbor.possibilities.size === 0) {
-          const sourceState = cell.collapsed ? HexWFCCell.parseKey([...cell.possibilities][0]) : null
+          const { q, r, s } = parseCubeKey(nKey)
+          const failedOffset = cubeToOffset(q, r, s)
           this.lastContradiction = {
-            sourceX: x, sourceZ: z,
-            sourceState,
-            failedX: nx, failedZ: nz,
+            failedKey: nKey,
+            failedQ: q, failedR: r, failedS: s,
+            failedCol: failedOffset.col, failedRow: failedOffset.row,
+            sourceKey: key,
             dir,
-            allowedEdges: [...new Set([...cell.possibilities].map(k => {
-              const e = this.rules.stateEdges.get(k)?.[dir]
-              return e ? `${e.type}@${e.level}` : '?'
-            }))],
-            lastAllowed: [...allowedInNeighbor].slice(0, 10).map(k => {
-              const s = HexWFCCell.parseKey(k)
-              const name = TILE_LIST[s.type]?.name || s.type
-              return `${name} r${s.rotation} l${s.level}`
-            })
           }
           return false
         }
 
         if (changed) {
-          this.propagationStack.push({ x: nx, z: nz })
+          this.propagationStack.push(nKey)
         }
       }
     }
     return true
   }
 
-  solve(seedTiles = [], gridId = '?') {
+  solve(solveCells, fixedCells, initialCollapses = []) {
     const baseAttempt = this.options.attemptNum || 0
     const tryNum = baseAttempt + this.restartCount
-    this.log(`WFC START (try ${tryNum}, ${seedTiles.length} seeds)`)
+    this.log(`WFC START (try ${tryNum}, ${solveCells.length} cells, ${fixedCells.length} fixed)`)
 
-    this.init()
+    this.init(solveCells, fixedCells)
 
-    for (const seed of seedTiles) {
-      const cell = this.grid[seed.x]?.[seed.z]
+    // Apply initial collapses (e.g. center grass, water edge for first grid)
+    for (const ic of initialCollapses) {
+      const key = cubeKey(ic.q, ic.r, ic.s)
+      const cell = this.cells.get(key)
       if (cell && !cell.collapsed) {
-        const state = { type: seed.type, rotation: seed.rotation ?? 0, level: seed.level ?? 0 }
-        const stateKey = HexWFCCell.stateKey(state)
-
-        if (!this.rules.stateEdges.has(stateKey)) {
-          const tileName = TILE_LIST[state.type]?.name || state.type
-          this.log(`  WARNING: Seed state "${stateKey}" (${tileName} r${state.rotation} l${state.level}) not in rules!`)
-        }
-
+        const state = { type: ic.type, rotation: ic.rotation ?? 0, level: ic.level ?? 0 }
         cell.collapse(state)
-        this.collapseOrder.push({ gridX: seed.x, gridZ: seed.z, type: state.type, rotation: state.rotation, level: state.level })
-        this.propagationStack.push({ x: seed.x, z: seed.z })
+        this.collapseOrder.push({ q: ic.q, r: ic.r, s: ic.s, type: state.type, rotation: state.rotation, level: state.level })
+        this.propagationStack.push(key)
       }
     }
 
-    if (seedTiles.length > 0 && !this.propagate()) {
+    // Propagate from fixed cells into adjacent solve cells
+    for (const fc of fixedCells) {
+      const key = cubeKey(fc.q, fc.r, fc.s)
+      this.propagationStack.push(key)
+    }
+
+    // Also propagate from initial collapses
+    if ((fixedCells.length > 0 || initialCollapses.length > 0) && !this.propagate()) {
       this.seedingContradiction = this.lastContradiction
       this.log('WFC failed - propagation failed after seeding')
       if (this.seedingContradiction) {
         const c = this.lastContradiction
-        const failG = this.toGlobalCoords(c.failedX, c.failedZ)
-        this.log(`  FAILED CELL: (${failG.col},${failG.row})`)
-
-        this.log(`  REQUIRED EDGES:`)
-        for (const dir of HexDir) {
-          const offset = getHexNeighborOffset(c.failedX, c.failedZ, dir)
-          const nx = c.failedX + offset.dx
-          const nz = c.failedZ + offset.dz
-          const neighbor = this.grid[nx]?.[nz]
-          if (neighbor && neighbor.collapsed) {
-            const neighborState = HexWFCCell.parseKey([...neighbor.possibilities][0])
-            const neighborName = TILE_LIST[neighborState.type]?.name || neighborState.type
-            const oppositeDir = HexOpposite[dir]
-
-            let neighborEdges = this.rules.stateEdges.get([...neighbor.possibilities][0])
-            let requiredEdge = neighborEdges?.[oppositeDir]
-
-            if (!requiredEdge) {
-              const def = TILE_LIST[neighborState.type]
-              if (def) {
-                const rotatedEdges = rotateHexEdges(def.edges, neighborState.rotation)
-                const edgeType = rotatedEdges[oppositeDir]
-                const edgeLevel = getEdgeLevel(neighborState.type, neighborState.rotation, oppositeDir, neighborState.level)
-                requiredEdge = { type: edgeType, level: edgeLevel }
-              }
-            }
-
-            const nG = this.toGlobalCoords(nx, nz)
-            this.log(`    ${dir}: ${neighborName} r${neighborState.rotation} l${neighborState.level} @(${nG.col},${nG.row}) requires ${oppositeDir}→${requiredEdge?.type}@${requiredEdge?.level}`)
-          }
-        }
+        this.log(`  FAILED CELL: (${c.failedCol},${c.failedRow})`)
       }
       return null
     }
 
     while (true) {
-      const target = this.findLowestEntropyCell()
+      const targetKey = this.findLowestEntropyCell()
 
-      if (!target) {
+      if (!targetKey) {
         return this.extractResult()
       }
 
-      if (!this.collapse(target.x, target.z)) {
+      if (!this.collapse(targetKey)) {
         return null
       }
 
       if (!this.propagate()) {
         this.restartCount++
-        this.log(`${gridId} WFC fail (contradiction)`)
+        this.log(`WFC fail (contradiction)`)
         if (this.restartCount >= this.options.maxRestarts) {
           return null
         }
-        return this.solve(seedTiles, gridId)
+        return this.solve(solveCells, fixedCells, initialCollapses)
       }
     }
   }
 
   extractResult() {
     const result = []
-    for (let x = 0; x < this.width; x++) {
-      for (let z = 0; z < this.height; z++) {
-        const cell = this.grid[x][z]
-        if (cell.tile) {
-          result.push({
-            gridX: x,
-            gridZ: z,
-            type: cell.tile.type,
-            rotation: cell.tile.rotation,
-            level: cell.tile.level,
-          })
-        }
+    for (const [key, cell] of this.cells) {
+      if (cell.tile) {
+        const { q, r, s } = parseCubeKey(key)
+        result.push({
+          q, r, s,
+          type: cell.tile.type,
+          rotation: cell.tile.rotation,
+          level: cell.tile.level,
+        })
       }
     }
     return result
@@ -354,10 +340,11 @@ class HexWFCSolver {
 let currentRequestId = null
 
 self.onmessage = function(e) {
-  const { type, id, width, height, seeds, options } = e.data
+  const { type, id } = e.data
 
   if (type === 'solve') {
     currentRequestId = id
+    const { solveCells, fixedCells, options } = e.data
 
     if (options?.seed != null) {
       setSeed(options.seed)
@@ -366,7 +353,7 @@ self.onmessage = function(e) {
     const tileTypes = options?.tileTypes ?? null
     const rules = HexWFCAdjacencyRules.fromTileDefinitions(tileTypes)
 
-    const solver = new HexWFCSolver(width, height, rules, {
+    const solver = new HexWFCSolver(rules, {
       ...options,
       log: (message) => {
         if (currentRequestId === id) {
@@ -375,7 +362,11 @@ self.onmessage = function(e) {
       }
     })
 
-    const result = solver.solve(seeds, options?.gridId)
+    const result = solver.solve(
+      solveCells,
+      fixedCells,
+      options?.initialCollapses ?? []
+    )
     const collapseOrder = solver.collapseOrder || []
     const seedingContradiction = solver.seedingContradiction
     const lastContradiction = solver.lastContradiction
