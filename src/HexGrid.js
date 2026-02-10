@@ -616,11 +616,15 @@ export class HexGrid {
         duration: ANIM_DURATION,
         ease: 'power1.out',
         onUpdate: () => {
-          dummy.position.set(item.x, anim.y, item.z)
-          dummy.rotation.y = item.rotationY
-          dummy.scale.setScalar(anim.scale)
-          dummy.updateMatrix()
-          item.mesh.setMatrixAt(item.instanceId, dummy.matrix)
+          try {
+            dummy.position.set(item.x, anim.y, item.z)
+            dummy.rotation.y = item.rotationY
+            dummy.scale.setScalar(anim.scale)
+            dummy.updateMatrix()
+            item.mesh.setMatrixAt(item.instanceId, dummy.matrix)
+          } catch (_) {
+            // Instance may have been deleted by decoration repopulation
+          }
         }
       })
     }

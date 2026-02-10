@@ -32,6 +32,7 @@ class HexWFCSolver {
       weights: options.weights ?? {},
       log: options.log ?? (() => {}),
       attemptNum: options.attemptNum ?? 0,
+      previousStates: options.previousStates ?? null,
     }
     this.log = this.options.log
     // Map<cubeKey, HexWFCCell> — cells to solve
@@ -125,6 +126,14 @@ class HexWFCSolver {
     }
 
     this.propagationStack = []
+
+    // Store previous states for overlap cell similarity bias
+    this.previousStates = new Map()
+    if (this.options.previousStates) {
+      for (const [key, state] of Object.entries(this.options.previousStates)) {
+        this.previousStates.set(key, state)
+      }
+    }
   }
 
   findLowestEntropyCell() {
@@ -155,6 +164,18 @@ class HexWFCSolver {
       const defaultWeight = TILE_LIST[state.type]?.weight ?? 1
       return customWeight ?? defaultWeight
     })
+
+    // Boost weight of overlap cell's original tile to reduce visual churn
+    const prevState = this.previousStates?.get(key)
+    if (prevState) {
+      const prevStateKey = HexWFCCell.stateKey(prevState)
+      for (let i = 0; i < possArray.length; i++) {
+        if (possArray[i] === prevStateKey) {
+          weights[i] *= 100
+        }
+      }
+    }
+
     const totalWeight = weights.reduce((a, b) => a + b, 0)
     let r = random() * totalWeight
     let selectedKey = possArray[0]

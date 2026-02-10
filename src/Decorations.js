@@ -507,6 +507,42 @@ export class Decorations {
   }
 
   /**
+   * Remove decorations only on a specific tile position
+   * @param {number} gridX - Tile grid X
+   * @param {number} gridZ - Tile grid Z
+   */
+  clearDecorationsAt(gridX, gridZ) {
+    if (this.treeMesh) {
+      const removed = []
+      this.trees = this.trees.filter(tree => {
+        if (tree.tile.gridX === gridX && tree.tile.gridZ === gridZ) {
+          this.treeMesh.deleteInstance(tree.instanceId)
+          return false
+        }
+        return true
+      })
+    }
+    if (this.buildingMesh) {
+      this.buildings = this.buildings.filter(building => {
+        if (building.tile.gridX === gridX && building.tile.gridZ === gridZ) {
+          this.buildingMesh.deleteInstance(building.instanceId)
+          return false
+        }
+        return true
+      })
+    }
+    if (this.bridgeMesh) {
+      this.bridges = this.bridges.filter(bridge => {
+        if (bridge.tile.gridX === gridX && bridge.tile.gridZ === gridZ) {
+          this.bridgeMesh.deleteInstance(bridge.instanceId)
+          return false
+        }
+        return true
+      })
+    }
+  }
+
+  /**
    * Dispose of all resources
    */
   dispose() {
