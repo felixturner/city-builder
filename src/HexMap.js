@@ -877,8 +877,12 @@ export class HexMap {
             const gridX = localOffset.col + sourceGrid.gridRadius
             const gridZ = localOffset.row + sourceGrid.gridRadius
             sourceGrid.replaceTile(gridX, gridZ, solved.type, solved.rotation, solved.level)
-            // Remove decorations only on this changed cell
+            // Remove old decorations and add bridge if new tile is a crossing
             sourceGrid.decorations?.clearDecorationsAt(gridX, gridZ)
+            const replacedTile = sourceGrid.hexGrid[gridX]?.[gridZ]
+            if (replacedTile) {
+              sourceGrid.decorations?.addBridgeAt(replacedTile, sourceGrid.gridRadius)
+            }
           }
         }
       }

@@ -419,6 +419,12 @@ export class HexGrid {
       return null
     }
 
+    // Kill any running drop animation on this tile
+    if (oldTile._anim) {
+      gsap.killTweensOf(oldTile._anim)
+      oldTile._anim = null
+    }
+
     // Update tile data
     oldTile.type = newType
     oldTile.rotation = newRotation
@@ -506,6 +512,7 @@ export class HexGrid {
 
         // Animate tile from above
         const anim = { y: targetY + DROP_HEIGHT, scale: 1 }
+        tile._anim = anim
         gsap.to(anim, {
           y: targetY,
           duration: ANIM_DURATION,

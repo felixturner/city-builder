@@ -162,9 +162,9 @@ export class GUIManager {
       demo.city.setHelpersVisible(allParams.debug.hexGrid)
     } }, 'regen').name('Regen')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
-    gui.add({ buildAll: () => demo.city.autoExpand([
+    gui.add({ autoBuild: () => demo.city.autoExpand([
       [1,-1],[1,0],[0,1],[-1,0],[-1,1],[1,1],[0,2],[-1,-1],[-2,0],[-2,1],[-2,-1],[0,-1]
-    ]) }, 'buildAll').name('Build All')
+    ]) }, 'autoBuild').name('Auto-Build')
 
     gui.add({
       copyState: () => {

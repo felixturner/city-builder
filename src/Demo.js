@@ -92,7 +92,7 @@ export class Demo {
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
-    const seed = Math.floor(Math.random() * 1000000)
+    const seed = 225730 // Math.floor(Math.random() * 1000000)
     setSeed(seed)
     this.seed = seed
 
