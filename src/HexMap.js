@@ -10,10 +10,10 @@ import {
 import WFCWorker from './workers/wfc.worker.js?worker'
 import { uniform, varyingProperty, materialColor, vec3 } from 'three/tsl'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
-import { HexWFCAdjacencyRules, edgesCompatible, getEdgeLevel } from './HexWFC.js'
+import { HexWFCAdjacencyRules, edgesCompatible, getEdgeLevel } from './HexWFCCore.js'
 import { setStatus } from './Demo.js'
 import { TILE_LIST, TileType, HexDir, HexOpposite, getHexNeighborOffset, rotateHexEdges } from './HexTileData.js'
-import { HexTileGeometry, isInHexRadius } from './HexTiles.js'
+import { HexTile, HexTileGeometry, isInHexRadius } from './HexTiles.js'
 import { HexGrid, HexGridState } from './HexGrid.js'
 import {
   GridDirection,
@@ -71,6 +71,7 @@ export class HexMap {
     this.droppedSeeds = new Set()  // Track global coords of dropped seeds for label highlighting
     this.failedCells = new Set()   // Track global coords of cells that caused WFC failures
     this.replacedSeeds = new Set() // Track global coords of replaced seeds for label highlighting
+    this.seedStats = { dropped: {}, replaced: {} } // Running tally by tile name
 
     // Interaction
     this.raycaster = new Raycaster()
@@ -301,11 +302,15 @@ export class HexMap {
 
     const params = Demo.instance?.params ?? this.params
 
-    await grid.populate(this.hexWfcRules, seedTiles, {
+    await grid.populate(seedTiles, {
       seed: params?.roads?.wfcSeed ?? null,
       seedWaterEdge: seedTiles.length === 0,
       tileTypes: this.getDefaultTileTypes(),
-      onSeedDropped: (globalCoord) => this.droppedSeeds.add(globalCoord),
+      onSeedDropped: (globalCoord, seed) => {
+        this.droppedSeeds.add(globalCoord)
+        const name = TILE_LIST[seed?.type]?.name || '?'
+        this.seedStats.dropped[name] = (this.seedStats.dropped[name] || 0) + 1
+      },
       onCellFailed: (globalCoord) => this.failedCells.add(globalCoord),
       // Try to replace a seed tile instead of dropping it
       onTryReplaceSeed: (seed, currentSeeds) => {
@@ -340,10 +345,6 @@ export class HexMap {
           let compatibleWithSeeds = true
           const typeName = TILE_LIST[replacement.type]?.name
 
-          // Log all 6 directions for this candidate
-          const seedGlobal = seedToGlobal(seed)
-          console.log(`%c    [WFC] Testing ${typeName} rot=${replacement.rotation} at ${seedGlobalStr(seed)}`, 'color: blue')
-
           for (const dir of HexDir) {
             const offset = getHexNeighborOffset(seed.x, seed.z, dir)
             const nx = seed.x + offset.dx
@@ -360,22 +361,17 @@ export class HexMap {
               const theirEdge = adjacentEdges[HexOpposite[dir]]
               const theirLevel = getEdgeLevel(adjacentSeed.type, adjacentSeed.rotation, HexOpposite[dir], adjacentSeed.level ?? 0)
 
-              const adjTypeName = TILE_LIST[adjacentSeed.type]?.name
-              const isMatch = edgesCompatible(myEdge, myLevel, theirEdge, theirLevel)
-              const droppedFlag = adjacentSeed.dropped ? ' [DROPPED]' : ''
-              console.log(`%c      ${dir}: ${myEdge}@${myLevel} vs ${adjTypeName}${seedGlobalStr(adjacentSeed)}${droppedFlag} ${HexOpposite[dir]}→${theirEdge}@${theirLevel} ${isMatch ? '✓' : '✗'}`, isMatch ? 'color: blue' : 'color: red')
-
-              if (!isMatch) {
+              if (!edgesCompatible(myEdge, myLevel, theirEdge, theirLevel)) {
                 compatibleWithSeeds = false
                 break
               }
-            } else {
-              console.log(`%c      ${dir}: ${myEdge}@${myLevel} → no seed`, 'color: gray')
             }
           }
 
           if (compatibleWithSeeds) {
-            console.log(`%c    [WFC] ✓ APPLYING: ${typeName} rot=${replacement.rotation}`, 'color: green; font-weight: bold')
+            // Track replacement in seed stats
+            const origName = TILE_LIST[seed.type]?.name || '?'
+            this.seedStats.replaced[origName] = (this.seedStats.replaced[origName] || 0) + 1
             // Found a compatible replacement
             const seedGlobal = localToGlobalCoords(seed.sourceX, seed.sourceZ, sourceGrid.gridRadius, sourceGrid.globalCenterCube)
             this.replacedSeeds.add(`${seedGlobal.col},${seedGlobal.row}`)
@@ -392,7 +388,7 @@ export class HexMap {
         return false  // No compatible candidate found for this edge type
       },
       // Pass worker solve function
-      solveWfcAsync: this.wfcWorker ? (w, h, s, o) => this.solveWfcAsync(w, h, s, o) : null,
+      solveWfcAsync: (w, h, s, o) => this.solveWfcAsync(w, h, s, o),
       // Animation callbacks
       onSolveStart: () => grid.placeholder?.startSpinning(),
       onSolveEnd: () => grid.placeholder?.stopSpinning(),
@@ -552,11 +548,6 @@ export class HexMap {
   async onGridClick(grid) {
     if (grid.state !== HexGridState.PLACEHOLDER) return
 
-    // Clear debug tracking from previous grid generation
-    this.droppedSeeds.clear()
-    this.failedCells.clear()
-    this.replacedSeeds.clear()
-
     const gridKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
 
     // Find ALL populated neighbors and collect their edge tiles as seeds
@@ -647,14 +638,16 @@ export class HexMap {
         }
 
         if (compatibleWithSeeds) {
+          const origName = TILE_LIST[seed.type]?.name || seed.type
+          const typeName = TILE_LIST[replacement.type]?.name || replacement.type
+          this.seedStats.replaced[origName] = (this.seedStats.replaced[origName] || 0) + 1
           replacedSeeds.add(globalKey)
           this.replacedSeeds.add(globalKey)  // Track for label highlighting
           sourceGrid.replaceTile(seed.sourceX, seed.sourceZ, replacement.type, replacement.rotation, replacement.level)
           seed.type = replacement.type
           seed.rotation = replacement.rotation
           seed.level = replacement.level
-          const typeName = TILE_LIST[replacement.type]?.name || replacement.type
-          console.log(`%cReplaced tile (${globalKey}) with ${typeName} rot=${replacement.rotation}`, 'color: blue')
+          console.log(`%cReplaced tile (${globalKey}) ${origName} → ${typeName} rot=${replacement.rotation}`, 'color: blue')
           return true
         }
       }
@@ -675,7 +668,9 @@ export class HexMap {
       } else {
         // Couldn't replace - drop it
         this.droppedSeeds.add(seedGlobal)
-        console.log(`%cDropping seed (${seedGlobal}) ${conflict.seed.type} - adjacent conflict`, 'color: orange')
+        const droppedName = conflict.seed.type
+        this.seedStats.dropped[droppedName] = (this.seedStats.dropped[droppedName] || 0) + 1
+        console.log(`%cDropping seed (${seedGlobal}) ${droppedName} - adjacent conflict`, 'color: red')
       }
     }
 
@@ -709,7 +704,8 @@ export class HexMap {
         })
         validSeeds = validSeeds.filter(s => s !== actualSeed)
         this.droppedSeeds.add(conflictSeedInfo.global)
-        console.log(`%cDropping seed (${conflictSeedInfo.global}) ${conflictSeedInfo.type} - ${validSeeds.length} seeds remain`, 'color: orange')
+        this.seedStats.dropped[conflictSeedInfo.type] = (this.seedStats.dropped[conflictSeedInfo.type] || 0) + 1
+        console.log(`%cDropping seed (${conflictSeedInfo.global}) ${conflictSeedInfo.type} - ${validSeeds.length} seeds remain`, 'color: red')
       }
 
       validation = validateSeedConflicts(validSeeds, this.hexWfcRules, grid.gridRadius, gridKey, grid.globalCenterCube)
@@ -720,34 +716,25 @@ export class HexMap {
     }
 
     // DEBUG: Final check for any remaining adjacent conflicts before WFC
-    console.log(`%c=== PRE-WFC SEED CHECK (${validSeeds.length} seeds) ===`, 'color: dodgerblue; font-weight: bold')
-    const seedMapDebug = new Map()
-    for (const seed of validSeeds) {
-      seedMapDebug.set(`${seed.x},${seed.z}`, seed)
-    }
-    for (const seed of validSeeds) {
-      for (const dir of HexDir) {
-        const offset = getHexNeighborOffset(seed.x, seed.z, dir)
-        const neighborKey = `${seed.x + offset.dx},${seed.z + offset.dz}`
-        const neighborSeed = seedMapDebug.get(neighborKey)
-        if (neighborSeed && neighborSeed !== seed) {
-          const seedEdges = rotateHexEdges(TILE_LIST[seed.type]?.edges || {}, seed.rotation)
-          const neighborEdges = rotateHexEdges(TILE_LIST[neighborSeed.type]?.edges || {}, neighborSeed.rotation)
-          const seedEdge = seedEdges[dir]
-          const neighborEdge = neighborEdges[HexOpposite[dir]]
-          const seedLevel = getEdgeLevel(seed.type, seed.rotation, dir, seed.level ?? 0)
-          const neighborLevel = getEdgeLevel(neighborSeed.type, neighborSeed.rotation, HexOpposite[dir], neighborSeed.level ?? 0)
-          if (!edgesCompatible(seedEdge, seedLevel, neighborEdge, neighborLevel)) {
-            const sGlobal = seedToGlobal(seed)
-            const nGlobal = seedToGlobal(neighborSeed)
-            const sType = TILE_LIST[seed.type]?.name
-            const nType = TILE_LIST[neighborSeed.type]?.name
-            console.log(`%c  CONFLICT: (${sGlobal.col},${sGlobal.row}) ${sType} ${dir}→${seedEdge}@${seedLevel} vs (${nGlobal.col},${nGlobal.row}) ${nType} ${HexOpposite[dir]}→${neighborEdge}@${neighborLevel}`, 'color: red')
-          }
-        }
-      }
-    }
-    console.log(`%c=== END PRE-WFC CHECK ===`, 'color: blue')
+    // const seedMapDebug = new Map()
+    // for (const seed of validSeeds) seedMapDebug.set(`${seed.x},${seed.z}`, seed)
+    // for (const seed of validSeeds) {
+    //   for (const dir of HexDir) {
+    //     const offset = getHexNeighborOffset(seed.x, seed.z, dir)
+    //     const neighborSeed = seedMapDebug.get(`${seed.x + offset.dx},${seed.z + offset.dz}`)
+    //     if (neighborSeed && neighborSeed !== seed) {
+    //       const seedEdges = rotateHexEdges(TILE_LIST[seed.type]?.edges || {}, seed.rotation)
+    //       const neighborEdges = rotateHexEdges(TILE_LIST[neighborSeed.type]?.edges || {}, neighborSeed.rotation)
+    //       const seedEdge = seedEdges[dir], neighborEdge = neighborEdges[HexOpposite[dir]]
+    //       const seedLevel = getEdgeLevel(seed.type, seed.rotation, dir, seed.level ?? 0)
+    //       const neighborLevel = getEdgeLevel(neighborSeed.type, neighborSeed.rotation, HexOpposite[dir], neighborSeed.level ?? 0)
+    //       if (!edgesCompatible(seedEdge, seedLevel, neighborEdge, neighborLevel)) {
+    //         const sGlobal = seedToGlobal(seed), nGlobal = seedToGlobal(neighborSeed)
+    //         console.log(`%c  CONFLICT: (${sGlobal.col},${sGlobal.row}) ${TILE_LIST[seed.type]?.name} ${dir}→${seedEdge}@${seedLevel} vs (${nGlobal.col},${nGlobal.row}) ${TILE_LIST[neighborSeed.type]?.name} ${HexOpposite[dir]}→${neighborEdge}@${neighborLevel}`, 'color: red')
+    //       }
+    //     }
+    //   }
+    // }
 
     // Populate this grid with neighbor seeds
     const params = Demo.instance?.params
@@ -756,6 +743,21 @@ export class HexMap {
       animate: params?.roads?.animateWFC ?? false,
       animateDelay: params?.roads?.animateDelay ?? 20,
     })
+
+    // Log seed stats tally
+    const hasDropped = Object.keys(this.seedStats.dropped).length > 0
+    const hasReplaced = Object.keys(this.seedStats.replaced).length > 0
+    if (hasDropped || hasReplaced) {
+      console.log(`%c[SEED STATS] Running tally:`, 'color: blue; font-weight: bold')
+      if (hasDropped) {
+        const entries = Object.entries(this.seedStats.dropped).sort((a, b) => b[1] - a[1])
+        console.log(`%c  Dropped: ${entries.map(([name, count]) => `${name}×${count}`).join(', ')}`, 'color: red')
+      }
+      if (hasReplaced) {
+        const entries = Object.entries(this.seedStats.replaced).sort((a, b) => b[1] - a[1])
+        console.log(`%c  Replaced: ${entries.map(([name, count]) => `${name}×${count}`).join(', ')}`, 'color: blue')
+      }
+    }
 
     // Create placeholders around this newly populated grid
     this.createAdjacentPlaceholders(gridKey)
@@ -907,19 +909,49 @@ export class HexMap {
       }
     }
 
-    if (placeholderClickables.length === 0) return false
-
     this.raycaster.setFromCamera(pointer, camera)
-    const intersects = this.raycaster.intersectObjects(placeholderClickables)
 
-    if (intersects.length > 0) {
-      const clickable = intersects[0].object
-      if (clickable.userData.isPlaceholder) {
-        // Find the grid that owns this clickable
-        const ownerGrid = clickable.userData.owner?.group?.userData?.hexGrid
-        if (ownerGrid && ownerGrid.onClick) {
-          ownerGrid.onClick()
-          return true
+    // Check placeholders first
+    if (placeholderClickables.length > 0) {
+      const intersects = this.raycaster.intersectObjects(placeholderClickables)
+      if (intersects.length > 0) {
+        const clickable = intersects[0].object
+        if (clickable.userData.isPlaceholder) {
+          const ownerGrid = clickable.userData.owner?.group?.userData?.hexGrid
+          if (ownerGrid && ownerGrid.onClick) {
+            ownerGrid.onClick()
+            return true
+          }
+        }
+      }
+    }
+
+    // Check hex tile meshes for debug logging
+    const hexMeshes = []
+    const meshToGrid = new Map()
+    for (const grid of this.grids.values()) {
+      if (grid.state === HexGridState.POPULATED && grid.hexMesh) {
+        hexMeshes.push(grid.hexMesh)
+        meshToGrid.set(grid.hexMesh, grid)
+      }
+    }
+    if (hexMeshes.length > 0) {
+      const intersects = this.raycaster.intersectObjects(hexMeshes)
+      if (intersects.length > 0) {
+        const hit = intersects[0]
+        const grid = meshToGrid.get(hit.object)
+        const batchId = hit.batchId ?? hit.instanceId
+        if (grid && batchId !== undefined) {
+          const tile = grid.hexTiles.find(t => t.instanceId === batchId)
+          if (tile) {
+            const def = TILE_LIST[tile.type]
+            const globalCube = grid.globalCenterCube ?? { q: 0, r: 0, s: 0 }
+            const global = localToGlobalCoords(tile.gridX, tile.gridZ, grid.gridRadius, globalCube)
+            console.log(
+              `%c[TILE CLICK] (${global.col},${global.row}) ${def?.name || '?'} type=${tile.type} rot=${tile.rotation} level=${tile.level}`,
+              'color: blue'
+            )
+          }
         }
       }
     }
@@ -939,6 +971,7 @@ export class HexMap {
     this.droppedSeeds.clear()
     this.failedCells.clear()
     this.replacedSeeds.clear()
+    this.seedStats = { dropped: {}, replaced: {} }
 
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
@@ -1201,6 +1234,19 @@ export class HexMap {
    * Update tile colors on all populated grids (for debug level visualization)
    */
   updateTileColors() {
+    // Toggle material texture so instance colors fully override (not multiply)
+    const mat = HexTileGeometry.material
+    if (mat) {
+      if (HexTile.debugLevelColors) {
+        if (!mat._savedMap) mat._savedMap = mat.map
+        mat.map = null
+        mat.needsUpdate = true
+      } else if (mat._savedMap) {
+        mat.map = mat._savedMap
+        mat._savedMap = null
+        mat.needsUpdate = true
+      }
+    }
     for (const grid of this.grids.values()) {
       if (grid.state === HexGridState.POPULATED) {
         grid.updateTileColors()

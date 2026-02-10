@@ -68,7 +68,8 @@ export class HexTile {
   static LEVEL_COLORS = [
     new Color(0x44aa44),  // Level 0: green
     new Color(0xcccc44),  // Level 1: yellow
-    new Color(0xcc4444),  // Level 2: red
+    new Color(0xcc8844),  // Level 2: orange
+    new Color(0xcc4444),  // Level 3: red
   ]
   static debugLevelColors = false
 
@@ -88,8 +89,15 @@ export class HexTile {
    */
   updateLevelColor() {
     if (HexTile.debugLevelColors) {
-      const levelColor = HexTile.LEVEL_COLORS[this.level] || HexTile.LEVEL_COLORS[HexTile.LEVEL_COLORS.length - 1]
-      this.color.copy(levelColor)
+      const colors = HexTile.LEVEL_COLORS
+      const baseDef = TILE_LIST[this.type]
+      if (baseDef && baseDef.highEdges && baseDef.highEdges.length > 0) {
+        const lo = colors[this.level] || colors[colors.length - 1]
+        const hi = colors[this.level + (baseDef.levelIncrement ?? 1)] || colors[colors.length - 1]
+        this.color.copy(lo).lerp(hi, 0.5)
+      } else {
+        this.color.copy(colors[this.level] || colors[colors.length - 1])
+      }
     } else {
       this.color.copy(HexTile.DEFAULT_COLOR)
     }

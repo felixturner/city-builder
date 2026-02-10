@@ -8,7 +8,7 @@ import {
 } from './HexTileData.js'
 import { isInHexRadius } from './HexTiles.js'
 import { random } from './SeededRandom.js'
-import { HexWFCCell, edgesCompatible, getEdgeLevel } from './HexWFC.js'
+import { HexWFCCell, edgesCompatible, getEdgeLevel } from './HexWFCCore.js'
 
 // Re-export isInHexRadius for convenience
 export { isInHexRadius }
@@ -302,31 +302,12 @@ export function extractEdgeTiles(hexGrid, gridRadius, direction) {
 export function findCompatibleTiles(rules, edgeType, edgeLevel, returnDir) {
   const results = []
 
-  // Grass edges ignore level - gather from all levels
-  if (edgeType === 'grass') {
-    for (let level = 0; level < LEVELS_COUNT; level++) {
-      const stateKeys = rules.getByEdge(edgeType, returnDir, level)
-      for (const key of stateKeys) {
-        const state = HexWFCCell.parseKey(key)
-        results.push(state)
-      }
-    }
-  } else {
-    // Other edges require exact level match
-    const stateKeys = rules.getByEdge(edgeType, returnDir, edgeLevel)
+  // Strict level match for all edge types (matches WFC solver behavior)
+  const stateKeys = rules.getByEdge(edgeType, returnDir, edgeLevel)
 
-    if (!stateKeys || stateKeys.size === 0) {
-      // Debug: check if the edge type exists in the index at all
-      const hasType = rules.byEdge?.[edgeType]
-      const hasDir = rules.byEdge?.[edgeType]?.[returnDir]
-      const hasLevel = rules.byEdge?.[edgeType]?.[returnDir]?.[edgeLevel]
-      console.warn(`[findCompatibleTiles] No results for edge=${edgeType} dir=${returnDir} level=${edgeLevel}. hasType=${!!hasType} hasDir=${!!hasDir} hasLevel=${!!hasLevel}`)
-    }
-
-    for (const key of stateKeys) {
-      const state = HexWFCCell.parseKey(key)
-      results.push(state)
-    }
+  for (const key of stateKeys) {
+    const state = HexWFCCell.parseKey(key)
+    results.push(state)
   }
 
   return results
@@ -764,7 +745,7 @@ export function findReplacementTiles(seed, sourceHexGrid, gridRadius, sourceGlob
 
   const currentTypeName = TILE_LIST[currentType]?.name || currentType
   const globalCoords = localToGlobalCoords(sourceX, sourceZ, gridRadius, sourceGlobalCenterCube)
-  console.log(`%c  Finding replacements for ${currentTypeName} rot=${currentRotation} @ (${globalCoords.col},${globalCoords.row})`, 'color: gray')
+  // console.log(`%c  Finding replacements for ${currentTypeName} rot=${currentRotation} @ (${globalCoords.col},${globalCoords.row})`, 'color: gray')
 
   // Find which edges connect to actual neighbors in source grid
   // These edges are "locked" - replacement must match them
@@ -841,11 +822,11 @@ export function findReplacementTiles(seed, sourceHexGrid, gridRadius, sourceGlob
     ;[candidates[i], candidates[j]] = [candidates[j], candidates[i]]
   }
 
-  if (candidates.length > 0) {
-    console.log(`%c  → Found ${candidates.length} replacement candidates`, 'color: blue')
-  } else {
-    console.log(`%c  → No replacements found (${Object.keys(lockedEdges).length} locked edges)`, 'color: orange')
-  }
+  // if (candidates.length > 0) {
+  //   console.log(`%c  → Found ${candidates.length} replacement candidates`, 'color: blue')
+  // } else {
+  //   console.log(`%c  → No replacements found (${Object.keys(lockedEdges).length} locked edges)`, 'color: orange')
+  // }
   return candidates
 }
 

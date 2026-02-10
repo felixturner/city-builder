@@ -8,10 +8,11 @@ import {
   LineSegments,
   LineBasicMaterial,
   Color,
+  ArrowHelper,
+  Vector3,
 } from 'three/webgpu'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import gsap from 'gsap'
-import { HexWFCSolver, HexWFCAdjacencyRules } from './HexWFC.js'
 import { random } from './SeededRandom.js'
 import { log } from './Demo.js'
 import { Sounds } from './lib/Sounds.js'
@@ -307,7 +308,6 @@ export class HexGrid {
 
   /**
    * Populate the grid using WFC
-   * @param {HexWFCAdjacencyRules} rules - WFC adjacency rules
    * @param {Array} seedTiles - Seed tiles for WFC [{ x, z, type, rotation, level }]
    *   Seeds can include neighbor tiles from adjacent grids (may be outside hex radius)
    * @param {Object} options - Options for WFC and animation
@@ -315,7 +315,7 @@ export class HexGrid {
    *   - onSolveStart: callback when solve starts (for animation)
    *   - onSolveEnd: callback when solve ends (for animation)
    */
-  async populate(rules, seedTiles = [], options = {}) {
+  async populate(seedTiles = [], options = {}) {
     // Ensure meshes are initialized
     if (!this.hexMesh) {
       await this.initMeshes(HexTileGeometry.geoms)
@@ -405,8 +405,8 @@ export class HexGrid {
     let attempt = 0
     const replacedSeedKeys = new Set()  // Track seeds already replaced
 
-    // Get async solver from options (provided by HexMap)
-    const solveWfcAsync = options.solveWfcAsync ?? null
+    // Async solver (provided by HexMap via worker)
+    const solveWfcAsync = options.solveWfcAsync
 
     // Helper to convert seed coords to global (uses shared utility, adjusted for padding)
     const toGlobalCoords = (x, z) => localToGlobalCoords(x - padding, z - padding, this.gridRadius, globalCenterCube)
@@ -429,30 +429,16 @@ export class HexGrid {
       // Filter out dropped seeds for WFC (they failed, don't constrain WFC with them)
       const activeSeeds = currentSeeds.filter(s => !s.dropped)
 
-      if (solveWfcAsync) {
-        const workerResult = await solveWfcAsync(wfcSize, wfcSize, activeSeeds, solverOptions)
-        if (workerResult.success) {
-          return { success: true, tiles: workerResult.tiles, collapseOrder: workerResult.collapseOrder || [] }
-        }
-        if (workerResult.seedingContradiction) {
-          const { failedX, failedZ } = workerResult.seedingContradiction
-          const failedGlobal = toGlobalCoords(failedX, failedZ)
-          onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
-        }
-        return { success: false }
-      } else {
-        const solver = new HexWFCSolver(wfcSize, wfcSize, rules, solverOptions)
-        const tiles = solver.solve(activeSeeds, gridId)
-        if (tiles) {
-          return { success: true, tiles, collapseOrder: solver.collapseOrder }
-        }
-        if (solver.seedingContradiction) {
-          const { failedX, failedZ } = solver.seedingContradiction
-          const failedGlobal = toGlobalCoords(failedX, failedZ)
-          onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
-        }
-        return { success: false }
+      const workerResult = await solveWfcAsync(wfcSize, wfcSize, activeSeeds, solverOptions)
+      if (workerResult.success) {
+        return { success: true, tiles: workerResult.tiles, collapseOrder: workerResult.collapseOrder || [] }
       }
+      if (workerResult.seedingContradiction) {
+        const { failedX, failedZ } = workerResult.seedingContradiction
+        const failedGlobal = toGlobalCoords(failedX, failedZ)
+        onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
+      }
+      return { success: false }
     }
 
     // Shuffle seeds for random order
@@ -520,7 +506,7 @@ export class HexGrid {
             const globalKey = `${seedGlobal.col},${seedGlobal.row}`
 
             log(`Phase 2: Dropping seed (${globalKey})`, 'color: red')
-            onSeedDropped?.(globalKey)
+            onSeedDropped?.(globalKey, seedToDrop)
             droppedCount++
             seedToDrop.dropped = true
 
@@ -593,6 +579,11 @@ export class HexGrid {
     }
     this.updateMatrices()
     this.populateDecorations()
+
+    // Apply debug level colors if active
+    if (HexTile.debugLevelColors) {
+      this.updateTileColors()
+    }
 
     if (animate) {
       // Hide everything, then animate tiles dropping in (using WFC collapse order)
@@ -991,6 +982,61 @@ export class HexGrid {
       if (tile.instanceId !== null) {
         this.hexMesh.setColorAt(tile.instanceId, tile.color)
       }
+    }
+    this.updateSlopeArrows()
+  }
+
+  // Pointy-top hex direction unit vectors in XZ plane (+X=east, +Z=south)
+  static HEX_DIR_VECTORS = {
+    NE: new Vector3(0.5, 0, -Math.sqrt(3) / 2),
+    E:  new Vector3(1, 0, 0),
+    SE: new Vector3(0.5, 0, Math.sqrt(3) / 2),
+    SW: new Vector3(-0.5, 0, Math.sqrt(3) / 2),
+    W:  new Vector3(-1, 0, 0),
+    NW: new Vector3(-0.5, 0, -Math.sqrt(3) / 2),
+  }
+
+  /**
+   * Add/remove slope direction arrows for debug level visualization
+   */
+  updateSlopeArrows() {
+    // Remove existing arrows
+    if (this.slopeArrows) {
+      for (const arrow of this.slopeArrows) this.group.remove(arrow)
+    }
+    this.slopeArrows = []
+
+    if (!HexTile.debugLevelColors) return
+
+    const LEVEL_HEIGHT = 0.5
+
+    for (const tile of this.hexTiles) {
+      if (!tile.isSlope()) continue
+
+      const highEdges = tile.getHighEdges()
+      if (!highEdges || highEdges.size === 0) continue
+
+      // Average high edge directions to get slope direction
+      const dir = new Vector3()
+      for (const edge of highEdges) {
+        const v = HexGrid.HEX_DIR_VECTORS[edge]
+        dir.x += v.x
+        dir.z += v.z
+      }
+      dir.normalize()
+
+      const pos = HexTileGeometry.getWorldPosition(
+        tile.gridX - this.gridRadius,
+        tile.gridZ - this.gridRadius
+      )
+      const baseDef = TILE_LIST[tile.type]
+      const increment = baseDef.levelIncrement ?? 1
+      const topY = (tile.level + increment) * LEVEL_HEIGHT + 1.0 + 0.3
+
+      const origin = new Vector3(pos.x, topY, pos.z)
+      const arrow = new ArrowHelper(dir, origin, 1.0, 0xffffff, 0.3, 0.15)
+      this.group.add(arrow)
+      this.slopeArrows.push(arrow)
     }
   }
 

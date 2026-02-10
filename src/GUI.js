@@ -99,6 +99,13 @@ export class GUIManager {
     // Store params on demo for single source of truth
     const allParams = demo.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
+    // DPR dropdown (default 1)
+    allParams.renderer.dpr = 1
+    gui.add(allParams.renderer, 'dpr', [1, 1.5, 2]).name('DPR').onChange((v) => {
+      demo.renderer.setPixelRatio(v)
+      demo.onResize()
+    })
+
     // Top-level controls (no folder)
     gui.add(allParams.camera, 'perspective').name('Perspective Cam').onChange((v) => {
       demo.switchCamera(v)
@@ -133,19 +140,9 @@ export class GUIManager {
     gui.add(allParams.debug, 'tileLabels').name('Tile Labels').onChange((v) => {
       demo.city.setTileLabelsVisible(v)
     })
-    gui.add(allParams.debug, 'floor').name('Floor').onChange((v) => {
-      if (demo.city.floor) demo.city.floor.visible = v
-    })
     gui.add(allParams.debug, 'levelColors').name('Level Colors').onChange((v) => {
       HexTile.debugLevelColors = v
       demo.city.updateTileColors()
-    })
-
-    // DPR dropdown (default 1)
-    allParams.renderer.dpr = 1
-    gui.add(allParams.renderer, 'dpr', [1, 1.5, 2]).name('DPR').onChange((v) => {
-      demo.renderer.setPixelRatio(v)
-      demo.onResize()
     })
 
     // Action buttons
