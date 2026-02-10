@@ -120,7 +120,38 @@ Removed the old pre-WFC validation and phase 1/2 recovery (replace/drop) entirel
 - Overlap changed: 9-24 per grid (WFC naturally re-solving boundary cells)
 - Only 1 cell deep into neighbor grids (overlap zone)
 
+## Iteration 4: Edge Cell Grass-Any-Level
+
+### Problem: Seeding contradictions
+When initial propagation from fixed cells runs, some solve cells hit 0 possibilities before any random collapse. This is deterministic — retrying doesn't help. The root cause: a solve cell on the grid boundary gets "squeezed" between its fixed cell neighbors (one side) and other solve cells constrained by different fixed cells (other side). The original tiles were solved together and are mutually compatible, but the new constraint environment from the adjacent grid's fixed cells creates an impossible intersection.
+
+### Fix: Relax grass level matching on edge cells
+Edge cells = solve cells with at least one fixed cell neighbor. For these cells, grass edges can connect at any level during propagation (matching `edgesCompatible()` behavior). Interior cells keep strict level matching. This prevents most seeding contradictions while keeping terrain crisp in the grid interior.
+
+### Changes
+- `src/workers/wfc.worker.js`:
+  - Compute `this.edgeCells` Set in `init()` — solve cells adjacent to fixed cells
+  - In `propagate()`: edge cells and fixed cells use grass-any-level matching; GUI `grassAnyLevel` toggle applies to all cells
+  - Seeding contradiction: detected and returned as `seedingContradiction` (no retries since it's deterministic)
+  - Simplified WFC START log to just `(try N)`
+- `src/GUI.js`:
+  - Added `grassAnyLevel: false` default in roads params
+  - Added "Grass Any Level" toggle in Map folder (applies globally, for comparison/testing)
+  - Updated Auto-Build sequence to 18-grid full map
+- `src/HexMap.js`:
+  - Pass `grassAnyLevel` param to worker
+  - Purple cell marking only for seeding contradictions (not mid-solve failures)
+  - Forward worker logs to console
+- `src/Demo.js`:
+  - Restored random seed
+
+### Results
+- Seeding contradictions eliminated for normal (non-surrounded) grid configurations
+- Surrounded grids (6 neighbors) can still fail with mid-solve contradictions — this is a tile-set limitation, not a bug
+- Edge cells get slightly more terrain variation (grass level flexibility), interior stays crisp
+
 ## Potential Future Improvements
-- Plan 6 (similarity bias): Reduce unnecessary overlap changes by biasing WFC to keep original tiles
 - Plan 3 (sub-complete tileset): Guarantee no contradictions for any edge combination
+- Unglue fixed neighbors: On seeding contradiction, promote failed cell's fixed neighbors to solve cells and retry
+- Backtracking WFC (other branch): Proper backtracking instead of restart-from-scratch
 - Old recovery methods (filterConflictingFixedCells, validateFixedCellConflicts, tryReplaceFixedCell, findReplacementTilesForCell) are still defined but unused — can be removed if overlap proves reliable across more seeds

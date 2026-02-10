@@ -85,6 +85,7 @@ export class GUIManager {
       animateDelay: 6,
       useLevels: true,
       showOutlines: true,
+      grassAnyLevel: false,
     },
     decoration: {
       treeNoiseFreq: 0.05,
@@ -163,7 +164,7 @@ export class GUIManager {
     } }, 'regen').name('Regen')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
     gui.add({ autoBuild: () => demo.city.autoExpand([
-      [1,-1],[1,0],[0,1],[-1,0],[-1,1],[1,1],[0,2],[-1,-1],[-2,0],[-2,1],[-2,-1],[0,-1]
+      [0,1],[-1,0],[-1,-1],[0,-1],[1,-1],[1,-2],[2,-1],[-1,1],[0,2],[1,1],[2,0],[2,1],[1,0],[0,-2],[-1,-2],[-2,-1],[-2,0],[-2,1]
     ]) }, 'autoBuild').name('Auto-Build')
 
     gui.add({
@@ -197,6 +198,7 @@ export class GUIManager {
     const mapFolder = gui.addFolder('Map').close()
     mapFolder.add(allParams.roads, 'animateWFC').name('Animate WFC')
     mapFolder.add(allParams.roads, 'animateDelay', 5, 40).name('Anim Delay (ms)')
+    mapFolder.add(allParams.roads, 'grassAnyLevel').name('Grass Any Level')
 
     // Decoration folder
     const decorationFolder = gui.addFolder('Decoration').close()

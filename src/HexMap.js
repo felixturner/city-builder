@@ -167,7 +167,7 @@ export class HexMap {
     const { type, id, message, success, tiles, collapseOrder } = e.data
 
     if (type === 'log') {
-      // Worker logs handled by populateGrid status updates
+      console.log(`%c[WFC] ${e.data.message}`, 'color: black')
     } else if (type === 'result') {
       // Resolve pending promise by ID
       const resolve = this.wfcPendingResolvers.get(id)
@@ -812,6 +812,7 @@ export class HexMap {
       attemptNum: 1,
       seed: getSeed(),
       previousStates,
+      grassAnyLevel: params.roads.grassAnyLevel,
     })
 
     let result = null
@@ -821,10 +822,11 @@ export class HexMap {
       result = wfcResult.tiles
       resultCollapseOrder = wfcResult.collapseOrder || []
     } else {
-      // Track failed cell
-      const contradiction = wfcResult.seedingContradiction || wfcResult.lastContradiction
-      if (contradiction) {
-        this.failedCells.add(`${contradiction.failedCol},${contradiction.failedRow}`)
+      // Only mark purple cell for seeding contradictions (genuine fixed cell conflicts)
+      // Regular mid-solve contradictions are just bad luck, not useful to mark
+      if (wfcResult.seedingContradiction) {
+        const c = wfcResult.seedingContradiction
+        this.failedCells.add(`${c.failedCol},${c.failedRow}`)
       }
     }
 
