@@ -177,8 +177,8 @@ export class HexMap {
       // Resolve pending promise by ID
       const resolve = this.wfcPendingResolvers.get(id)
       if (resolve) {
-        const { seedingContradiction } = e.data
-        resolve({ success, tiles, collapseOrder, seedingContradiction })
+        const { seedingContradiction, lastContradiction } = e.data
+        resolve({ success, tiles, collapseOrder, seedingContradiction, lastContradiction })
         this.wfcPendingResolvers.delete(id)
       }
     }
@@ -386,6 +386,30 @@ export class HexMap {
           }
         }
         return false  // No compatible candidate found for this edge type
+      },
+      // Validate seeds after replacement (catch new conflicts before running WFC)
+      onValidateSeeds: (seeds) => {
+        const activeSeeds = seeds.filter(s => !s.dropped)
+        const gKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
+        const validation = validateSeedConflicts(activeSeeds, this.hexWfcRules, grid.gridRadius, gKey, grid.globalCenterCube)
+        if (!validation.valid) {
+          // Drop the first conflicting seed
+          for (const conflict of validation.conflicts) {
+            const conflictSeed = activeSeeds.find(s => {
+              const g = localToGlobalCoords(s.x, s.z, grid.gridRadius, grid.globalCenterCube)
+              return `${g.col},${g.row}` === conflict.seeds[0].global
+            })
+            if (conflictSeed) {
+              const g = localToGlobalCoords(conflictSeed.x, conflictSeed.z, grid.gridRadius, grid.globalCenterCube)
+              const globalKey = `${g.col},${g.row}`
+              const name = TILE_LIST[conflictSeed.type]?.name || '?'
+              console.log(`%cPost-replace validation: dropping ${name} (${globalKey})`, 'color: red')
+              conflictSeed.dropped = true
+              this.droppedSeeds.add(globalKey)
+              this.seedStats.dropped[name] = (this.seedStats.dropped[name] || 0) + 1
+            }
+          }
+        }
       },
       // Pass worker solve function
       solveWfcAsync: (w, h, s, o) => this.solveWfcAsync(w, h, s, o),
@@ -772,6 +796,26 @@ export class HexMap {
     if (this.tileLabels.visible) {
       this.createTileLabels()
     }
+  }
+
+  /**
+   * Auto-expand grids in a given order (for testing/replay)
+   * @param {Array<[number,number]>} order - Array of [gridX, gridZ] pairs
+   */
+  async autoExpand(order) {
+    for (const [gx, gz] of order) {
+      const key = getGridKey(gx, gz)
+      const grid = this.grids.get(key)
+      if (!grid) {
+        console.warn(`autoExpand: grid ${key} not found, creating placeholder`)
+        await this.createGrid(gx, gz)
+        const g = this.grids.get(key)
+        if (g) await this.onGridClick(g)
+      } else if (grid.state === HexGridState.PLACEHOLDER) {
+        await this.onGridClick(grid)
+      }
+    }
+    console.log('autoExpand: done')
   }
 
   /**

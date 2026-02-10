@@ -333,6 +333,7 @@ export class HexGrid {
     const onSeedDropped = options.onSeedDropped ?? null
     const onCellFailed = options.onCellFailed ?? null
     const onTryReplaceSeed = options.onTryReplaceSeed ?? null  // Callback to attempt seed replacement
+    const onValidateSeeds = options.onValidateSeeds ?? null  // Callback to validate seeds after replacement
     let replacedCount = options.replacedCount ?? 0
 
     // Separate neighbor seeds (outside grid) from internal seeds
@@ -411,7 +412,7 @@ export class HexGrid {
     // Helper to convert seed coords to global (uses shared utility, adjusted for padding)
     const toGlobalCoords = (x, z) => localToGlobalCoords(x - padding, z - padding, this.gridRadius, globalCenterCube)
 
-    // Helper to run WFC and return result
+    // Helper to run WFC and return result (includes failed cell coords on failure)
     const runWfc = async () => {
       attempt++
       const solverOptions = {
@@ -433,12 +434,17 @@ export class HexGrid {
       if (workerResult.success) {
         return { success: true, tiles: workerResult.tiles, collapseOrder: workerResult.collapseOrder || [] }
       }
+      // Extract failed cell coords from either seeding or regular contradiction
+      const contradiction = workerResult.seedingContradiction || workerResult.lastContradiction
       if (workerResult.seedingContradiction) {
         const { failedX, failedZ } = workerResult.seedingContradiction
         const failedGlobal = toGlobalCoords(failedX, failedZ)
         onCellFailed?.(`${failedGlobal.col},${failedGlobal.row}`)
       }
-      return { success: false }
+      return {
+        success: false,
+        failedCell: contradiction ? { x: contradiction.failedX, z: contradiction.failedZ } : null
+      }
     }
 
     // Shuffle seeds for random order
@@ -453,6 +459,36 @@ export class HexGrid {
     // Notify solve start (for placeholder animation)
     options.onSolveStart?.()
 
+    // Helper: find seeds adjacent to a cell (in WFC padded coords)
+    const findAdjacentSeeds = (cellX, cellZ) => {
+      const adjacent = []
+      for (const dir of HexDir) {
+        const offset = getHexNeighborOffset(cellX, cellZ, dir)
+        const nx = cellX + offset.dx
+        const nz = cellZ + offset.dz
+        const seed = currentSeeds.find(s => s.x === nx && s.z === nz && !s.dropped)
+        if (seed) adjacent.push(seed)
+      }
+      return adjacent
+    }
+
+    // Helper: try replacing a seed and run WFC
+    const tryReplace = async (seedToReplace) => {
+      const seedGlobal = toGlobalCoords(seedToReplace.x, seedToReplace.z)
+      const globalKey = `${seedGlobal.col},${seedGlobal.row}`
+      if (replacedSeedKeys.has(globalKey)) return null
+      if (!onTryReplaceSeed) return null
+
+      const replaced = onTryReplaceSeed(seedToReplace, currentSeeds)
+      if (!replaced) return null
+
+      log(`Phase 1: Replaced seed (${globalKey})`, 'color: blue')
+      replacedCount++
+      replacedSeedKeys.add(globalKey)
+      onValidateSeeds?.(currentSeeds)
+      return await runWfc()
+    }
+
     try {
       // Initial WFC attempt
       log(`WFC Phase 0: Initial attempt`, 'color: gray')
@@ -461,34 +497,41 @@ export class HexGrid {
         result = initialResult.tiles
         resultCollapseOrder = initialResult.collapseOrder
       } else {
-        // Phase 1: Try replacing each seed one by one
+        // Phase 1: Replace seeds, prioritizing those adjacent to failed cells
         log(`WFC Phase 1: Trying replacements (${currentSeeds.length} seeds)`, 'color: gray')
-        const shuffledForReplace = shuffleArray([...currentSeeds])
+        const shuffledFallback = shuffleArray([...currentSeeds])
+        let fallbackIndex = 0
+        let lastFailedCell = initialResult.failedCell
 
-        for (const seedToReplace of shuffledForReplace) {
-          if (result) break
+        while (!result) {
+          let wfcResult = null
 
-          const seedGlobal = toGlobalCoords(seedToReplace.x, seedToReplace.z)
-          const globalKey = `${seedGlobal.col},${seedGlobal.row}`
-
-          // Skip if already replaced
-          if (replacedSeedKeys.has(globalKey)) continue
-
-          // Try replacement
-          if (onTryReplaceSeed) {
-            const replaced = onTryReplaceSeed(seedToReplace, currentSeeds)
-            if (replaced) {
-              log(`Phase 1: Replaced seed (${globalKey})`, 'color: orange')
-              replacedCount++
-              replacedSeedKeys.add(globalKey)
-
-              // Run WFC after replacement
-              const wfcResult = await runWfc()
-              if (wfcResult.success) {
-                result = wfcResult.tiles
-                resultCollapseOrder = wfcResult.collapseOrder
-              }
+          // First: try seeds adjacent to the last failed cell
+          if (lastFailedCell) {
+            const adjacent = findAdjacentSeeds(lastFailedCell.x, lastFailedCell.z)
+            for (const seed of adjacent) {
+              wfcResult = await tryReplace(seed)
+              if (wfcResult) break
             }
+          }
+
+          // Fallback: try next seed from shuffled list
+          if (!wfcResult) {
+            while (fallbackIndex < shuffledFallback.length) {
+              const candidate = shuffledFallback[fallbackIndex++]
+              if (candidate.dropped) continue
+              wfcResult = await tryReplace(candidate)
+              if (wfcResult) break
+            }
+          }
+
+          if (!wfcResult) break  // No more seeds to try
+
+          if (wfcResult.success) {
+            result = wfcResult.tiles
+            resultCollapseOrder = wfcResult.collapseOrder
+          } else {
+            lastFailedCell = wfcResult.failedCell
           }
         }
 

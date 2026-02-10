@@ -96,7 +96,7 @@ const WHITE = new Color(0xffffff)
 // Instance limits for BatchedMesh
 const MAX_TREES = 300
 const MAX_BUILDINGS = 20
-const MAX_BRIDGES = 20
+const MAX_BRIDGES = 50
 
 export class Decorations {
   constructor(scene, worldOffset = { x: 0, z: 0 }) {

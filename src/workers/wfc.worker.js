@@ -378,6 +378,7 @@ self.onmessage = function(e) {
     const result = solver.solve(seeds, options?.gridId)
     const collapseOrder = solver.collapseOrder || []
     const seedingContradiction = solver.seedingContradiction
+    const lastContradiction = solver.lastContradiction
 
     self.postMessage({
       type: 'result',
@@ -385,7 +386,8 @@ self.onmessage = function(e) {
       success: result !== null,
       tiles: result,
       collapseOrder,
-      seedingContradiction
+      seedingContradiction,
+      lastContradiction
     })
   }
 }

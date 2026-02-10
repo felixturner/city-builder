@@ -615,7 +615,7 @@ export function filterConflictingSeeds(seeds, gridRadius = 8, gridKey = '?', glo
 
   // Log conflicts (these will be handled by replacement loop, not dropped here)
   if (conflicts.length > 0) {
-    console.log(`%cSEED CONFLICT - ${conflicts.length} adjacent seed conflicts detected`, 'color: orange')
+    console.log(`%cSEED CONFLICT - ${conflicts.length} adjacent seed conflicts detected`, 'color: red')
     for (const c of conflicts) {
       const s = c.seed
       const n = c.neighbor

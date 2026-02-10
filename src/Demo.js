@@ -69,6 +69,7 @@ export class Demo {
       return null
     }
     Demo.instance = this
+    window.demo = this  // Expose for console debugging
   }
 
   async init() {
@@ -91,7 +92,7 @@ export class Demo {
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
-    const seed = 274707
+    const seed = Math.floor(Math.random() * 1000000)
     setSeed(seed)
 
     this.initCamera()
