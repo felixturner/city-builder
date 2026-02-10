@@ -68,6 +68,7 @@ export class HexMap {
     // Debug tile labels
     this.tileLabels = new Object3D()
     this.tileLabels.visible = false
+    this.tileLabelMode = 'coords'
     this.droppedSeeds = new Set()  // Track global coords of dropped seeds for label highlighting
     this.failedCells = new Set()   // Track global coords of cells that caused WFC failures
     this.replacedSeeds = new Set() // Track global coords of replaced seeds for label highlighting
@@ -1132,7 +1133,7 @@ export class HexMap {
 
           const div = document.createElement('div')
           div.className = 'tile-label'
-          div.textContent = `${globalOffset.col},${globalOffset.row}`
+          div.textContent = this.tileLabelMode === 'levels' ? `${baseLevel}` : `${globalOffset.col},${globalOffset.row}`
           const globalKey = `${globalOffset.col},${globalOffset.row}`
           const isDropped = this.droppedSeeds.has(globalKey)
           const isFailed = this.failedCells.has(globalKey)
@@ -1180,7 +1181,7 @@ export class HexMap {
 
             const div = document.createElement('div')
             div.className = 'tile-label'
-            div.textContent = `${globalOffset.col},${globalOffset.row}`
+            div.textContent = this.tileLabelMode === 'levels' ? `-` : `${globalOffset.col},${globalOffset.row}`
             const globalKey = `${globalOffset.col},${globalOffset.row}`
             const isDropped = this.droppedSeeds.has(globalKey)
             const isFailed = this.failedCells.has(globalKey)

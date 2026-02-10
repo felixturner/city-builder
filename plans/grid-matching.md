@@ -9,31 +9,14 @@ When a placeholder is clicked to expand into a new grid:
 
 1. **Collect seeds** — Extract edge tiles from all populated neighbors, transform coords via cube math into the new grid's local space. (`getNeighborSeeds`)
 2. **Pre-WFC: adjacent seed conflicts** — Check seeds from different source grids that ended up next to each other. Try replacing incompatible ones in the source grid, drop if irreplaceable. (`filterConflictingSeeds`)
-3. **Pre-WFC: multi-seed cell conflicts** — Find non-seed cells adjacent to 2+ seeds with mutually impossible constraints. Try replacing/dropping until resolved. (`validateSeedConflicts`)
-4. **WFC Phase 0** — Run WFC solver (in web worker) with all validated seeds on a padded rectangular grid. If it succeeds, done.
-5. **WFC Phase 1 (replace)** — Shuffle all seeds randomly. For each seed: try replacing it in its source grid (`findReplacementTiles`), then re-run WFC. Stop on first success. Each seed is only replaced once.
+3. **Pre-WFC: multi-seed cell conflicts** — Find non-seed cells adjacent to 2+ seeds with mutually impossible constraints. Strict level matching for all edge types (including grass). Try replacing/dropping until resolved. (`validateSeedConflicts`)
+4. **WFC Phase 0** — Run WFC solver (in web worker) with all validated seeds. Worker returns `lastContradiction` with failed cell coords on both seeding and mid-solve failures.
+5. **WFC Phase 1 (targeted replace)** — On failure, prioritize replacing seeds adjacent to the failed cell (instead of random order). After each replacement, re-validate seed conflicts to catch cascading issues (`onValidateSeeds`). Falls back to shuffled seed order if adjacent replacements don't work. Each seed is only replaced once.
 6. **WFC Phase 2 (drop)** — Shuffle remaining active seeds. For each: mark it as dropped (excluded from WFC), then re-run WFC. Stop on first success.
 
-Each phase runs WFC once per seed it tries, so worst case is ~N replace attempts + ~N drop attempts (where N = seed count, typically 9-27). The WFC solver itself allows up to 10 internal restarts on mid-solve contradictions (`maxRestarts`), but in practice `maxRestarts` is set to 1 for these retries.
+## Improvement Ideas
 
-Edge matching: types must match (`grass|road|river|ocean|coast`), levels must match. Replacement system (`edgesCompatible`) is intentionally lax for grass (any level) to allow more replacement candidates. WFC solver enforces strict level matching for all types.
-
-## Plan
-
-1. ~~Fix `findCompatibleTiles` to use strict level matching~~ — Done. `validateSeedConflicts` was using lax grass matching, so it missed grass-level conflicts that the WFC solver then failed on. Now matches solver behavior.
-2. Improvement #1: Pre-validate shared cells
-3. Improvement #2: Global cube-coord cell map
-
-## Improvement Ideas (ordered by likelihood to fix grid matching)
-
-### 1. Pre-validate shared cells
-Before running WFC, check every non-seed cell adjacent to 2+ seeds. For each, verify that at least one tile state in the adjacency rules can satisfy all neighboring seed constraints simultaneously. If no valid state exists, immediately drop/replace the most constrained seed.
-
-This catches the exact failure pattern we keep seeing — two seeds from the same source grid creating impossible level/type requirements on a shared neighbor cell. Currently we only detect this after running a full WFC solve.
-
-**Complexity:** Low-medium. Add a validation pass in HexMap.js before WFC, using the existing adjacency rules to check cell feasibility. ~50-80 lines.
-
-### 2. Global cube-coord cell map (eliminates seeding + rectangular waste)
+### 1. Global cube-coord cell map (eliminates seeding + rectangular waste)
 Combines two ideas: hex-native WFC grid + global cell map.
 
 **Current problems:**
@@ -64,12 +47,12 @@ Tile replacement for contradictions still works — modify the actual cell in th
 
 **Complexity:** High. Rearchitects multi-grid system. New global cell storage, rewrite WFC solver for cube-coord maps, remove seeding pipeline, update rendering. Touches HexMap, HexGrid, HexGridConnector, wfc.worker.js. ~500+ lines changed, ~300+ lines removed. Net code reduction.
 
-### 3. Edge biasing during generation
+### 2. Edge biasing during generation
 Bias WFC weights to place simple tiles (grass, flat road) near grid edges. Prevents the problem at its source — slopes, coasts, and rivers near edges cause most failures because they're hard to match across grid boundaries. Could be done with position-based weight multipliers during the solve.
 
 **Complexity:** Low. Pass grid radius + cell position to the solver, multiply weights by a bias factor based on distance from edge. ~20-30 lines in the worker.
 
-### 4. More WFC retries per replacement
+### 3. More WFC retries per replacement
 Currently each replace/drop attempt runs WFC once (with `maxRestarts: 1`). Increasing retries per attempt would give the solver more chances to find a valid arrangement before moving on to the next seed. Cheap way to reduce failures without changing the matching logic.
 
 **Complexity:** Trivial. Increase `maxRestarts` in the solver options. ~1 line.

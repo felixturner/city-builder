@@ -65,7 +65,7 @@ export class GUIManager {
       originHelper: false,
       debugCam: true,
       hexGrid: false,
-      tileLabels: false,
+      tileLabels: 'off',
       floor: true,
       levelColors: false,
     },
@@ -137,8 +137,9 @@ export class GUIManager {
     gui.add(allParams.roads, 'showOutlines').name('Show Outlines').onChange((v) => {
       demo.city?.setOutlinesVisible(v)
     })
-    gui.add(allParams.debug, 'tileLabels').name('Tile Labels').onChange((v) => {
-      demo.city.setTileLabelsVisible(v)
+    gui.add(allParams.debug, 'tileLabels', ['off', 'coords', 'levels']).name('Tile Labels').onChange((v) => {
+      demo.city.tileLabelMode = v
+      demo.city.setTileLabelsVisible(v !== 'off')
     })
     gui.add(allParams.debug, 'levelColors').name('Level Colors').onChange((v) => {
       HexTile.debugLevelColors = v
@@ -157,6 +158,10 @@ export class GUIManager {
       demo.city.setHelpersVisible(allParams.debug.hexGrid)
     } }, 'regen').name('Regen')
     gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
+    gui.add({ buildAll: () => demo.city.autoExpand([
+      [-1,-1],[-1,0],[-2,0],[-2,-1],[0,1],[1,0],[1,-1],[2,0],[2,-1],
+      [1,-2],[-1,-2],[0,-2],[0,-1],[-1,1],[-2,1],[0,2],[1,1],[2,1]
+    ]) }, 'buildAll').name('Build All')
 
     gui.add({
       copyState: () => {

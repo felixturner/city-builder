@@ -19,7 +19,7 @@ a hex map builder toy
 
 ## TODO
 
-- Figure out how to get less wFC fails
+- Figure out how to get less wFC fails. bad seeds: 79319 (click 1,-1) , 351921 initial
 - Add new TILES: River dead-end, road slope dead-ends (low/high). river slopes? coast slopes. branching bridges? to help WFC.
 
 - fix coast can make weird strips
@@ -106,6 +106,7 @@ When expanding to adjacent grids:
 - GridPlaceholder - Clickable hexagonal button to expand into adjacent grid slot
 - Cell - A position in the grid that can hold a Tile (the small hexes within a HexGrid)
 - Tile - The actual mesh placed in a Cell (class: `HexTile` in `src/HexTiles.js`)
+- Seed - A tile from a neighboring grid brought into this grid's WFC solve to ensure edge matching across grids
 
 
 ## Coordinate Systems

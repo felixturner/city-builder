@@ -244,7 +244,7 @@ class HexWFCSolver {
   solve(seedTiles = [], gridId = '?') {
     const baseAttempt = this.options.attemptNum || 0
     const tryNum = baseAttempt + this.restartCount
-    this.log(`WFC START (try ${tryNum}, ${seedTiles.length} seeds, levelsCount=${LEVELS_COUNT})`)
+    this.log(`WFC START (try ${tryNum}, ${seedTiles.length} seeds)`)
 
     this.init()
 

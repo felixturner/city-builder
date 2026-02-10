@@ -419,7 +419,7 @@ export class HexGrid {
         attemptNum: attempt,
         weights,
         seed,
-        maxRestarts: 1,
+        maxRestarts: seedTiles.length === 0 ? 10 : 1, // First grid (no neighbor seeds) gets more retries
         tileTypes,
         padding,
         gridRadius: this.gridRadius,
