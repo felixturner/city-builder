@@ -327,21 +327,22 @@ export class Decorations {
 
     const LEVEL_HEIGHT = 0.5
     const TILE_SURFACE = 1
-    const maxBuildings = options.maxBuildings ?? (2 + Math.floor(random() * 11))
+    const maxBuildings = options.maxBuildings ?? Math.floor(random() * 11)
     const buildingNames = [...this.buildingGeomIds.keys()]
 
-    // Direction to angle mapping (building front is S/+Z, angle rotates to face direction)
+    // Direction to Y-rotation mapping (building front is +Z, atan2(worldX, worldZ) for each hex dir)
     const dirToAngle = {
-      'NE': Math.PI / 3,
+      'NE': 5 * Math.PI / 6,
       'E': Math.PI / 2,
-      'SE': 2 * Math.PI / 3,
-      'SW': -2 * Math.PI / 3,
+      'SE': Math.PI / 6,
+      'SW': -Math.PI / 6,
       'W': -Math.PI / 2,
-      'NW': -Math.PI / 3,
+      'NW': -5 * Math.PI / 6,
     }
 
     const deadEndCandidates = []
     const roadAdjacentCandidates = []
+    const flatGrassCandidates = []
     const size = gridRadius * 2 + 1
 
     // Get tiles that already have trees
@@ -386,9 +387,12 @@ export class Decorations {
         }
       }
 
-      // Only include road-adjacent tiles
       if (roadAngle !== null) {
         roadAdjacentCandidates.push({ tile, roadAngle })
+      } else if (tile.level === 0) {
+        // Flat grass with no road neighbor — lowest priority
+        const randomAngle = random() * Math.PI * 2
+        flatGrassCandidates.push({ tile, roadAngle: randomAngle })
       }
     }
 
@@ -401,9 +405,13 @@ export class Decorations {
       const j = Math.floor(random() * (i + 1))
       ;[roadAdjacentCandidates[i], roadAdjacentCandidates[j]] = [roadAdjacentCandidates[j], roadAdjacentCandidates[i]]
     }
+    for (let i = flatGrassCandidates.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1))
+      ;[flatGrassCandidates[i], flatGrassCandidates[j]] = [flatGrassCandidates[j], flatGrassCandidates[i]]
+    }
 
-    // Dead-ends first, then road-adjacent
-    const candidates = [...deadEndCandidates, ...roadAdjacentCandidates]
+    // Dead-ends first, then road-adjacent, then flat grass
+    const candidates = [...deadEndCandidates, ...roadAdjacentCandidates, ...flatGrassCandidates]
 
     // Place buildings
     for (let i = 0; i < Math.min(maxBuildings, candidates.length); i++) {

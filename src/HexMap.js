@@ -99,10 +99,10 @@ export class HexMap {
 
     // Create center grid at (0,0) and immediately populate it
     const centerGrid = await this.createGrid(0, 0)
-    await this.populateGrid(centerGrid, [])
+    const initAnimDuration = await this.populateGrid(centerGrid, []) || 0
 
     // Create placeholder grids around the center
-    this.createAdjacentPlaceholders('0,0')
+    await this.createAdjacentPlaceholders('0,0', initAnimDuration + 300)
 
     this.scene.add(this.tileLabels)
   }
@@ -975,13 +975,15 @@ export class HexMap {
     const animate = options.animate ?? (params?.roads?.animateWFC ?? false)
     const animateDelay = options.animateDelay ?? (params?.roads?.animateDelay ?? 20)
 
-    await grid.populateFromCubeResults(coreResult, resultCollapseOrder, center, {
+    const animDuration = await grid.populateFromCubeResults(coreResult, resultCollapseOrder, center, {
       animate,
       animateDelay,
     })
 
     // Apply current helper visibility state
     grid.setHelperVisible(this.helpersVisible)
+
+    return animDuration
   }
 
   /**
@@ -1125,8 +1127,11 @@ export class HexMap {
     for (const key of toRemove) {
       const grid = this.grids.get(key)
       if (grid) {
-        grid.dispose()
-        this.grids.delete(key)
+        grid.fadeOut()
+        setTimeout(() => {
+          this.grids.delete(key)
+          grid.dispose()
+        }, 300)
       }
     }
   }
@@ -1137,9 +1142,11 @@ export class HexMap {
    * After first expansion, only creates placeholders with 2+ populated neighbors
    * @param {string} centerKey - Grid key of the populated grid
    */
-  createAdjacentPlaceholders(centerKey) {
+  async createAdjacentPlaceholders(centerKey, fadeDelay = 0) {
     const populatedCount = this.countPopulatedGrids()
     const isFirstExpansion = populatedCount <= 1
+
+    const createPromises = []
 
     for (let dir = 0; dir < 6; dir++) {
       const adjacentKey = getAdjacentGridKey(centerKey, dir)
@@ -1156,7 +1163,16 @@ export class HexMap {
         if (neighborCount < 2) continue
       }
 
-      this.createGrid(gridX, gridZ)  // Creates in PLACEHOLDER state
+      createPromises.push(this.createGrid(gridX, gridZ))
+    }
+
+    const newGrids = await Promise.all(createPromises)
+
+    // Fade in new placeholders + outlines after WFC animation
+    if (fadeDelay > 0) {
+      for (const grid of newGrids) {
+        grid?.fadeIn(fadeDelay)
+      }
     }
   }
 
@@ -1170,13 +1186,13 @@ export class HexMap {
     const gridKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
     const params = Demo.instance?.params
 
-    await this.populateGrid(grid, [], {
+    const animDuration = await this.populateGrid(grid, [], {
       animate: params?.roads?.animateWFC ?? false,
       animateDelay: params?.roads?.animateDelay ?? 20,
-    })
+    }) || 0
 
-    // Create placeholders around this newly populated grid
-    this.createAdjacentPlaceholders(gridKey)
+    // Create placeholders around this newly populated grid, fade in after animation
+    await this.createAdjacentPlaceholders(gridKey, animDuration + 300)
 
     // Remove placeholders outside bounds
     this.pruneInvalidPlaceholders()
@@ -1439,7 +1455,7 @@ export class HexMap {
     await this.populateGrid(centerGrid, [], options)
 
     // Create placeholders around center
-    this.createAdjacentPlaceholders('0,0')
+    await this.createAdjacentPlaceholders('0,0')
 
     // Refresh labels if visible
     if (this.tileLabels.visible) {

@@ -24,6 +24,7 @@ export class Placeholder {
     this.triangles = []  // Triangle meshes for neighbor indicators
     this.onClick = null
     this.spinTween = null  // GSAP tween for spinning animation
+    this._fadeTimer = null
 
     this.createButton()
   }
@@ -169,6 +170,44 @@ export class Placeholder {
     if (this.button) {
       this.button.rotation.y = 0
     }
+  }
+
+  /**
+   * Fade in the placeholder from invisible
+   * @param {number} delay - ms to wait before starting fade
+   */
+  fadeIn(delay = 0) {
+    clearTimeout(this._fadeTimer)
+    gsap.killTweensOf(this._anim)
+    this.group.visible = false
+    this._anim = { opacity: 0 }
+    this._fadeTimer = setTimeout(() => {
+      this.group.visible = true
+      this.button.material.opacity = 0
+      gsap.to(this._anim, {
+        opacity: 0.5,
+        duration: 0.3,
+        ease: 'power2.out',
+        onUpdate: () => { this.button.material.opacity = this._anim.opacity },
+      })
+    }, delay)
+  }
+
+  /**
+   * Fade out the placeholder then hide
+   */
+  fadeOut() {
+    clearTimeout(this._fadeTimer)
+    gsap.killTweensOf(this._anim)
+    this.group.visible = true
+    this._anim = { opacity: this.button.material.opacity }
+    gsap.to(this._anim, {
+      opacity: 0,
+      duration: 0.2,
+      ease: 'power2.in',
+      onUpdate: () => { this.button.material.opacity = this._anim.opacity },
+      onComplete: () => { this.group.visible = false },
+    })
   }
 
   /**

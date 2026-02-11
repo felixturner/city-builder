@@ -199,7 +199,7 @@ export class HexGrid {
 
     const geom = new BufferGeometry()
     geom.setAttribute('position', new Float32BufferAttribute(lineVerts, 3))
-    const material = new LineBasicMaterial({ color: 0xffffff })
+    const material = new LineBasicMaterial({ color: 0xffffff, transparent: true })
     material.depthTest = false
     material.depthWrite = false  // Exclude from AO (no depth contribution)
 
@@ -217,7 +217,7 @@ export class HexGrid {
       this.placeholder?.show()
       this.gridHelper?.hide()
     } else {
-      this.placeholder?.hide()
+      this.fadeOut()
       // gridHelper visibility controlled separately via setHelperVisible()
     }
   }
@@ -295,6 +295,52 @@ export class HexGrid {
    */
   setPlaceholderNeighbors(directions) {
     this.placeholder?.setNeighborDirections(directions)
+  }
+
+  /**
+   * Fade in placeholder and outline from invisible
+   * @param {number} delay - ms to wait before starting fade
+   */
+  fadeIn(delay = 0) {
+    if (this.placeholder) {
+      this.placeholder.fadeIn(delay)
+    }
+    if (this.outline) {
+      clearTimeout(this._outlineFadeTimer)
+      gsap.killTweensOf(this._outlineAnim)
+      this.outline.visible = false
+      this._outlineAnim = { opacity: 0 }
+      this._outlineFadeTimer = setTimeout(() => {
+        this.outline.visible = true
+        this.outline.material.opacity = 0
+        gsap.to(this._outlineAnim, {
+          opacity: 1,
+          duration: 0.3,
+          ease: 'power2.out',
+          onUpdate: () => { this.outline.material.opacity = this._outlineAnim.opacity },
+        })
+      }, delay)
+    }
+  }
+
+  /**
+   * Fade out placeholder and outline
+   */
+  fadeOut() {
+    this.placeholder?.fadeOut()
+    if (this.outline) {
+      clearTimeout(this._outlineFadeTimer)
+      gsap.killTweensOf(this._outlineAnim)
+      this.outline.visible = true
+      this._outlineAnim = { opacity: this.outline.material.opacity }
+      gsap.to(this._outlineAnim, {
+        opacity: 0,
+        duration: 0.2,
+        ease: 'power2.in',
+        onUpdate: () => { this.outline.material.opacity = this._outlineAnim.opacity },
+        onComplete: () => { this.outline.visible = false },
+      })
+    }
   }
 
   /**
@@ -378,7 +424,9 @@ export class HexGrid {
       this.animatePlacements(localCollapseOrder, animateDelay)
     }
 
-    return true
+    // Return estimated animation duration so callers can time follow-up actions
+    const animDuration = animate ? localCollapseOrder.length * animateDelay : 0
+    return animDuration
   }
 
   /**
