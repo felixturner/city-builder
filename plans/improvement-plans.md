@@ -6,18 +6,19 @@ Joining separate WFC grids is the core unsolved problem. The current system uses
 
 The user wants detailed implementation plans for each of the 6 improvement ideas from `plans/grid-matching.md`, written as separate files in `plans/`.
 
-## Deliverables
+## Summaries
 
-Create these 6 files:
+**Plan 1 — Full Map WFC:** Solve all ~2800 cells (13 grids) in a single WFC pass with no fixed cells. Add a `populateAllGrids()` method to HexMap that collects all cell positions upfront, runs one big solve in the worker, then distributes results to individual grids for rendering. Eliminates the boundary problem entirely but loses incremental expansion and may be slower (~2800 vs 217 cells per solve).
 
-1. `plans/plan-full-map-wfc.md`
-2. `plans/plan-overlap-zones.md`
-3. `plans/plan-sub-complete-tileset.md`
-4. `plans/plan-driven-wfc.md`
-5. `plans/plan-editable-wfc.md`
-6. `plans/plan-more-retries.md`
+**Plan 2 — Overlap Zones:** Instead of treating neighbor boundary tiles as read-only fixed cells, include 1 ring of neighbor cells as solvable in the new grid's WFC solve. After solving, update changed tiles in the neighbor grids via `replaceTile()`. New `getFixedAndOverlapCells()` splits neighbors into overlap (solvable, ring 1) and fixed (read-only, ring 2). Reduces constraint pressure while keeping incremental expansion.
 
-Each plan follows the same structure: Context, Critical Files, Step-by-step Implementation, Verification.
+**Plan 3 — Sub-Complete Tileset Audit:** Write a Node.js audit script (`tools/tileset-audit.js`) that enumerates all edge type+level combinations and checks how many tile states can satisfy each. Reports dead-ends (only 1 compatible tile) and fragile configs (< 5 options). Analysis only — identifies which new transition tiles would guarantee solvability.
+
+**Plan 4 — Driven WFC (Noise):** Use continuous simplex noise fields (water, elevation) to pre-assign tile categories (water/coast/highland/land) per cell before WFC runs. Worker filters possibilities by category during init. Since noise is continuous across grid boundaries, cross-grid constraints are naturally compatible. Needs a new `WorldNoise.js` module.
+
+**Plan 5 — Editable WFC:** Combine with Plan 2's overlap zones but treat previous tiles as soft preferences instead of hard constraints. Add dirty-cell tracking to the solver — prioritize collapsing cells whose previous state was invalidated. 10x weight boost for matching previous tile. Optional early stopping that force-collapses unchanged cells to their previous state.
+
+**Plan 6 — More Retries:** Change `maxRestarts` from 1 to 3 on line 801 of HexMap.js. Gives the solver 3 attempts per Phase 1/2 try instead of 1. Trivial change, marginal improvement — doesn't fix the fundamental constraint problem.
 
 ---
 

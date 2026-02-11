@@ -15,7 +15,7 @@ export default defineConfig({
   plugins: [fullReloadAlways, basicSsl()],
   server: {
     watch: {
-      ignored: ['**/*.md'],
+      ignored: ['**/*.md', '**/*.txt'],
     },
   },
   build: {

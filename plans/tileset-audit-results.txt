@@ -1,0 +1,123 @@
+Total tile types: 33
+Total states (type x rotation x level): 522
+
+======================================================================
+AUDIT 1: Edge compatibility counts
+For each (type, level) on a direction, how many states can match it
+from the opposite direction? (i.e., how many neighbor tiles are compatible)
+======================================================================
+
+[LOW] coast @ level 0: 10 matching states (5 tile types: COAST_A, COAST_B, COAST_C, COAST_D, COAST_E)
+[LOW] coast @ level 1: 10 matching states (5 tile types: COAST_A, COAST_B, COAST_C, COAST_D, COAST_E)
+[LOW] coast @ level 2: 10 matching states (5 tile types: COAST_A, COAST_B, COAST_C, COAST_D, COAST_E)
+
+======================================================================
+AUDIT 2: Pairwise adjacent-edge constraints
+For each pair of (type,level) on two adjacent edges of a single cell,
+how many states satisfy BOTH? Low counts = likely contradiction sources.
+======================================================================
+
+--- FRAGILE pairs (1-2 states) — most likely to cause contradictions ---
+  [FRAGILE] coast@0 + coast@0: 2 states (COAST_D, COAST_E)
+  [FRAGILE] coast@1 + coast@1: 2 states (COAST_D, COAST_E)
+  [FRAGILE] coast@2 + coast@2: 2 states (COAST_D, COAST_E)
+  [FRAGILE] river@0 + road@0: 2 states (RIVER_CROSSING_A)
+  [FRAGILE] river@1 + road@1: 2 states (RIVER_CROSSING_A)
+  [FRAGILE] river@2 + road@2: 2 states (RIVER_CROSSING_A)
+  [FRAGILE] road@0 + river@0: 2 states (RIVER_CROSSING_B)
+  [FRAGILE] road@1 + river@1: 2 states (RIVER_CROSSING_B)
+  [FRAGILE] road@2 + river@2: 2 states (RIVER_CROSSING_B)
+
+--- LOW pairs (3-5 states) ---
+  [LOW] coast@0 + grass@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@0 + grass@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@0 + grass@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@0 + ocean@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_D)
+  [LOW] coast@1 + grass@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@1 + grass@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@1 + grass@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@1 + ocean@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_D)
+  [LOW] coast@2 + grass@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@2 + grass@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@2 + grass@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] coast@2 + ocean@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_D)
+  [LOW] grass@0 + coast@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@0 + coast@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@0 + coast@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@1 + coast@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@1 + coast@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@1 + coast@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@2 + coast@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@2 + coast@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] grass@2 + coast@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_E)
+  [LOW] ocean@0 + coast@0: 4 states (COAST_A, COAST_B, COAST_C, COAST_D)
+  [LOW] ocean@1 + coast@1: 4 states (COAST_A, COAST_B, COAST_C, COAST_D)
+  [LOW] ocean@2 + coast@2: 4 states (COAST_A, COAST_B, COAST_C, COAST_D)
+
+--- IMPOSSIBLE pairs (0 states): 138 total ---
+  coast@0 + [coast@1, coast@2, ocean@1, ocean@2, river@0, river@1, river@2, road@0, road@1, road@2]
+  coast@1 + [coast@0, coast@2, ocean@0, ocean@2, river@0, river@1, river@2, road@0, road@1, road@2]
+  coast@2 + [coast@0, coast@1, ocean@0, ocean@1, river@0, river@1, river@2, road@0, road@1, road@2]
+  grass@0 + [ocean@0, ocean@1, ocean@2]
+  grass@1 + [ocean@0, ocean@1, ocean@2]
+  grass@2 + [ocean@0, ocean@1, ocean@2]
+  ocean@0 + [coast@1, coast@2, grass@0, grass@1, grass@2, ocean@1, ocean@2, river@0, river@1, river@2, road@0, road@1, road@2]
+  ocean@1 + [coast@0, coast@2, grass@0, grass@1, grass@2, ocean@0, ocean@2, river@0, river@1, river@2, road@0, road@1, road@2]
+  ocean@2 + [coast@0, coast@1, grass@0, grass@1, grass@2, ocean@0, ocean@1, river@0, river@1, river@2, road@0, road@1, road@2]
+  river@0 + [coast@0, coast@1, coast@2, ocean@0, ocean@1, ocean@2, river@1, river@2, road@1, road@2]
+  river@1 + [coast@0, coast@1, coast@2, ocean@0, ocean@1, ocean@2, river@0, river@2, road@0, road@2]
+  river@2 + [coast@0, coast@1, coast@2, ocean@0, ocean@1, ocean@2, river@0, river@1, road@0, road@1]
+  road@0 + [coast@0, coast@1, coast@2, ocean@0, ocean@1, ocean@2, river@1, river@2, road@1, road@2]
+  road@1 + [coast@0, coast@1, coast@2, ocean@0, ocean@1, ocean@2, river@0, river@2, road@0, road@2]
+  road@2 + [coast@0, coast@1, coast@2, ocean@0, ocean@1, ocean@2, river@0, river@1, road@0, road@1]
+
+======================================================================
+AUDIT 3: Triple adjacent-edge constraints (3 consecutive fixed neighbors)
+For 3 consecutive edges with specific (type,level), how many states satisfy ALL 3?
+These represent the worst-case scenario for 3-neighbor grid boundaries.
+======================================================================
+
+Found 2514 impossible triple combinations:
+[IMPOSSIBLE] coast@0 + coast@0 + coast@0
+[IMPOSSIBLE] coast@0 + coast@0 + coast@1
+[IMPOSSIBLE] coast@0 + coast@0 + coast@2
+[IMPOSSIBLE] coast@0 + coast@0 + ocean@1
+[IMPOSSIBLE] coast@0 + coast@0 + ocean@2
+[IMPOSSIBLE] coast@0 + coast@0 + river@0
+[IMPOSSIBLE] coast@0 + coast@0 + river@1
+[IMPOSSIBLE] coast@0 + coast@0 + river@2
+[IMPOSSIBLE] coast@0 + coast@0 + road@0
+[IMPOSSIBLE] coast@0 + coast@0 + road@1
+[IMPOSSIBLE] coast@0 + coast@0 + road@2
+[IMPOSSIBLE] coast@0 + coast@1 + coast@0
+[IMPOSSIBLE] coast@0 + coast@1 + coast@1
+[IMPOSSIBLE] coast@0 + coast@1 + coast@2
+[IMPOSSIBLE] coast@0 + coast@1 + grass@1
+[IMPOSSIBLE] coast@0 + coast@1 + grass@2
+[IMPOSSIBLE] coast@0 + coast@1 + ocean@0
+[IMPOSSIBLE] coast@0 + coast@1 + ocean@1
+[IMPOSSIBLE] coast@0 + coast@1 + ocean@2
+[IMPOSSIBLE] coast@0 + coast@1 + river@0
+[IMPOSSIBLE] coast@0 + coast@1 + river@1
+[IMPOSSIBLE] coast@0 + coast@1 + river@2
+[IMPOSSIBLE] coast@0 + coast@1 + road@0
+[IMPOSSIBLE] coast@0 + coast@1 + road@1
+[IMPOSSIBLE] coast@0 + coast@1 + road@2
+[IMPOSSIBLE] coast@0 + coast@2 + coast@0
+[IMPOSSIBLE] coast@0 + coast@2 + coast@1
+[IMPOSSIBLE] coast@0 + coast@2 + coast@2
+[IMPOSSIBLE] coast@0 + coast@2 + grass@1
+[IMPOSSIBLE] coast@0 + coast@2 + grass@2
+... and 2484 more
+
+======================================================================
+SUMMARY
+======================================================================
+Edge types in use: coast, grass, ocean, river, road
+Edge+level combos: 15
+Impossible pairs (0 states): 138
+Fragile pairs (1-2 states): 9
+Impossible triples: 2514
+
+Recommendation: Add transition tiles for any IMPOSSIBLE or FRAGILE pairs
+to improve sub-completeness and reduce WFC contradictions.
