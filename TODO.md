@@ -3,6 +3,7 @@
 - Figure out how to get less wFC fails. bad seeds: 79319 (click 1,-1) , 351921 initial
 - Add new TILES: River dead-end, road slope dead-ends (low/high). river slopes? coast slopes. branching bridges? to help WFC.
 
+- Add no-self-adjacency WFC rule for COAST_D and RIVER_CROSSING tiles to prevent chains
 - fix coast can make weird strips
 - use bigger world noise fields for water, mountains + forests, cities?
 - add rocks + plants

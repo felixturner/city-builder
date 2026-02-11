@@ -69,6 +69,7 @@ export class GUIManager {
       tileLabelMode: 'coords',
       floor: true,
       levelColors: false,
+      whiteMode: false,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
@@ -149,6 +150,9 @@ export class GUIManager {
     gui.add(allParams.debug, 'levelColors').name('Level Colors').onChange((v) => {
       HexTile.debugLevelColors = v
       demo.city.updateTileColors()
+    })
+    gui.add(allParams.debug, 'whiteMode').name('White Mode').onChange((v) => {
+      demo.city.setWhiteMode(v)
     })
 
     // Action buttons

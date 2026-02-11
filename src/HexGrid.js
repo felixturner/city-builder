@@ -133,8 +133,13 @@ export class HexGrid {
       totalV += geom.attributes.position.count
       totalI += geom.index ? geom.index.count : 0
     }
+    // Include bottom fill geometry
+    if (HexTileGeometry.bottomGeom) {
+      totalV += HexTileGeometry.bottomGeom.attributes.position.count
+      totalI += HexTileGeometry.bottomGeom.index ? HexTileGeometry.bottomGeom.index.count : 0
+    }
 
-    const maxInstances = 25 * 25
+    const maxInstances = 25 * 25 * 2  // Extra room for bottom fill instances
 
     // Create BatchedMesh for hex tiles (positioned at 0,0,0 local - group handles offset)
     this.hexMesh = new BatchedMesh(maxInstances, totalV * 2, totalI * 2, this.material)
@@ -151,6 +156,13 @@ export class HexGrid {
         const geomId = this.hexMesh.addGeometry(geom)
         this.geomIds.set(type, geomId)
       }
+    }
+
+    // Register bottom fill geometry
+    this.bottomGeomId = null
+    this.bottomFills = new Map()  // `gridX,gridZ` -> instanceId
+    if (HexTileGeometry.bottomGeom) {
+      this.bottomGeomId = this.hexMesh.addGeometry(HexTileGeometry.bottomGeom)
     }
 
     // Initialize color buffer with a dummy white instance (fixes WebGPU color sync issue)
@@ -495,6 +507,26 @@ export class HexGrid {
       this.dummy.scale.setScalar(1)
       this.dummy.updateMatrix()
       this.hexMesh.setMatrixAt(oldTile.instanceId, this.dummy.matrix)
+
+      // Update bottom fill
+      const fillKey = `${gridX},${gridZ}`
+      const existingFillId = this.bottomFills.get(fillKey)
+      if (existingFillId !== undefined) {
+        this.hexMesh.deleteInstance(existingFillId)
+        this.bottomFills.delete(fillKey)
+      }
+      if (newLevel >= 1 && this.bottomGeomId !== null) {
+        const WHITE = new Color(0xffffff)
+        const fillId = this.hexMesh.addInstance(this.bottomGeomId)
+        this.hexMesh.setColorAt(fillId, WHITE)
+        const tileY = newLevel * LEVEL_HEIGHT
+        this.dummy.position.set(pos.x, tileY, pos.z)
+        this.dummy.rotation.y = 0
+        this.dummy.scale.set(1, tileY, 1)
+        this.dummy.updateMatrix()
+        this.hexMesh.setMatrixAt(fillId, this.dummy.matrix)
+        this.bottomFills.set(fillKey, fillId)
+      }
     }
 
     return oldTile
@@ -526,6 +558,26 @@ export class HexGrid {
       for (const bridge of this.decorations.bridges) {
         this.decorations.bridgeMesh.setMatrixAt(bridge.instanceId, dummy.matrix)
       }
+      for (const lily of this.decorations.waterlilies) {
+        this.decorations.waterlilyMesh.setMatrixAt(lily.instanceId, dummy.matrix)
+      }
+      for (const flower of this.decorations.flowers) {
+        this.decorations.flowerMesh.setMatrixAt(flower.instanceId, dummy.matrix)
+      }
+      for (const rock of this.decorations.rocks) {
+        this.decorations.rockMesh.setMatrixAt(rock.instanceId, dummy.matrix)
+      }
+      for (const hill of this.decorations.hills) {
+        this.decorations.hillMesh.setMatrixAt(hill.instanceId, dummy.matrix)
+      }
+      for (const mountain of this.decorations.mountains) {
+        this.decorations.mountainMesh.setMatrixAt(mountain.instanceId, dummy.matrix)
+      }
+    }
+
+    // Hide bottom fills
+    for (const fillId of this.bottomFills.values()) {
+      this.hexMesh.setMatrixAt(fillId, dummy.matrix)
     }
   }
 
@@ -543,6 +595,9 @@ export class HexGrid {
     // Build decoration lookup by tile position
     const decsByTile = this.buildDecorationMap()
 
+    // Bottom fills are already keyed by tile position
+    const fillsByTile = this.bottomFills
+
     let i = 0
     const step = () => {
       if (i >= collapseOrder.length) return
@@ -559,6 +614,7 @@ export class HexGrid {
         const rotationY = -tile.rotation * Math.PI / 3
 
         // Animate tile from above
+        const fillId = fillsByTile.get(`${tile.gridX},${tile.gridZ}`)
         const anim = { y: targetY + DROP_HEIGHT, scale: 1 }
         tile._anim = anim
         gsap.to(anim, {
@@ -571,6 +627,16 @@ export class HexGrid {
             dummy.scale.setScalar(anim.scale)
             dummy.updateMatrix()
             this.hexMesh.setMatrixAt(tile.instanceId, dummy.matrix)
+
+            // Animate bottom fill with tile
+            if (fillId !== undefined) {
+              const tileY = tile.level * LEVEL_HEIGHT
+              dummy.position.set(pos.x, anim.y, pos.z)
+              dummy.rotation.y = 0
+              dummy.scale.set(anim.scale, tileY, anim.scale)
+              dummy.updateMatrix()
+              this.hexMesh.setMatrixAt(fillId, dummy.matrix)
+            }
           }
         })
 
@@ -610,9 +676,9 @@ export class HexGrid {
       map.get(key).push({
         mesh: this.decorations.treeMesh,
         instanceId: tree.instanceId,
-        x: pos.x,
+        x: pos.x + (tree.ox ?? 0),
         y: tree.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
-        z: pos.z,
+        z: pos.z + (tree.oz ?? 0),
         rotationY: tree.rotationY ?? 0
       })
     }
@@ -627,9 +693,9 @@ export class HexGrid {
       map.get(key).push({
         mesh: this.decorations.buildingMesh,
         instanceId: building.instanceId,
-        x: pos.x,
-        y: building.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
-        z: pos.z,
+        x: pos.x + (building.ox ?? 0),
+        y: building.tile.level * LEVEL_HEIGHT + TILE_SURFACE + (building.oy ?? 0),
+        z: pos.z + (building.oz ?? 0),
         rotationY: building.rotationY ?? 0
       })
     }
@@ -651,6 +717,93 @@ export class HexGrid {
       })
     }
 
+    for (const lily of this.decorations.waterlilies) {
+      const key = `${lily.tile.gridX},${lily.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        lily.tile.gridX - this.gridRadius,
+        lily.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.waterlilyMesh,
+        instanceId: lily.instanceId,
+        x: pos.x + (lily.ox ?? 0),
+        y: lily.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        z: pos.z + (lily.oz ?? 0),
+        rotationY: lily.rotationY ?? 0,
+        scale: 2
+      })
+    }
+
+    for (const flower of this.decorations.flowers) {
+      const key = `${flower.tile.gridX},${flower.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        flower.tile.gridX - this.gridRadius,
+        flower.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.flowerMesh,
+        instanceId: flower.instanceId,
+        x: pos.x + (flower.ox ?? 0),
+        y: flower.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        z: pos.z + (flower.oz ?? 0),
+        rotationY: flower.rotationY ?? 0,
+        scale: 2
+      })
+    }
+
+    for (const rock of this.decorations.rocks) {
+      const key = `${rock.tile.gridX},${rock.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        rock.tile.gridX - this.gridRadius,
+        rock.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.rockMesh,
+        instanceId: rock.instanceId,
+        x: pos.x + (rock.ox ?? 0),
+        y: rock.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        z: pos.z + (rock.oz ?? 0),
+        rotationY: rock.rotationY ?? 0
+      })
+    }
+
+    for (const hill of this.decorations.hills) {
+      const key = `${hill.tile.gridX},${hill.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        hill.tile.gridX - this.gridRadius,
+        hill.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.hillMesh,
+        instanceId: hill.instanceId,
+        x: pos.x,
+        y: hill.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        z: pos.z,
+        rotationY: hill.rotationY ?? 0
+      })
+    }
+
+    for (const mountain of this.decorations.mountains) {
+      const key = `${mountain.tile.gridX},${mountain.tile.gridZ}`
+      const pos = HexTileGeometry.getWorldPosition(
+        mountain.tile.gridX - this.gridRadius,
+        mountain.tile.gridZ - this.gridRadius
+      )
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push({
+        mesh: this.decorations.mountainMesh,
+        instanceId: mountain.instanceId,
+        x: pos.x,
+        y: mountain.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        z: pos.z,
+        rotationY: mountain.rotationY ?? 0
+      })
+    }
+
     return map
   }
 
@@ -664,10 +817,11 @@ export class HexGrid {
 
     const list = Array.isArray(items) ? items : [items]
     for (const item of list) {
-      const anim = { y: item.y + DROP_HEIGHT, scale: 0.5 }
+      const targetScale = item.scale ?? 1
+      const anim = { y: item.y + DROP_HEIGHT, scale: targetScale * 0.5 }
       gsap.to(anim, {
         y: item.y,
-        scale: 1,
+        scale: targetScale,
         duration: ANIM_DURATION,
         ease: 'power1.out',
         onUpdate: () => {
@@ -696,6 +850,14 @@ export class HexGrid {
     const gridRadius = this.gridRadius
     const LEVEL_HEIGHT = 0.5
 
+    // Clear old bottom fills
+    for (const fillId of this.bottomFills.values()) {
+      this.hexMesh.deleteInstance(fillId)
+    }
+    this.bottomFills = new Map()
+
+    const WHITE = new Color(0xffffff)
+
     for (const tile of this.hexTiles) {
       if (tile.instanceId === null) continue
 
@@ -710,6 +872,19 @@ export class HexGrid {
 
       this.hexMesh.setMatrixAt(tile.instanceId, dummy.matrix)
       this.hexMesh.setVisibleAt(tile.instanceId, true)
+
+      // Add bottom fill under elevated tiles (geometry hangs downward from Y=0)
+      if (tile.level >= 1 && this.bottomGeomId !== null) {
+        const fillId = this.hexMesh.addInstance(this.bottomGeomId)
+        this.hexMesh.setColorAt(fillId, WHITE)
+        const tileY = tile.level * LEVEL_HEIGHT
+        dummy.position.set(pos.x, tileY, pos.z)
+        dummy.rotation.y = 0
+        dummy.scale.set(1, tileY, 1)
+        dummy.updateMatrix()
+        this.hexMesh.setMatrixAt(fillId, dummy.matrix)
+        this.bottomFills.set(`${tile.gridX},${tile.gridZ}`, fillId)
+      }
     }
   }
 
@@ -720,7 +895,11 @@ export class HexGrid {
     if (!this.decorations) return
     this.decorations.populate(this.hexTiles, this.gridRadius)
     this.decorations.populateBuildings(this.hexTiles, this.hexGrid, this.gridRadius)
+    this.decorations.populateFlowers(this.hexTiles, this.gridRadius)
+    this.decorations.populateRocks(this.hexTiles, this.gridRadius)
+    this.decorations.populateHillsAndMountains(this.hexTiles, this.gridRadius)
     this.decorations.populateBridges(this.hexTiles, this.gridRadius)
+    this.decorations.populateWaterlilies(this.hexTiles, this.gridRadius)
   }
 
   /**
@@ -801,7 +980,11 @@ export class HexGrid {
           this.hexMesh.deleteInstance(tile.instanceId)
         }
       }
+      for (const fillId of this.bottomFills.values()) {
+        this.hexMesh.deleteInstance(fillId)
+      }
     }
+    this.bottomFills = new Map()
     this.hexTiles = []
     this.hexGrid = null
   }

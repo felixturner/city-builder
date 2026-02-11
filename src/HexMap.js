@@ -1692,13 +1692,34 @@ export class HexMap {
   }
 
   /**
+   * Toggle white mode — removes texture so everything renders as flat white
+   */
+  setWhiteMode(enabled) {
+    this._whiteMode = enabled
+    const mat = HexTileGeometry.material
+    if (!mat) return
+    if (enabled) {
+      if (!mat._savedMap) mat._savedMap = mat.map
+      mat.map = null
+      mat.needsUpdate = true
+    } else if (!HexTile.debugLevelColors) {
+      // Only restore map if level colors isn't also active
+      if (mat._savedMap) {
+        mat.map = mat._savedMap
+        mat._savedMap = null
+        mat.needsUpdate = true
+      }
+    }
+  }
+
+  /**
    * Update tile colors on all populated grids (for debug level visualization)
    */
   updateTileColors() {
     // Toggle material texture so instance colors fully override (not multiply)
     const mat = HexTileGeometry.material
     if (mat) {
-      if (HexTile.debugLevelColors) {
+      if (HexTile.debugLevelColors || this._whiteMode) {
         if (!mat._savedMap) mat._savedMap = mat.map
         mat.map = null
         mat.needsUpdate = true

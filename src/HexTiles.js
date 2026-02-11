@@ -146,6 +146,7 @@ export class HexTileGeometry {
   static loaded = false
   static gltfScene = null
   static material = null  // Material from GLB
+  static bottomGeom = null  // hex_grass_bottom fill geometry
 
   // Scale factor: Blender units to world units
   // Blender tiles are 2m on X, we want 2 WU in app (1:1)
@@ -175,6 +176,18 @@ export class HexTileGeometry {
         if (result.geom) {
           this.geoms.set(type, result.geom)
         }
+      }
+
+      // Load grass bottom fill geometry (not a tile type, stored separately)
+      // Processed so top is at Y=0 (extends downward) for placement at tile base
+      const bottomResult = this.findAndProcessGeometry(gltf.scene, 'hex_grass_bottom')
+      if (bottomResult.geom) {
+        bottomResult.geom.computeBoundingBox()
+        const topY = bottomResult.geom.boundingBox.max.y
+        bottomResult.geom.translate(0, -topY, 0)
+        bottomResult.geom.computeBoundingBox()
+        bottomResult.geom.computeBoundingSphere()
+        this.bottomGeom = bottomResult.geom
       }
 
       // Calculate hex dimensions from grass tile
