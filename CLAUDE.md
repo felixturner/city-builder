@@ -53,8 +53,7 @@ a hex map builder toy
 
 ### Debug Label Colors
 - Purple = WFC failed cell (0 possibilities)
-- Orange = Replaced fixed cell
-- Red = Dropped fixed cell
+- Red = Changed overlap cell (re-solved by neighbor grid)
 
 ## WFC (Wave Function Collapse) Implementation
 

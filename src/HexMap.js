@@ -49,6 +49,7 @@ export class HexMap {
     // Grid management - all grids (both PLACEHOLDER and POPULATED)
     this.grids = new Map()  // key: "x,z" grid coords, value: HexGrid instance
     this.hexGridRadius = 8
+    this.overlapRings = 1  // Number of overlap rings (neighbor cells made solvable)
     this.roadMaterial = null
 
     // WFC rules (shared across all grids)
@@ -66,9 +67,10 @@ export class HexMap {
     this.tileLabels = new Object3D()
     this.tileLabels.visible = false
     this.tileLabelMode = 'coords'
-    this.failedCells = new Set()   // Track global coords of cells that caused WFC failures
+    this.failedCells = new Set()   // Track global coords of cells that caused WFC failures (purple labels)
+    this.overlapChangedCells = new Set() // Track global coords of overlap cells changed by WFC (orange labels)
+    this.droppedCells = new Set() // Track global coords of dropped fixed cells (red labels)
     this.replacedCells = new Set() // Track global coords of replaced fixed cells (orange labels)
-    this.droppedCells = new Set()  // Track global coords of dropped fixed cells (red labels)
 
     // Interaction
     this.raycaster = new Raycaster()
@@ -167,7 +169,7 @@ export class HexMap {
     const { type, id, message, success, tiles, collapseOrder } = e.data
 
     if (type === 'log') {
-      // Worker logs handled by populateGrid status updates
+      console.log(`%c${e.data.message}`, `color: ${e.data.color || 'black'}`)
     } else if (type === 'result') {
       // Resolve pending promise by ID
       const resolve = this.wfcPendingResolvers.get(id)
@@ -228,11 +230,19 @@ export class HexMap {
   addToGlobalCells(gridKey, tiles) {
     for (const tile of tiles) {
       const key = cubeKey(tile.q, tile.r, tile.s)
-      this.globalCells.set(key, {
-        q: tile.q, r: tile.r, s: tile.s,
-        type: tile.type, rotation: tile.rotation, level: tile.level,
-        gridKey
-      })
+      const existing = this.globalCells.get(key)
+      if (existing) {
+        // Update tile data in-place, keep original gridKey (overlap cells stay owned by source grid)
+        existing.type = tile.type
+        existing.rotation = tile.rotation
+        existing.level = tile.level
+      } else {
+        this.globalCells.set(key, {
+          q: tile.q, r: tile.r, s: tile.s,
+          type: tile.type, rotation: tile.rotation, level: tile.level,
+          gridKey
+        })
+      }
     }
   }
 
@@ -269,6 +279,72 @@ export class HexMap {
     }
 
     return [...fixedMap.values()]
+  }
+
+  /**
+   * Get overlap cells (N rings, solvable) and fixed cells (1 ring beyond overlap, immutable)
+   * Uses this.overlapRings to control depth.
+   * @param {Array} solveCells - [{q,r,s}] core cells to solve
+   * @returns {{ overlapCells: Array, fixedCells: Array }}
+   */
+  getFixedAndOverlapCells(solveCells) {
+    const solveSet = new Set(solveCells.map(c => cubeKey(c.q, c.r, c.s)))
+    const overlapMap = new Map()
+
+    // Build overlap rings iteratively
+    // Each ring expands from the previous frontier (ring 0 frontier = solveCells)
+    let frontier = solveCells
+    const allClaimed = new Set(solveSet) // solve + overlap keys
+
+    for (let ring = 0; ring < this.overlapRings; ring++) {
+      const nextFrontier = []
+      for (const { q, r, s } of frontier) {
+        for (const dir of CUBE_DIRS) {
+          const nq = q + dir.dq
+          const nr = r + dir.dr
+          const ns = s + dir.ds
+          const nKey = cubeKey(nq, nr, ns)
+          if (allClaimed.has(nKey)) continue
+          const existing = this.globalCells.get(nKey)
+          if (existing) {
+            const cell = {
+              q: nq, r: nr, s: ns,
+              type: existing.type, rotation: existing.rotation, level: existing.level,
+              gridKey: existing.gridKey
+            }
+            overlapMap.set(nKey, cell)
+            allClaimed.add(nKey)
+            nextFrontier.push(cell)
+          }
+        }
+      }
+      frontier = nextFrontier
+    }
+
+    // Fixed ring: 1 ring beyond the outermost overlap ring
+    const fixedMap = new Map()
+    for (const { q, r, s } of frontier) {
+      for (const dir of CUBE_DIRS) {
+        const nq = q + dir.dq
+        const nr = r + dir.dr
+        const ns = s + dir.ds
+        const nKey = cubeKey(nq, nr, ns)
+        if (allClaimed.has(nKey)) continue
+        if (fixedMap.has(nKey)) continue
+        const existing = this.globalCells.get(nKey)
+        if (existing) {
+          fixedMap.set(nKey, {
+            q: nq, r: nr, s: ns,
+            type: existing.type, rotation: existing.rotation, level: existing.level
+          })
+        }
+      }
+    }
+
+    return {
+      overlapCells: [...overlapMap.values()],
+      fixedCells: [...fixedMap.values()]
+    }
   }
 
   /**
@@ -536,6 +612,7 @@ export class HexMap {
       fixedCell.q, fixedCell.r, fixedCell.s,
       fixedCell.type, fixedCell.rotation, fixedCell.level
     )
+    if (candidates.length === 0) return false
 
     // Build a map of other fixed cells for adjacency checks
     const fixedMap = new Map()
@@ -573,9 +650,6 @@ export class HexMap {
       }
 
       if (compatibleWithFixed) {
-        const co = cubeToOffset(fixedCell.q, fixedCell.r, fixedCell.s)
-        this.replacedCells.add(`${co.col},${co.row}`)
-
         // Update globalCells
         const existing = this.globalCells.get(key)
         if (existing) {
@@ -604,6 +678,8 @@ export class HexMap {
         fixedCell.rotation = replacement.rotation
         fixedCell.level = replacement.level
         replacedKeys.add(key)
+        const rco = cubeToOffset(fixedCell.q, fixedCell.r, fixedCell.s)
+        this.replacedCells.add(`${rco.col},${rco.row}`)
         return true
       }
     }
@@ -691,233 +767,131 @@ export class HexMap {
     const gridKey = getGridKey(grid.gridCoords.x, grid.gridCoords.z)
     const center = grid.globalCenterCube
 
-    // Generate solve cells: all cells in hex radius around grid center
-    const solveCells = cubeCoordsInRadius(center.q, center.r, center.s, this.hexGridRadius)
+    // Generate core solve cells: all cells in hex radius around grid center
+    const coreSolveCells = cubeCoordsInRadius(center.q, center.r, center.s, this.hexGridRadius)
 
-    // Get fixed cells from already-populated neighbors
-    let fixedCells = this.getFixedCellsForRegion(solveCells)
+    // Get overlap cells (ring 1, solvable) and fixed cells (ring 2, immutable)
+    const { overlapCells, fixedCells: outerFixed } = this.getFixedAndOverlapCells(coreSolveCells)
+    const solveCells = [...coreSolveCells, ...overlapCells.map(c => ({ q: c.q, r: c.r, s: c.s }))]
+    let fixedCells = outerFixed
 
     // Build initial collapses for first grid
     const initialCollapses = options.initialCollapses ?? []
 
-    // If no fixed cells and no initial collapses, seed center with grass
-    if (fixedCells.length === 0 && initialCollapses.length === 0) {
+    // If no fixed cells, no overlap cells, and no initial collapses, seed center with grass
+    if (fixedCells.length === 0 && overlapCells.length === 0 && initialCollapses.length === 0) {
       initialCollapses.push({ q: center.q, r: center.r, s: center.s, type: TileType.GRASS, rotation: 0, level: 0 })
 
       // Optionally seed water edge
       this.addWaterEdgeSeeds(initialCollapses, center, this.hexGridRadius)
     }
 
-    const initialFixedCount = fixedCells.length
-    let replacedCount = 0
-    let droppedCount = 0
+    let overlapChangedCount = 0
 
-    console.log(`%c[${gridKey}] POPULATING GRID (${solveCells.length} cells, ${initialFixedCount} fixed)`, 'color: blue')
+    console.log(`%c[${gridKey}] POPULATING GRID (${coreSolveCells.length} cells, ${overlapCells.length} neighbours)`, 'color: blue')
     setStatus(`[${gridKey}] Solving WFC...`)
-
-    // ---- Pre-WFC: Filter adjacent fixed cell conflicts ----
-    if (fixedCells.length > 1) {
-      const filterResult = this.filterConflictingFixedCells(fixedCells)
-      const conflicts = filterResult.conflicts
-      const preReplacedKeys = new Set()
-
-      // Try replacing conflicting cells, drop if irreplaceable
-      for (const conflict of conflicts) {
-        const cell = conflict.cellObj
-        if (this.tryReplaceFixedCell(cell, fixedCells, preReplacedKeys)) {
-          filterResult.validCells.push(cell)
-          replacedCount++
-        } else {
-          const co = cubeToOffset(cell.q, cell.r, cell.s)
-          this.droppedCells.add(`${co.col},${co.row}`)
-          droppedCount++
-        }
-      }
-      fixedCells = filterResult.validCells
-    }
-
-    // ---- Pre-WFC: Validate multi-fixed-cell conflicts ----
-    if (fixedCells.length > 1) {
-      let validation = this.validateFixedCellConflicts(solveCells, fixedCells)
-      const preReplacedKeys = new Set()
-      let maxIterations = 50
-
-      while (!validation.valid && fixedCells.length > 1 && maxIterations-- > 0) {
-        const conflict = validation.conflicts[0]
-        let replaced = false
-
-        // Try replacing each conflicting fixed cell
-        for (const fcInfo of conflict.fixedCells) {
-          const actualCell = fixedCells.find(fc =>
-            fc.q === fcInfo.q && fc.r === fcInfo.r && fc.s === fcInfo.s
-          )
-          if (actualCell && this.tryReplaceFixedCell(actualCell, fixedCells, preReplacedKeys)) {
-            replaced = true
-            replacedCount++
-            break
-          }
-        }
-
-        // Fall back to dropping if no replacement found
-        if (!replaced) {
-          const fcInfo = conflict.fixedCells[0]
-          fixedCells = fixedCells.filter(fc =>
-            !(fc.q === fcInfo.q && fc.r === fcInfo.r && fc.s === fcInfo.s)
-          )
-          this.droppedCells.add(fcInfo.global)
-          droppedCount++
-        }
-
-        validation = this.validateFixedCellConflicts(solveCells, fixedCells)
-      }
-    }
 
     // Start placeholder spinning
     grid.placeholder?.startSpinning()
 
-    // ---- Phase 0/1/2 WFC retry loop ----
+    // ---- WFC solve (overlap handles boundary flexibility) ----
     const tileTypes = this.getDefaultTileTypes()
-    const phaseReplacedKeys = new Set()
+
+    // Build previousStates from overlap cells so WFC can bias toward keeping them
+    const previousStates = {}
+    for (const oc of overlapCells) {
+      previousStates[cubeKey(oc.q, oc.r, oc.s)] = {
+        type: oc.type, rotation: oc.rotation, level: oc.level
+      }
+    }
+
+    const wfcResult = await this.solveWfcAsync(solveCells, fixedCells, {
+      tileTypes,
+      weights: options.weights ?? {},
+      maxRestarts: 10,
+      initialCollapses,
+      gridId: gridKey,
+      attemptNum: 1,
+      seed: getSeed(),
+      previousStates,
+      grassAnyLevel: params.roads.grassAnyLevel,
+    })
+
     let result = null
     let resultCollapseOrder = []
-    let attempt = 0
 
-    // Shuffle helper
-    const shuffleArray = (arr) => {
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1))
-        ;[arr[i], arr[j]] = [arr[j], arr[i]]
-      }
-      return arr
-    }
-
-    // Helper to run WFC
-    const runWfc = async () => {
-      attempt++
-      const activeFixed = fixedCells.filter(fc => !fc.dropped)
-      const wfcResult = await this.solveWfcAsync(solveCells, activeFixed, {
-        tileTypes,
-        weights: options.weights ?? {},
-        maxRestarts: initialFixedCount === 0 ? 10 : 1,
-        initialCollapses,
-        gridId: gridKey,
-        attemptNum: attempt,
-        seed: getSeed(),
-      })
-
-      if (wfcResult.success) {
-        return { success: true, tiles: wfcResult.tiles, collapseOrder: wfcResult.collapseOrder || [] }
-      }
-
-      // Track failed cell
-      const contradiction = wfcResult.seedingContradiction || wfcResult.lastContradiction
-      if (contradiction) {
-        this.failedCells.add(`${contradiction.failedCol},${contradiction.failedRow}`)
-      }
-      return {
-        success: false,
-        failedCell: contradiction ? { q: contradiction.failedQ, r: contradiction.failedR, s: contradiction.failedS } : null,
-      }
-    }
-
-    // Helper: find fixed cells adjacent to a failed cell
-    const findAdjacentFixed = (failedQ, failedR, failedS) => {
-      const adjacent = []
-      for (let i = 0; i < 6; i++) {
-        const dir = CUBE_DIRS[i]
-        const nq = failedQ + dir.dq
-        const nr = failedR + dir.dr
-        const ns = failedS + dir.ds
-        const nKey = cubeKey(nq, nr, ns)
-        const fc = fixedCells.find(c => !c.dropped && cubeKey(c.q, c.r, c.s) === nKey)
-        if (fc) adjacent.push(fc)
-      }
-      return adjacent
-    }
-
-    // Phase 0: Initial attempt
-    const initialResult = await runWfc()
-    if (initialResult.success) {
-      result = initialResult.tiles
-      resultCollapseOrder = initialResult.collapseOrder
+    if (wfcResult.success) {
+      result = wfcResult.tiles
+      resultCollapseOrder = wfcResult.collapseOrder || []
     } else {
-      // Phase 1: Replace fixed cells, prioritizing those adjacent to failed cells
-      const shuffledFallback = shuffleArray([...fixedCells])
-      let fallbackIndex = 0
-      let lastFailedCell = initialResult.failedCell
-
-      while (!result) {
-        let wfcResult = null
-
-        // First: try fixed cells adjacent to the last failed cell
-        if (lastFailedCell) {
-          const adjacent = findAdjacentFixed(lastFailedCell.q, lastFailedCell.r, lastFailedCell.s)
-          for (const fc of adjacent) {
-            if (this.tryReplaceFixedCell(fc, fixedCells, phaseReplacedKeys)) {
-              replacedCount++
-              // Re-validate after replacement
-              const activeFixed = fixedCells.filter(c => !c.dropped)
-              const validation = this.validateFixedCellConflicts(solveCells, activeFixed)
-              if (!validation.valid) {
-                for (const conflict of validation.conflicts) {
-                  const fcInfo = conflict.fixedCells[0]
-                  const toDropFC = fixedCells.find(c =>
-                    c.q === fcInfo.q && c.r === fcInfo.r && c.s === fcInfo.s && !c.dropped
-                  )
-                  if (toDropFC) {
-                    toDropFC.dropped = true
-                    droppedCount++
-                    this.droppedCells.add(fcInfo.global)
-                  }
-                }
-              }
-              wfcResult = await runWfc()
-              if (wfcResult) break
-            }
-          }
-        }
-
-        // Fallback: try next fixed cell from shuffled list
-        if (!wfcResult) {
-          while (fallbackIndex < shuffledFallback.length) {
-            const candidate = shuffledFallback[fallbackIndex++]
-            if (candidate.dropped) continue
-            if (this.tryReplaceFixedCell(candidate, fixedCells, phaseReplacedKeys)) {
-              replacedCount++
-              wfcResult = await runWfc()
-              if (wfcResult) break
-            }
-          }
-        }
-
-        if (!wfcResult) break  // No more cells to try
-
-        if (wfcResult.success) {
-          result = wfcResult.tiles
-          resultCollapseOrder = wfcResult.collapseOrder
-        } else {
-          lastFailedCell = wfcResult.failedCell
-        }
+      // Only mark purple cell for seeding contradictions (genuine fixed cell conflicts)
+      if (wfcResult.seedingContradiction) {
+        const c = wfcResult.seedingContradiction
+        this.failedCells.add(`${c.failedCol},${c.failedRow}`)
       }
 
-      // Phase 2: Try dropping fixed cells one by one
-      if (!result) {
-        const shuffledForDrop = shuffleArray(
-          fixedCells.filter(fc => !fc.dropped)
-        )
+      // ---- Fallback Phase 1: replace fixed cells one by one and retry ----
+      if (fixedCells.length > 0) {
+        console.log(`%cWFC failed, trying replace fallback`, 'color: red')
+        const replacedKeys = new Set()
+        let attemptNum = wfcResult.seedingContradiction ? 1 : 10
 
-        for (const fcToDrop of shuffledForDrop) {
+        // Sort fixed cells: neighbors of failed cell first
+        const sc = wfcResult.seedingContradiction || wfcResult.lastContradiction
+        const sortedFixed = [...fixedCells]
+        if (sc) {
+          const failedNeighborKeys = new Set(
+            CUBE_DIRS.map(d => cubeKey(sc.failedQ + d.dq, sc.failedR + d.dr, sc.failedS + d.ds))
+          )
+          sortedFixed.sort((a, b) => {
+            const aIsNear = failedNeighborKeys.has(cubeKey(a.q, a.r, a.s)) ? 0 : 1
+            const bIsNear = failedNeighborKeys.has(cubeKey(b.q, b.r, b.s)) ? 0 : 1
+            return aIsNear - bIsNear
+          })
+        }
+
+        for (const fc of sortedFixed) {
           if (result) break
+          if (this.tryReplaceFixedCell(fc, fixedCells, replacedKeys)) {
+            attemptNum++
+            console.log(`%cReplaced ${replacedKeys.size} cells`, 'color: red')
+            const replaceResult = await this.solveWfcAsync(solveCells, fixedCells, {
+              tileTypes, weights: options.weights ?? {}, maxRestarts: 1,
+              initialCollapses, gridId: gridKey, attemptNum,
+              seed: getSeed(), previousStates, grassAnyLevel: params.roads.grassAnyLevel,
+              quietSeeding: true,
+            })
+            if (replaceResult.success) {
+              result = replaceResult.tiles
+              resultCollapseOrder = replaceResult.collapseOrder || []
+            }
+          }
+        }
 
-          const co = cubeToOffset(fcToDrop.q, fcToDrop.r, fcToDrop.s)
-          this.droppedCells.add(`${co.col},${co.row}`)
-          fcToDrop.dropped = true
-          droppedCount++
+        // ---- Fallback Phase 2: drop fixed cells one by one and retry ----
+        if (!result) {
+          console.log(`%cReplace failed, trying drop fallback`, 'color: red')
+          const droppedKeys = new Set()
+          for (const fc of sortedFixed) {
+            if (result) break
+            const fcKey = cubeKey(fc.q, fc.r, fc.s)
+            droppedKeys.add(fcKey)
+            const dco = cubeToOffset(fc.q, fc.r, fc.s)
+            this.droppedCells.add(`${dco.col},${dco.row}`)
+            const reducedFixed = fixedCells.filter(f => !droppedKeys.has(cubeKey(f.q, f.r, f.s)))
+            attemptNum++
+            console.log(`%cDropped ${droppedKeys.size} cells`, 'color: red')
 
-          const wfcResult = await runWfc()
-          if (wfcResult.success) {
-            result = wfcResult.tiles
-            resultCollapseOrder = wfcResult.collapseOrder
+            const dropResult = await this.solveWfcAsync(solveCells, reducedFixed, {
+              tileTypes, weights: options.weights ?? {}, maxRestarts: 1,
+              initialCollapses, gridId: gridKey, attemptNum,
+              seed: getSeed(), previousStates, grassAnyLevel: params.roads.grassAnyLevel,
+              quietSeeding: true,
+            })
+            if (dropResult.success) {
+              result = dropResult.tiles
+              resultCollapseOrder = dropResult.collapseOrder || []
+            }
           }
         }
       }
@@ -927,35 +901,81 @@ export class HexMap {
     grid.placeholder?.stopSpinning()
 
     if (!result) {
-      console.log(`%c[${gridKey}] WFC FAILED`, 'color: red')
+      console.log(`%c[${gridKey}] WFC FAILED (all recovery attempts exhausted)`, 'color: red')
       setStatus(`[${gridKey}] WFC FAILED`)
       const { Sounds } = await import('./lib/Sounds.js')
       Sounds.play('incorrect')
       return
     }
 
-    // Log final status
-    const stats = [`${initialFixedCount} neighbours`]
-    if (attempt > 1) stats.push(`${attempt} attempts`)
-    if (replacedCount > 0) stats.push(`${replacedCount} replaced`)
-    if (droppedCount > 0) stats.push(`${droppedCount} dropped`)
-    const statusMsg = `[${gridKey}] WFC SUCCESS (${stats.join(', ')})`
-    if (droppedCount > 0) {
-      const prefix = stats.slice(0, -1).join(', ')
-      console.log(`%c[${gridKey}] WFC SUCCESS (${prefix}, %c${droppedCount} dropped%c)`, 'color: green', 'color: red', 'color: green')
-    } else {
-      console.log(`%c${statusMsg}`, 'color: green')
+    // ---- Handle overlap cell changes ----
+    // Build result lookup from WFC results
+    const resultMap = new Map()
+    for (const tile of result) {
+      resultMap.set(cubeKey(tile.q, tile.r, tile.s), tile)
     }
+
+    // Compare overlap cells: check if WFC re-solved them differently
+    for (const oc of overlapCells) {
+      const key = cubeKey(oc.q, oc.r, oc.s)
+      const solved = resultMap.get(key)
+      if (!solved) continue
+
+      // Check if tile changed
+      if (solved.type !== oc.type || solved.rotation !== oc.rotation || solved.level !== oc.level) {
+        overlapChangedCount++
+        const co = cubeToOffset(oc.q, oc.r, oc.s)
+        this.overlapChangedCells.add(`${co.col},${co.row}`)
+
+        // Update globalCells with new tile data (keeps original gridKey)
+        const existing = this.globalCells.get(key)
+        if (existing) {
+          existing.type = solved.type
+          existing.rotation = solved.rotation
+          existing.level = solved.level
+
+          // Update rendered tile in source grid
+          const sourceGrid = this.grids.get(existing.gridKey)
+          if (sourceGrid) {
+            const localCube = {
+              q: oc.q - sourceGrid.globalCenterCube.q,
+              r: oc.r - sourceGrid.globalCenterCube.r,
+              s: oc.s - sourceGrid.globalCenterCube.s,
+            }
+            const localOffset = cubeToOffset(localCube.q, localCube.r, localCube.s)
+            const gridX = localOffset.col + sourceGrid.gridRadius
+            const gridZ = localOffset.row + sourceGrid.gridRadius
+            sourceGrid.replaceTile(gridX, gridZ, solved.type, solved.rotation, solved.level)
+            // Remove old decorations and add bridge if new tile is a crossing
+            sourceGrid.decorations?.clearDecorationsAt(gridX, gridZ)
+            const replacedTile = sourceGrid.hexGrid[gridX]?.[gridZ]
+            if (replacedTile) {
+              sourceGrid.decorations?.addBridgeAt(replacedTile, sourceGrid.gridRadius)
+            }
+          }
+        }
+      }
+    }
+
+    // Log final status
+    const stats = [`${overlapCells.length} neighbours`]
+    if (overlapChangedCount > 0) stats.push(`${overlapChangedCount} changed`)
+    const statusMsg = `WFC SUCCESS (${stats.join(', ')})`
+    console.log(`%c${statusMsg}`, 'color: green')
     setStatus(statusMsg)
 
-    // Add results to global cell map
-    this.addToGlobalCells(gridKey, result)
+    // Filter result to only core cells (overlap cells already handled via replaceTile)
+    const coreSolveSet = new Set(coreSolveCells.map(c => cubeKey(c.q, c.r, c.s)))
+    const coreResult = result.filter(tile => coreSolveSet.has(cubeKey(tile.q, tile.r, tile.s)))
 
-    // Populate grid from cube results
+    // Add core results to global cell map
+    this.addToGlobalCells(gridKey, coreResult)
+
+    // Populate grid from core cube results only
     const animate = options.animate ?? (params?.roads?.animateWFC ?? false)
     const animateDelay = options.animateDelay ?? (params?.roads?.animateDelay ?? 20)
 
-    await grid.populateFromCubeResults(result, resultCollapseOrder, center, {
+    await grid.populateFromCubeResults(coreResult, resultCollapseOrder, center, {
       animate,
       animateDelay,
     })
@@ -1386,8 +1406,9 @@ export class HexMap {
     // Clear global state
     this.globalCells.clear()
     this.failedCells.clear()
-    this.replacedCells.clear()
+    this.overlapChangedCells.clear()
     this.droppedCells.clear()
+    this.replacedCells.clear()
 
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
@@ -1507,12 +1528,13 @@ export class HexMap {
           div.textContent = this.tileLabelMode === 'levels' ? `${baseLevel}` : `${globalOffset.col},${globalOffset.row}`
           const globalKey = `${globalOffset.col},${globalOffset.row}`
           const isFailed = this.failedCells.has(globalKey)
-          const isReplaced = this.replacedCells.has(globalKey)
           const isDropped = this.droppedCells.has(globalKey)
-          // Purple = failed cell, Orange = replaced, Red = dropped, Gray = normal
+          const isReplaced = this.replacedCells.has(globalKey)
+          const isOverlapChanged = this.overlapChangedCells.has(globalKey)
+          // Purple = failed cell, Red = dropped, Orange = replaced/overlap changed, Gray = normal
           const bgColor = isFailed ? 'rgba(150,50,200,0.9)'
             : isDropped ? 'rgba(200,50,50,0.9)'
-            : isReplaced ? 'rgba(220,140,20,0.9)'
+            : (isReplaced || isOverlapChanged) ? 'rgba(220,140,20,0.9)'
             : 'rgba(0,0,0,0.5)'
           div.style.cssText = `
             color: white;
@@ -1558,13 +1580,14 @@ export class HexMap {
             div.textContent = this.tileLabelMode === 'levels' ? `-` : `${globalOffset.col},${globalOffset.row}`
             const globalKey = `${globalOffset.col},${globalOffset.row}`
             const isFailed = this.failedCells.has(globalKey)
-            const isReplaced = this.replacedCells.has(globalKey)
             const isDropped = this.droppedCells.has(globalKey)
-            const isHighlighted = isFailed || isReplaced || isDropped
-            // Purple = failed cell, Orange = replaced, Red = dropped, Gray = normal
+            const isReplaced = this.replacedCells.has(globalKey)
+            const isOverlapChanged = this.overlapChangedCells.has(globalKey)
+            const isHighlighted = isFailed || isDropped || isReplaced || isOverlapChanged
+            // Purple = failed cell, Red = dropped, Orange = replaced/overlap changed, Gray = normal
             const bgColor = isFailed ? 'rgba(150,50,200,0.9)'
               : isDropped ? 'rgba(200,50,50,0.9)'
-              : isReplaced ? 'rgba(220,140,20,0.9)'
+              : (isReplaced || isOverlapChanged) ? 'rgba(220,140,20,0.9)'
               : 'rgba(0,0,0,0.3)'
             div.style.cssText = `
               color: ${isHighlighted ? 'white' : 'rgba(255,255,255,0.6)'};

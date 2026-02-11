@@ -32,6 +32,8 @@ class HexWFCSolver {
       weights: options.weights ?? {},
       log: options.log ?? (() => {}),
       attemptNum: options.attemptNum ?? 0,
+      previousStates: options.previousStates ?? null,
+      grassAnyLevel: options.grassAnyLevel ?? false,
     }
     this.log = this.options.log
     // Map<cubeKey, HexWFCCell> — cells to solve
@@ -125,6 +127,29 @@ class HexWFCSolver {
     }
 
     this.propagationStack = []
+
+    // Compute edge cells: solve cells that have at least one fixed cell neighbor
+    this.edgeCells = new Set()
+    for (const { q, r, s } of solveCells) {
+      const key = cubeKey(q, r, s)
+      const nbrs = this.neighbors.get(key)
+      if (nbrs) {
+        for (const { key: nKey } of nbrs) {
+          if (this.fixedCells.has(nKey)) {
+            this.edgeCells.add(key)
+            break
+          }
+        }
+      }
+    }
+
+    // Store previous states for overlap cell similarity bias
+    this.previousStates = new Map()
+    if (this.options.previousStates) {
+      for (const [key, state] of Object.entries(this.options.previousStates)) {
+        this.previousStates.set(key, state)
+      }
+    }
   }
 
   findLowestEntropyCell() {
@@ -155,6 +180,18 @@ class HexWFCSolver {
       const defaultWeight = TILE_LIST[state.type]?.weight ?? 1
       return customWeight ?? defaultWeight
     })
+
+    // Boost weight of overlap cell's original tile to reduce visual churn
+    const prevState = this.previousStates?.get(key)
+    if (prevState) {
+      const prevStateKey = HexWFCCell.stateKey(prevState)
+      for (let i = 0; i < possArray.length; i++) {
+        if (possArray[i] === prevStateKey) {
+          weights[i] *= 100
+        }
+      }
+    }
+
     const totalWeight = weights.reduce((a, b) => a + b, 0)
     let r = random() * totalWeight
     let selectedKey = possArray[0]
@@ -225,8 +262,19 @@ class HexWFCSolver {
           if (!typeCache) lookedUp[edgeInfo.type] = {}
           lookedUp[edgeInfo.type][edgeInfo.level] = true
 
-          const matches = this.rules.getByEdge(edgeInfo.type, returnDir, edgeInfo.level)
-          for (const k of matches) allowedInNeighbor.add(k)
+          const isEdge = isFixed || this.edgeCells.has(nKey)
+          if ((this.options.grassAnyLevel || isEdge) && edgeInfo.type === 'grass') {
+            // Grass can connect at any level — aggregate all levels from the index
+            const levelIndex = this.rules.byEdge.get('grass')?.[returnDir]
+            if (levelIndex) {
+              for (const lvlSet of levelIndex) {
+                if (lvlSet) for (const k of lvlSet) allowedInNeighbor.add(k)
+              }
+            }
+          } else {
+            const matches = this.rules.getByEdge(edgeInfo.type, returnDir, edgeInfo.level)
+            for (const k of matches) allowedInNeighbor.add(k)
+          }
         }
 
         let changed = false
@@ -261,7 +309,7 @@ class HexWFCSolver {
   solve(solveCells, fixedCells, initialCollapses = []) {
     const baseAttempt = this.options.attemptNum || 0
     const tryNum = baseAttempt + this.restartCount
-    this.log(`WFC START (try ${tryNum}, ${solveCells.length} cells, ${fixedCells.length} fixed)`)
+    this.log(`WFC START (try ${tryNum})`)
 
     this.init(solveCells, fixedCells)
 
@@ -283,13 +331,12 @@ class HexWFCSolver {
       this.propagationStack.push(key)
     }
 
-    // Also propagate from initial collapses
+    // Propagate initial constraints from fixed cells + initial collapses
     if ((fixedCells.length > 0 || initialCollapses.length > 0) && !this.propagate()) {
       this.seedingContradiction = this.lastContradiction
-      this.log('WFC failed - propagation failed after seeding')
-      if (this.seedingContradiction) {
+      if (this.lastContradiction && !this.options.quietSeeding) {
         const c = this.lastContradiction
-        this.log(`  FAILED CELL: (${c.failedCol},${c.failedRow})`)
+        this.log(`Seed conflict at (${c.failedCol},${c.failedRow})`, 'red')
       }
       return null
     }
@@ -355,9 +402,9 @@ self.onmessage = function(e) {
 
     const solver = new HexWFCSolver(rules, {
       ...options,
-      log: (message) => {
+      log: (message, color) => {
         if (currentRequestId === id) {
-          self.postMessage({ type: 'log', id, message })
+          self.postMessage({ type: 'log', id, message, color })
         }
       }
     })

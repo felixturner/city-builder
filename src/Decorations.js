@@ -507,6 +507,76 @@ export class Decorations {
   }
 
   /**
+   * Add a bridge on a single tile if it's a river crossing
+   * @param {HexTile} tile - Tile to check
+   * @param {number} gridRadius - Grid radius for position calculation
+   */
+  addBridgeAt(tile, gridRadius) {
+    if (!this.bridgeMesh || this.bridgeGeomIds.size === 0) return
+    if (tile.type !== TileType.RIVER_CROSSING_A &&
+        tile.type !== TileType.RIVER_CROSSING_B) return
+
+    const LEVEL_HEIGHT = 0.5
+    const meshName = tile.type === TileType.RIVER_CROSSING_A
+      ? 'building_bridge_A'
+      : 'building_bridge_B'
+
+    const geomId = this.bridgeGeomIds.get(meshName)
+    if (geomId === undefined) return
+
+    const instanceId = this.bridgeMesh.addInstance(geomId)
+    this.bridgeMesh.setColorAt(instanceId, WHITE)
+
+    const localPos = HexTileGeometry.getWorldPosition(
+      tile.gridX - gridRadius,
+      tile.gridZ - gridRadius
+    )
+    this.dummy.position.set(localPos.x, tile.level * LEVEL_HEIGHT, localPos.z)
+    this.dummy.rotation.y = -tile.rotation * Math.PI / 3
+    this.dummy.scale.setScalar(1)
+    this.dummy.updateMatrix()
+
+    this.bridgeMesh.setMatrixAt(instanceId, this.dummy.matrix)
+    this.bridges.push({ tile, meshName, instanceId })
+  }
+
+  /**
+   * Remove decorations only on a specific tile position
+   * @param {number} gridX - Tile grid X
+   * @param {number} gridZ - Tile grid Z
+   */
+  clearDecorationsAt(gridX, gridZ) {
+    if (this.treeMesh) {
+      const removed = []
+      this.trees = this.trees.filter(tree => {
+        if (tree.tile.gridX === gridX && tree.tile.gridZ === gridZ) {
+          this.treeMesh.deleteInstance(tree.instanceId)
+          return false
+        }
+        return true
+      })
+    }
+    if (this.buildingMesh) {
+      this.buildings = this.buildings.filter(building => {
+        if (building.tile.gridX === gridX && building.tile.gridZ === gridZ) {
+          this.buildingMesh.deleteInstance(building.instanceId)
+          return false
+        }
+        return true
+      })
+    }
+    if (this.bridgeMesh) {
+      this.bridges = this.bridges.filter(bridge => {
+        if (bridge.tile.gridX === gridX && bridge.tile.gridZ === gridZ) {
+          this.bridgeMesh.deleteInstance(bridge.instanceId)
+          return false
+        }
+        return true
+      })
+    }
+  }
+
+  /**
    * Dispose of all resources
    */
   dispose() {

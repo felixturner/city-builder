@@ -1,0 +1,183 @@
+# Plan 2: Overlap Zones
+
+## Context
+Grid boundaries are the core failure point for WFC. Currently, neighbor boundary tiles are treated as immutable "fixed cells" — if they conflict, the solver has to replace or drop them through expensive multi-phase recovery. Overlap zones fix this by making the outermost ring of neighbor cells **solvable** instead of fixed, giving WFC freedom at boundaries. A second ring (further out) becomes the new fixed constraint layer.
+
+Based on Paul Merrell's Model Synthesis / Boris the Brave's MiB writeups.
+**Sources:** [Boris the Brave - MiB](https://www.boristhebrave.com/2021/10/26/model-synthesis-and-modifying-in-blocks/), [Infinite MiB](https://www.boristhebrave.com/2021/11/08/infinite-modifying-in-blocks/)
+
+## Files Modified
+- `src/HexMap.js` — constructor, `addToGlobalCells`, new `getFixedAndOverlapCells`, `populateGrid`, `createTileLabels`, `regenerateAll`
+- `src/HexGrid.js` — added try/catch in `animateDecoration` onUpdate (instance can be deleted by decoration repopulation)
+- `CLAUDE.md` — added blue debug label color
+
+## Implementation (completed)
+
+### 1. `overlapChangedCells` tracking Set
+- Constructor: `this.overlapChangedCells = new Set()`
+- `regenerateAll`: `this.overlapChangedCells.clear()`
+
+### 2. New method: `getFixedAndOverlapCells(solveCells)`
+- **Ring 1 (overlap)**: For each solve cell, check 6 cube neighbors in `globalCells`. If found and NOT in solve set -> overlap cell (solvable). Stores `gridKey` for later visual updates.
+- **Ring 2 (fixed)**: For each overlap cell, check 6 cube neighbors in `globalCells`. If found and NOT in solve/overlap set -> fixed cell (immutable).
+- Returns `{ overlapCells, fixedCells }`
+
+### 3. Modified `addToGlobalCells`
+If a cell already exists in `globalCells` -> update tile data in-place, **keep original gridKey**. Otherwise add normally. This ensures overlap cells stay "owned" by their source grid for rendering.
+
+### 4. Modified `populateGrid`
+- Replaced `getFixedCellsForRegion` with `getFixedAndOverlapCells`
+- Extended `solveCells` with overlap cell positions (WFC can re-solve them)
+- After WFC success: compare overlap results to originals, call `replaceTile()` on source grids for changed overlap cells
+- Repopulate decorations on affected source grids
+- Filter WFC result to core cells only for `populateFromCubeResults` and `addToGlobalCells`
+- Updated log format: `"(217 cells, 27 overlap, 30 fixed)"` and `"22 overlap changed"`
+
+### 5. Pre-WFC validation — no changes needed
+`filterConflictingFixedCells` and `validateFixedCellConflicts` operate on ring 2 fixed cells only. Overlap cells don't need validation since they're solvable.
+
+### 6. Debug label colors
+- Blue = Changed overlap cell (re-solved by neighbor grid)
+- Added in both populated grid labels and placeholder labels sections
+
+### 7. HexGrid.js fix
+- `animateDecoration` onUpdate: wrapped `setMatrixAt` in try/catch because `populateDecorations()` on source grids can delete decoration instances while GSAP tweens from the original animation are still running
+
+## What Does NOT Change
+- `wfc.worker.js` — worker treats all solve cells identically
+- `HexGrid.js` — `replaceTile()` and `populateDecorations()` called but not modified (except the tween fix)
+- `HexWFCCore.js` — utilities used as-is
+- Phase 1/2 recovery loop — operates on ring 2 fixed cells, same logic
+- `initialCollapses` seeding — only fires when no neighbors exist
+
+## Results (seed 351921, Build All, 13 grids)
+
+### Before overlap zones
+- WFC failures on this seed
+- More drops and replacements
+
+### After overlap zones (1 ring)
+```
+[0,0] WFC SUCCESS (0 overlap, 0 fixed)
+[1,-1] WFC SUCCESS (9 overlap, 10 fixed, 3 attempts, 9 overlap changed, 2 replaced)
+[1,0] WFC SUCCESS (18 overlap, 20 fixed, 15 overlap changed)
+[0,1] WFC SUCCESS (18 overlap, 20 fixed, 4 attempts, 16 overlap changed, 3 replaced, 1 dropped)
+[-1,0] WFC SUCCESS (18 overlap, 20 fixed, 18 overlap changed, 2 dropped)
+[-1,1] WFC SUCCESS (18 overlap, 20 fixed, 11 attempts, 16 overlap changed, 9 replaced, 1 dropped)
+[1,1] WFC SUCCESS (18 overlap, 20 fixed, 18 overlap changed)
+[0,2] WFC SUCCESS (27 overlap, 30 fixed, 7 attempts, 22 overlap changed, 6 replaced)
+[-1,-1] WFC SUCCESS (18 overlap, 20 fixed, 11 overlap changed)
+[-2,0] WFC SUCCESS (18 overlap, 20 fixed, 3 attempts, 11 overlap changed, 2 replaced)
+[-2,1] WFC SUCCESS (27 overlap, 30 fixed, 5 attempts, 24 overlap changed, 4 replaced)
+[-2,-1] WFC SUCCESS (18 overlap, 20 fixed, 14 overlap changed)
+[0,-1] WFC SUCCESS (27 overlap, 30 fixed, 3 attempts, 23 overlap changed, 2 replaced)
+```
+
+### Key findings
+- **Zero WFC failures** (previously this seed failed)
+- **28 total replaced, 4 total dropped** across 13 grids — still present but reduced
+- High overlap changed counts (11-24 per grid) — WFC is actively using boundary freedom
+- Replaced/dropped are from **ring 2 fixed cell conflicts** — same mechanism as before, pushed one ring further out
+- Ring 2 fixed cells from different source grids can still be adjacent at **triple-points** (where 3 grids meet), causing conflicts
+
+## Iteration 2: Configurable Overlap Depth
+
+Added `overlapRings` property (default 1) and made `getFixedAndOverlapCells` build N rings iteratively.
+
+### 2-ring results (seed 351921)
+Worse — 24 total drops, 21 replaced. More overlap = more cascading changes = more instability in the fixed ring further out. Reverted to 1 ring.
+
+## Iteration 3: Remove Old Fixed Cell Recovery
+
+Removed the old pre-WFC validation and phase 1/2 recovery (replace/drop) entirely. Just one clean WFC solve with `maxRestarts: 10`. Overlap handles all boundary flexibility.
+
+### Changes
+- Removed `filterConflictingFixedCells` calls from populateGrid
+- Removed `validateFixedCellConflicts` calls from populateGrid
+- Removed phase 1 (tryReplaceFixedCell loop) and phase 2 (drop loop)
+- Single WFC solve with maxRestarts: 10
+- Targeted decoration removal: `clearDecorationsAt(gridX, gridZ)` instead of full `populateDecorations()` on source grids
+
+### Final results (seed 351921, Build All, 13 grids)
+```
+[0,0] WFC SUCCESS (0 overlap, 0 fixed)
+[1,-1] WFC SUCCESS (9 overlap, 10 fixed, 9 overlap changed)
+[1,0] WFC SUCCESS (18 overlap, 20 fixed, 17 overlap changed)
+[0,1] WFC SUCCESS (18 overlap, 20 fixed, 15 overlap changed)
+[-1,0] WFC SUCCESS (18 overlap, 20 fixed, 10 overlap changed)
+[-1,1] WFC SUCCESS (18 overlap, 20 fixed, 17 overlap changed)
+[1,1] WFC SUCCESS (18 overlap, 20 fixed, 16 overlap changed)
+[0,2] WFC SUCCESS (27 overlap, 30 fixed, 19 overlap changed)
+[-1,-1] WFC SUCCESS (18 overlap, 20 fixed, 17 overlap changed)
+[-2,0] WFC SUCCESS (18 overlap, 20 fixed, 14 overlap changed)
+[-2,1] WFC SUCCESS (27 overlap, 30 fixed, 22 overlap changed)
+[-2,-1] WFC SUCCESS (18 overlap, 20 fixed, 16 overlap changed)
+[0,-1] WFC SUCCESS (27 overlap, 30 fixed, 24 overlap changed)
+```
+
+- **Zero failures, zero drops, zero replacements**
+- All grids solved on first attempt
+- Overlap changed: 9-24 per grid (WFC naturally re-solving boundary cells)
+- Only 1 cell deep into neighbor grids (overlap zone)
+
+## Iteration 4: Edge Cell Grass-Any-Level
+
+### Problem: Seed conflicts
+When initial propagation from fixed cells runs, some solve cells hit 0 possibilities before any random collapse. This is deterministic — retrying doesn't help. The root cause: a solve cell on the grid boundary gets "squeezed" between its fixed cell neighbors (one side) and other solve cells constrained by different fixed cells (other side). The original tiles were solved together and are mutually compatible, but the new constraint environment from the adjacent grid's fixed cells creates an impossible intersection.
+
+### Fix: Relax grass level matching on edge cells
+Edge cells = solve cells with at least one fixed cell neighbor. For these cells, grass edges can connect at any level during propagation (matching `edgesCompatible()` behavior). Interior cells keep strict level matching. This prevents most seed conflicts while keeping terrain crisp in the grid interior.
+
+### Changes
+- `src/workers/wfc.worker.js`:
+  - Compute `this.edgeCells` Set in `init()` — solve cells adjacent to fixed cells
+  - In `propagate()`: edge cells and fixed cells use grass-any-level matching; GUI `grassAnyLevel` toggle applies to all cells
+  - Seed conflict: detected and returned as `seedingContradiction` (no retries since it's deterministic)
+  - Simplified WFC START log to just `(try N)`
+- `src/GUI.js`:
+  - Added `grassAnyLevel: false` default in roads params
+  - Added "Grass Any Level" toggle in Map folder (applies globally, for comparison/testing)
+  - Updated Auto-Build sequence to 18-grid full map
+- `src/HexMap.js`:
+  - Pass `grassAnyLevel` param to worker
+  - Purple cell marking only for seed conflicts (not mid-solve failures)
+  - Forward worker logs to console
+- `src/Demo.js`:
+  - Restored random seed
+
+### Results
+- Seed conflicts eliminated for normal (non-surrounded) grid configurations
+- Surrounded grids (6 neighbors) can still fail with mid-solve contradictions — this is a tile-set limitation, not a bug
+- Edge cells get slightly more terrain variation (grass level flexibility), interior stays crisp
+
+## Iteration 5: Replace/Drop Fallback + Logging Cleanup
+
+### Replace/Drop fallback
+When WFC fails (10 retries or seed conflict), two-phase recovery:
+- **Phase 1 — Replace**: Iterate fixed cells, swap each with a compatible alternative tile (`tryReplaceFixedCell`), retry WFC (1 attempt per replace). Preserves visual continuity.
+- **Phase 2 — Drop**: If replace didn't help, drop fixed cells one by one (remove as constraints), retry WFC. May cause visible seams but better than failure.
+- Fixed cells sorted by proximity to failed cell (neighbors of the seed conflict cell come first)
+- Try numbering is continuous across all phases (initial 1-10, then replace/drop continue from there)
+- Seed conflict → base at 1 (since only 1 try happened), regular failure → base at 10
+
+### Debug label colors
+- Purple = seed conflict (0 possibilities during initial propagation)
+- Orange = replaced fixed cell OR changed overlap cell
+- Red = dropped fixed cell
+
+### Other changes
+- RIVER_M tile uncommented (river dead-end: 1 river + 5 grass edges) — gives WFC an escape hatch for river dead-ends
+- LEVELS_COUNT increased from 3 to 4
+- Removed Anim Delay GUI slider
+- Renamed "Seeding contradiction" → "Seed conflict" throughout
+- Seed conflict log suppressed during drop fallback (`quietSeeding` option)
+- Worker log handler supports color parameter (red for seed conflicts)
+- `[SEED]` logged once in Demo.js only (removed duplicate from worker)
+- `[WFC]` prefix removed from all WFC logs
+- Grid coords removed from WFC SUCCESS and fallback logs
+
+## Potential Future Improvements
+- Plan 3 (sub-complete tileset): Guarantee no contradictions for any edge combination
+- Unglue fixed neighbors: On seed conflict, promote failed cell's fixed neighbors to solve cells and retry
+- Backtracking WFC (other branch): Proper backtracking instead of restart-from-scratch
+- Smart dropping: Drop fixed cells neighboring the failed cell first. May not help if the conflict is caused by all neighbors collectively, not one specifically.

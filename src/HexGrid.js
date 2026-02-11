@@ -419,6 +419,12 @@ export class HexGrid {
       return null
     }
 
+    // Kill any running drop animation on this tile
+    if (oldTile._anim) {
+      gsap.killTweensOf(oldTile._anim)
+      oldTile._anim = null
+    }
+
     // Update tile data
     oldTile.type = newType
     oldTile.rotation = newRotation
@@ -506,6 +512,7 @@ export class HexGrid {
 
         // Animate tile from above
         const anim = { y: targetY + DROP_HEIGHT, scale: 1 }
+        tile._anim = anim
         gsap.to(anim, {
           y: targetY,
           duration: ANIM_DURATION,
@@ -616,11 +623,15 @@ export class HexGrid {
         duration: ANIM_DURATION,
         ease: 'power1.out',
         onUpdate: () => {
-          dummy.position.set(item.x, anim.y, item.z)
-          dummy.rotation.y = item.rotationY
-          dummy.scale.setScalar(anim.scale)
-          dummy.updateMatrix()
-          item.mesh.setMatrixAt(item.instanceId, dummy.matrix)
+          try {
+            dummy.position.set(item.x, anim.y, item.z)
+            dummy.rotation.y = item.rotationY
+            dummy.scale.setScalar(anim.scale)
+            dummy.updateMatrix()
+            item.mesh.setMatrixAt(item.instanceId, dummy.matrix)
+          } catch (_) {
+            // Instance may have been deleted by decoration repopulation
+          }
         }
       })
     }
