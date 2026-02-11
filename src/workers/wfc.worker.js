@@ -334,9 +334,9 @@ class HexWFCSolver {
     // Propagate initial constraints from fixed cells + initial collapses
     if ((fixedCells.length > 0 || initialCollapses.length > 0) && !this.propagate()) {
       this.seedingContradiction = this.lastContradiction
-      if (this.lastContradiction) {
+      if (this.lastContradiction && !this.options.quietSeeding) {
         const c = this.lastContradiction
-        this.log(`Seeding contradiction at (${c.failedCol},${c.failedRow}) key=${c.failedKey}`)
+        this.log(`Seed conflict at (${c.failedCol},${c.failedRow})`, 'red')
       }
       return null
     }
@@ -402,9 +402,9 @@ self.onmessage = function(e) {
 
     const solver = new HexWFCSolver(rules, {
       ...options,
-      log: (message) => {
+      log: (message, color) => {
         if (currentRequestId === id) {
-          self.postMessage({ type: 'log', id, message })
+          self.postMessage({ type: 'log', id, message, color })
         }
       }
     })

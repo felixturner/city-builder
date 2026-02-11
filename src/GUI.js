@@ -197,7 +197,6 @@ export class GUIManager {
     // Roads folder
     const mapFolder = gui.addFolder('Map').close()
     mapFolder.add(allParams.roads, 'animateWFC').name('Animate WFC')
-    mapFolder.add(allParams.roads, 'animateDelay', 5, 40).name('Anim Delay (ms)')
     mapFolder.add(allParams.roads, 'grassAnyLevel').name('Grass Any Level')
 
     // Decoration folder

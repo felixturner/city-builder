@@ -94,6 +94,7 @@ export class Demo {
 
     const seed = Math.floor(Math.random() * 1000000)
     setSeed(seed)
+    console.log(`%c[SEED] ${seed}`, 'color: black')
     this.seed = seed
 
     this.initCamera()

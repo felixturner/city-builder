@@ -6,7 +6,7 @@
 /**
  * Number of elevation levels in the WFC system
  */
-export const LEVELS_COUNT = 3
+export const LEVELS_COUNT = 4
 
 /**
  * Consolidated tile definitions - single source of truth
@@ -103,9 +103,9 @@ export const TILE_LIST = [
   // { name: 'RIVER_L', mesh: 'hex_river_L',  // removed from GLB
   //   edges: { NE: 'river', E: 'river', SE: 'river', SW: 'river', W: 'river', NW: 'river' },
   //   weight: 2 },
-  // { name: 'RIVER_M', mesh: 'hex_river_M',  // removed from GLB
-  //   edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
-  //   weight: 8 },
+  { name: 'RIVER_M', mesh: 'hex_river_M',
+    edges: { NE: 'grass', E: 'grass', SE: 'grass', SW: 'grass', W: 'river', NW: 'grass' },
+    weight: 8 },
 
   // Coasts
   { name: 'COAST_A', mesh: 'hex_coast_A',

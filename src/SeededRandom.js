@@ -5,7 +5,6 @@
 
 let rng = Math.random
 let currentSeed = null
-let firstSet = true
 
 /**
  * Set the global RNG seed
@@ -25,10 +24,6 @@ export function setSeed(seed) {
       t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t
       return ((t ^ t >>> 14) >>> 0) / 4294967296
     }
-  }
-  if (firstSet) {
-    console.log(`%c[SEED] ${seed}`, 'color: black')
-    firstSet = false
   }
 }
 

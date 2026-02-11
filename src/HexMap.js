@@ -67,8 +67,10 @@ export class HexMap {
     this.tileLabels = new Object3D()
     this.tileLabels.visible = false
     this.tileLabelMode = 'coords'
-    this.failedCells = new Set()   // Track global coords of cells that caused WFC failures
-    this.overlapChangedCells = new Set() // Track global coords of overlap cells changed by WFC (red labels)
+    this.failedCells = new Set()   // Track global coords of cells that caused WFC failures (purple labels)
+    this.overlapChangedCells = new Set() // Track global coords of overlap cells changed by WFC (orange labels)
+    this.droppedCells = new Set() // Track global coords of dropped fixed cells (red labels)
+    this.replacedCells = new Set() // Track global coords of replaced fixed cells (orange labels)
 
     // Interaction
     this.raycaster = new Raycaster()
@@ -167,7 +169,7 @@ export class HexMap {
     const { type, id, message, success, tiles, collapseOrder } = e.data
 
     if (type === 'log') {
-      console.log(`%c[WFC] ${e.data.message}`, 'color: black')
+      console.log(`%c${e.data.message}`, `color: ${e.data.color || 'black'}`)
     } else if (type === 'result') {
       // Resolve pending promise by ID
       const resolve = this.wfcPendingResolvers.get(id)
@@ -610,6 +612,7 @@ export class HexMap {
       fixedCell.q, fixedCell.r, fixedCell.s,
       fixedCell.type, fixedCell.rotation, fixedCell.level
     )
+    if (candidates.length === 0) return false
 
     // Build a map of other fixed cells for adjacency checks
     const fixedMap = new Map()
@@ -647,9 +650,6 @@ export class HexMap {
       }
 
       if (compatibleWithFixed) {
-        const co = cubeToOffset(fixedCell.q, fixedCell.r, fixedCell.s)
-        this.replacedCells.add(`${co.col},${co.row}`)
-
         // Update globalCells
         const existing = this.globalCells.get(key)
         if (existing) {
@@ -678,6 +678,8 @@ export class HexMap {
         fixedCell.rotation = replacement.rotation
         fixedCell.level = replacement.level
         replacedKeys.add(key)
+        const rco = cubeToOffset(fixedCell.q, fixedCell.r, fixedCell.s)
+        this.replacedCells.add(`${rco.col},${rco.row}`)
         return true
       }
     }
@@ -823,10 +825,75 @@ export class HexMap {
       resultCollapseOrder = wfcResult.collapseOrder || []
     } else {
       // Only mark purple cell for seeding contradictions (genuine fixed cell conflicts)
-      // Regular mid-solve contradictions are just bad luck, not useful to mark
       if (wfcResult.seedingContradiction) {
         const c = wfcResult.seedingContradiction
         this.failedCells.add(`${c.failedCol},${c.failedRow}`)
+      }
+
+      // ---- Fallback Phase 1: replace fixed cells one by one and retry ----
+      if (fixedCells.length > 0) {
+        console.log(`%cWFC failed, trying replace fallback`, 'color: red')
+        const replacedKeys = new Set()
+        let attemptNum = wfcResult.seedingContradiction ? 1 : 10
+
+        // Sort fixed cells: neighbors of failed cell first
+        const sc = wfcResult.seedingContradiction || wfcResult.lastContradiction
+        const sortedFixed = [...fixedCells]
+        if (sc) {
+          const failedNeighborKeys = new Set(
+            CUBE_DIRS.map(d => cubeKey(sc.failedQ + d.dq, sc.failedR + d.dr, sc.failedS + d.ds))
+          )
+          sortedFixed.sort((a, b) => {
+            const aIsNear = failedNeighborKeys.has(cubeKey(a.q, a.r, a.s)) ? 0 : 1
+            const bIsNear = failedNeighborKeys.has(cubeKey(b.q, b.r, b.s)) ? 0 : 1
+            return aIsNear - bIsNear
+          })
+        }
+
+        for (const fc of sortedFixed) {
+          if (result) break
+          if (this.tryReplaceFixedCell(fc, fixedCells, replacedKeys)) {
+            attemptNum++
+            console.log(`%cReplaced ${replacedKeys.size} cells`, 'color: red')
+            const replaceResult = await this.solveWfcAsync(solveCells, fixedCells, {
+              tileTypes, weights: options.weights ?? {}, maxRestarts: 1,
+              initialCollapses, gridId: gridKey, attemptNum,
+              seed: getSeed(), previousStates, grassAnyLevel: params.roads.grassAnyLevel,
+              quietSeeding: true,
+            })
+            if (replaceResult.success) {
+              result = replaceResult.tiles
+              resultCollapseOrder = replaceResult.collapseOrder || []
+            }
+          }
+        }
+
+        // ---- Fallback Phase 2: drop fixed cells one by one and retry ----
+        if (!result) {
+          console.log(`%cReplace failed, trying drop fallback`, 'color: red')
+          const droppedKeys = new Set()
+          for (const fc of sortedFixed) {
+            if (result) break
+            const fcKey = cubeKey(fc.q, fc.r, fc.s)
+            droppedKeys.add(fcKey)
+            const dco = cubeToOffset(fc.q, fc.r, fc.s)
+            this.droppedCells.add(`${dco.col},${dco.row}`)
+            const reducedFixed = fixedCells.filter(f => !droppedKeys.has(cubeKey(f.q, f.r, f.s)))
+            attemptNum++
+            console.log(`%cDropped ${droppedKeys.size} cells`, 'color: red')
+
+            const dropResult = await this.solveWfcAsync(solveCells, reducedFixed, {
+              tileTypes, weights: options.weights ?? {}, maxRestarts: 1,
+              initialCollapses, gridId: gridKey, attemptNum,
+              seed: getSeed(), previousStates, grassAnyLevel: params.roads.grassAnyLevel,
+              quietSeeding: true,
+            })
+            if (dropResult.success) {
+              result = dropResult.tiles
+              resultCollapseOrder = dropResult.collapseOrder || []
+            }
+          }
+        }
       }
     }
 
@@ -834,7 +901,7 @@ export class HexMap {
     grid.placeholder?.stopSpinning()
 
     if (!result) {
-      console.log(`%c[${gridKey}] WFC FAILED`, 'color: red')
+      console.log(`%c[${gridKey}] WFC FAILED (all recovery attempts exhausted)`, 'color: red')
       setStatus(`[${gridKey}] WFC FAILED`)
       const { Sounds } = await import('./lib/Sounds.js')
       Sounds.play('incorrect')
@@ -893,7 +960,7 @@ export class HexMap {
     // Log final status
     const stats = [`${overlapCells.length} neighbours`]
     if (overlapChangedCount > 0) stats.push(`${overlapChangedCount} changed`)
-    const statusMsg = `[${gridKey}] WFC SUCCESS (${stats.join(', ')})`
+    const statusMsg = `WFC SUCCESS (${stats.join(', ')})`
     console.log(`%c${statusMsg}`, 'color: green')
     setStatus(statusMsg)
 
@@ -1340,6 +1407,8 @@ export class HexMap {
     this.globalCells.clear()
     this.failedCells.clear()
     this.overlapChangedCells.clear()
+    this.droppedCells.clear()
+    this.replacedCells.clear()
 
     // Clear labels first (they reference grid data)
     this.clearTileLabels()
@@ -1459,10 +1528,13 @@ export class HexMap {
           div.textContent = this.tileLabelMode === 'levels' ? `${baseLevel}` : `${globalOffset.col},${globalOffset.row}`
           const globalKey = `${globalOffset.col},${globalOffset.row}`
           const isFailed = this.failedCells.has(globalKey)
+          const isDropped = this.droppedCells.has(globalKey)
+          const isReplaced = this.replacedCells.has(globalKey)
           const isOverlapChanged = this.overlapChangedCells.has(globalKey)
-          // Purple = failed cell, Red = overlap changed, Gray = normal
+          // Purple = failed cell, Red = dropped, Orange = replaced/overlap changed, Gray = normal
           const bgColor = isFailed ? 'rgba(150,50,200,0.9)'
-            : isOverlapChanged ? 'rgba(200,50,50,0.9)'
+            : isDropped ? 'rgba(200,50,50,0.9)'
+            : (isReplaced || isOverlapChanged) ? 'rgba(220,140,20,0.9)'
             : 'rgba(0,0,0,0.5)'
           div.style.cssText = `
             color: white;
@@ -1508,11 +1580,14 @@ export class HexMap {
             div.textContent = this.tileLabelMode === 'levels' ? `-` : `${globalOffset.col},${globalOffset.row}`
             const globalKey = `${globalOffset.col},${globalOffset.row}`
             const isFailed = this.failedCells.has(globalKey)
+            const isDropped = this.droppedCells.has(globalKey)
+            const isReplaced = this.replacedCells.has(globalKey)
             const isOverlapChanged = this.overlapChangedCells.has(globalKey)
-            const isHighlighted = isFailed || isOverlapChanged
-            // Purple = failed cell, Red = overlap changed, Gray = normal
+            const isHighlighted = isFailed || isDropped || isReplaced || isOverlapChanged
+            // Purple = failed cell, Red = dropped, Orange = replaced/overlap changed, Gray = normal
             const bgColor = isFailed ? 'rgba(150,50,200,0.9)'
-              : isOverlapChanged ? 'rgba(200,50,50,0.9)'
+              : isDropped ? 'rgba(200,50,50,0.9)'
+              : (isReplaced || isOverlapChanged) ? 'rgba(220,140,20,0.9)'
               : 'rgba(0,0,0,0.3)'
             div.style.cssText = `
               color: ${isHighlighted ? 'white' : 'rgba(255,255,255,0.6)'};
