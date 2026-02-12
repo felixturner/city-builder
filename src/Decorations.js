@@ -1,5 +1,5 @@
 import { Object3D, BatchedMesh, Color } from 'three/webgpu'
-import { TILE_LIST, TileType } from './HexTileData.js'
+import { TILE_LIST, TileType, HexDir, getHexNeighborOffset } from './HexTileData.js'
 import { HexTileGeometry } from './HexTiles.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 import { random } from './SeededRandom.js'
@@ -57,6 +57,12 @@ function hasRoadEdge(tileType) {
   return Object.values(def.edges).some(edge => edge === 'road')
 }
 
+function isCoastOrOcean(tileType) {
+  const def = TILE_LIST[tileType]
+  if (!def) return false
+  return def.name.startsWith('COAST_') || def.name === 'WATER'
+}
+
 // Check if a tile is a road dead-end (exactly 1 road edge) and return the exit direction
 // Returns { isDeadEnd: true, exitDir } or { isDeadEnd: false }
 function getRoadDeadEndInfo(tileType, rotation) {
@@ -97,12 +103,12 @@ const BuildingDefs = [
   { name: 'building_church_yellow', weight: 2 },
   { name: 'building_tower_A_yellow', weight: 2 },
   { name: 'building_townhall_yellow', weight: 1 },
+  { name: 'building_well_yellow', weight: 3 },
 ]
 
 // Rural buildings — placed away from roads on flat grass
 const RuralBuildingDefs = [
   { name: 'building_shrine_yellow', weight: 1 },
-  { name: 'building_well_yellow', weight: 5 },
 ]
 
 const BuildingMeshNames = BuildingDefs.map(b => b.name)
@@ -154,6 +160,9 @@ const HillDefs = [
   { name: 'hills_B_trees', weight: 10 },
   { name: 'hills_C', weight: 5 },
   { name: 'hills_C_trees', weight: 10 },
+  // { name: 'hill_single_A', weight: 5 },
+  // { name: 'hill_single_B', weight: 5 },
+  // { name: 'hill_single_C', weight: 5 },
 ]
 
 // Mountain meshes (placed on 2-level cliffs)
@@ -233,7 +242,7 @@ export class Decorations {
     this.dummy = new Object3D()
   }
 
-  async init(gltfScene, material) {
+  async init(gltfScene, material, treeMaterial = null) {
     // Load tree geometries from already-loaded GLB scene
     for (const meshName of TreeMeshNames) {
       const geom = this.findGeometry(gltfScene, meshName)
@@ -252,7 +261,7 @@ export class Decorations {
       totalI += geom.index ? geom.index.count : 0
     }
 
-    this.treeMesh = new BatchedMesh(MAX_TREES, totalV * 2, totalI * 2, material)
+    this.treeMesh = new BatchedMesh(MAX_TREES, totalV * 2, totalI * 2, treeMaterial || material)
     this.treeMesh.castShadow = true
     this.treeMesh.receiveShadow = true
     this.treeMesh.frustumCulled = false
@@ -390,7 +399,7 @@ export class Decorations {
         flTotalI += geom.index ? geom.index.count : 0
       }
 
-      this.flowerMesh = new BatchedMesh(MAX_FLOWERS, flTotalV * 2, flTotalI * 2, material)
+      this.flowerMesh = new BatchedMesh(MAX_FLOWERS, flTotalV * 2, flTotalI * 2, treeMaterial || material)
       this.flowerMesh.castShadow = true
       this.flowerMesh.receiveShadow = true
       this.flowerMesh.frustumCulled = false
@@ -508,6 +517,10 @@ export class Decorations {
       this.dummy.updateMatrix()
       this.mountainMesh.setMatrixAt(this.mountainMesh._dummyInstanceId, this.dummy.matrix)
     }
+
+    const decCount = this.treeGeoms.size + this.buildingGeoms.size + this.rockGeoms.size
+      + this.flowerGeoms.size + this.waterlilyGeoms.size + this.hillGeoms.size + this.mountainGeoms.size
+    console.log(`[GLB] Loaded ${HexTileGeometry.geoms.size + decCount} meshes (${HexTileGeometry.geoms.size} tiles, ${decCount} decorations)`)
   }
 
   findGeometry(gltfScene, meshName, { center = false } = {}) {
@@ -517,21 +530,21 @@ export class Decorations {
         geom = child.geometry.clone()
         geom.computeBoundingBox()
         if (center) {
-          // Center on bounding box center (for rotation pivots)
           const { min, max } = geom.boundingBox
           geom.translate(-(min.x + max.x) / 2, -(min.y + max.y) / 2, -(min.z + max.z) / 2)
         } else {
-          // Sit on ground
           geom.translate(0, -geom.boundingBox.min.y, 0)
         }
         geom.computeBoundingSphere()
       }
     })
+    if (!geom) console.warn(`[Dec] NOT FOUND: ${meshName}`)
     return geom
   }
 
   populate(hexTiles, gridRadius, options = {}) {
     this.clearTrees()
+    this.dummy.rotation.set(0, 0, 0)  // Reset from windmill fan animation
 
     if (!this.treeMesh || this.treeGeomIds.size === 0) return
     if (!globalNoiseA || !globalNoiseB) return  // Need global noise initialized
@@ -591,7 +604,8 @@ export class Decorations {
       this.treeMesh.setColorAt(instanceId, WHITE)
 
       // Position at tile center with random offset (local coords since mesh is in group)
-      const rotationY = random() * Math.PI * 2
+      const rotationY = 0 // random() * Math.PI * 2  // TEMP: disabled for wind debug
+      random() // consume RNG to keep sequence stable
       const ox = (random() - 0.5) * 1.0
       const oz = (random() - 0.5) * 1.0
       this.dummy.position.set(
@@ -633,6 +647,7 @@ export class Decorations {
 
     const deadEndCandidates = []
     const roadAdjacentCandidates = []
+    const coastWindmillCandidates = []
     const flatGrassCandidates = []
     const size = gridRadius * 2 + 1
 
@@ -654,31 +669,39 @@ export class Decorations {
       // Only consider grass tiles for road-adjacent placement
       if (tile.type !== TileType.GRASS) continue
 
-      // Check if any neighbor has a road, track direction to road
-      // Building front is S (+Z), so angle rotates front to face the road
-      const dirOffsets = [
-        { dx: 1, dz: 0 },   // E
-        { dx: -1, dz: 0 },  // W
-        { dx: 0, dz: 1 },   // S
-        { dx: 0, dz: -1 },  // N
-        { dx: 1, dz: -1 },  // NE
-        { dx: -1, dz: 1 },  // SW
-      ]
+      // Check if any hex neighbor has a road, track direction to road
       let roadAngle = null
-      for (const { dx, dz } of dirOffsets) {
+      for (const dir of HexDir) {
+        const { dx, dz } = getHexNeighborOffset(tile.gridX, tile.gridZ, dir)
         const nx = tile.gridX + dx
         const nz = tile.gridZ + dz
         if (nx >= 0 && nx < size && nz >= 0 && nz < size) {
           const neighbor = hexGrid[nx]?.[nz]
           if (neighbor && hasRoadEdge(neighbor.type)) {
-            // Compute angle to face front (+Z) toward road direction
-            roadAngle = -Math.atan2(dx, dz)
+            roadAngle = dirToAngle[dir]
             break
           }
         }
       }
 
-      if (roadAngle !== null) {
+      // Check if any hex neighbor is coast/ocean — windmill candidate facing the water
+      let waterAngle = null
+      for (const dir of HexDir) {
+        const { dx, dz } = getHexNeighborOffset(tile.gridX, tile.gridZ, dir)
+        const nx = tile.gridX + dx
+        const nz = tile.gridZ + dz
+        if (nx >= 0 && nx < size && nz >= 0 && nz < size) {
+          const neighbor = hexGrid[nx]?.[nz]
+          if (neighbor && isCoastOrOcean(neighbor.type)) {
+            waterAngle = dirToAngle[dir]
+            break
+          }
+        }
+      }
+
+      if (waterAngle !== null && tile.level === 0) {
+        coastWindmillCandidates.push({ tile, roadAngle: waterAngle })
+      } else if (roadAngle !== null) {
         roadAdjacentCandidates.push({ tile, roadAngle })
       } else if (tile.level === 0) {
         // Flat grass with no road neighbor — lowest priority
@@ -700,11 +723,15 @@ export class Decorations {
       const j = Math.floor(random() * (i + 1))
       ;[flatGrassCandidates[i], flatGrassCandidates[j]] = [flatGrassCandidates[j], flatGrassCandidates[i]]
     }
+    for (let i = coastWindmillCandidates.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1))
+      ;[coastWindmillCandidates[i], coastWindmillCandidates[j]] = [coastWindmillCandidates[j], coastWindmillCandidates[i]]
+    }
 
     // Dead-ends first, then road-adjacent (no flat grass for road buildings)
     const candidates = [...deadEndCandidates, ...roadAdjacentCandidates]
 
-    // Place road buildings
+    // Place road buildings (no windmills — those are coast-only)
     for (let i = 0; i < Math.min(maxBuildings, candidates.length); i++) {
       const { tile, roadAngle } = candidates[i]
 
@@ -714,80 +741,18 @@ export class Decorations {
       )
       const baseY = tile.level * LEVEL_HEIGHT + TILE_SURFACE
 
-      // Small chance of windmill instead of regular building
-      const isWindmill = hasWindmill && random() < 0.1
+      const meshName = weightedPick(BuildingDefs)
+      const geomId = this.buildingGeomIds.get(meshName)
+      const instanceId = this.buildingMesh.addInstance(geomId)
+      this.buildingMesh.setColorAt(instanceId, WHITE)
 
-      if (isWindmill) {
-        // Place windmill base
-        const baseGeomId = this.buildingGeomIds.get('building_windmill_yellow')
-        const baseInstanceId = this.buildingMesh.addInstance(baseGeomId)
-        this.buildingMesh.setColorAt(baseInstanceId, WHITE)
-        this.dummy.position.set(localPos.x, baseY, localPos.z)
-        this.dummy.rotation.y = roadAngle
-        this.dummy.scale.setScalar(1)
-        this.dummy.updateMatrix()
-        this.buildingMesh.setMatrixAt(baseInstanceId, this.dummy.matrix)
-        this.buildings.push({ tile, meshName: 'building_windmill_yellow', instanceId: baseInstanceId, rotationY: roadAngle, oy: 0 })
+      this.dummy.position.set(localPos.x, baseY, localPos.z)
+      this.dummy.rotation.y = roadAngle
+      this.dummy.scale.setScalar(1)
+      this.dummy.updateMatrix()
 
-        // Place windmill top (offset relative to base, rotated by roadAngle)
-        const topGeomId = this.buildingGeomIds.get('building_windmill_top_yellow')
-        const topInstanceId = this.buildingMesh.addInstance(topGeomId)
-        this.buildingMesh.setColorAt(topInstanceId, WHITE)
-        const cosA = Math.cos(roadAngle), sinA = Math.sin(roadAngle)
-        const topOx = WINDMILL_TOP_OFFSET.x * cosA + WINDMILL_TOP_OFFSET.z * sinA
-        const topOz = -WINDMILL_TOP_OFFSET.x * sinA + WINDMILL_TOP_OFFSET.z * cosA
-        this.dummy.position.set(localPos.x + topOx, baseY + WINDMILL_TOP_OFFSET.y, localPos.z + topOz)
-        this.dummy.rotation.y = roadAngle
-        this.dummy.scale.setScalar(1)
-        this.dummy.updateMatrix()
-        this.buildingMesh.setMatrixAt(topInstanceId, this.dummy.matrix)
-        this.buildings.push({ tile, meshName: 'building_windmill_top_yellow', instanceId: topInstanceId, rotationY: roadAngle, oy: WINDMILL_TOP_OFFSET.y })
-
-        // Place windmill fan (offset relative to base, rotated by roadAngle)
-        const fanGeomId = this.buildingGeomIds.get('building_windmill_top_fan_yellow')
-        const fanInstanceId = this.buildingMesh.addInstance(fanGeomId)
-        this.buildingMesh.setColorAt(fanInstanceId, WHITE)
-        const fanOx = WINDMILL_FAN_OFFSET.x * cosA + WINDMILL_FAN_OFFSET.z * sinA
-        const fanOz = -WINDMILL_FAN_OFFSET.x * sinA + WINDMILL_FAN_OFFSET.z * cosA
-        const fanX = localPos.x + fanOx
-        const fanY = baseY + WINDMILL_FAN_OFFSET.y
-        const fanZ = localPos.z + fanOz
-        this.dummy.position.set(fanX, fanY, fanZ)
-        this.dummy.rotation.y = roadAngle
-        this.dummy.scale.setScalar(1)
-        this.dummy.updateMatrix()
-        this.buildingMesh.setMatrixAt(fanInstanceId, this.dummy.matrix)
-        this.buildings.push({ tile, meshName: 'building_windmill_top_fan_yellow', instanceId: fanInstanceId, rotationY: roadAngle, oy: WINDMILL_FAN_OFFSET.y, oz: fanOz, ox: fanOx })
-        const fan = { instanceId: fanInstanceId, x: fanX, y: fanY, z: fanZ, baseRotationY: roadAngle, spin: { angle: 0 } }
-        fan.tween = gsap.to(fan.spin, {
-          angle: Math.PI * 2,
-          duration: 4,
-          repeat: -1,
-          ease: 'none',
-          onUpdate: () => {
-            this.dummy.position.set(fan.x, fan.y, fan.z)
-            this.dummy.rotation.set(0, fan.baseRotationY, 0)
-            this.dummy.rotateZ(fan.spin.angle)
-            this.dummy.scale.setScalar(1)
-            this.dummy.updateMatrix()
-            try { this.buildingMesh.setMatrixAt(fan.instanceId, this.dummy.matrix) } catch (_) {}
-          }
-        })
-        this.windmillFans.push(fan)
-      } else {
-        const meshName = weightedPick(BuildingDefs)
-        const geomId = this.buildingGeomIds.get(meshName)
-        const instanceId = this.buildingMesh.addInstance(geomId)
-        this.buildingMesh.setColorAt(instanceId, WHITE)
-
-        this.dummy.position.set(localPos.x, baseY, localPos.z)
-        this.dummy.rotation.y = roadAngle
-        this.dummy.scale.setScalar(1)
-        this.dummy.updateMatrix()
-
-        this.buildingMesh.setMatrixAt(instanceId, this.dummy.matrix)
-        this.buildings.push({ tile, meshName, instanceId, rotationY: roadAngle })
-      }
+      this.buildingMesh.setMatrixAt(instanceId, this.dummy.matrix)
+      this.buildings.push({ tile, meshName, instanceId, rotationY: roadAngle })
     }
 
     // Place rural buildings (shrine, tent, well) on flat grass away from roads
@@ -812,6 +777,76 @@ export class Decorations {
 
         this.buildingMesh.setMatrixAt(instanceId, this.dummy.matrix)
         this.buildings.push({ tile, meshName, instanceId, rotationY: roadAngle })
+      }
+    }
+
+    // Place windmills on coast-adjacent grass tiles, facing the water
+    if (hasWindmill && coastWindmillCandidates.length > 0) {
+      const maxCoastWindmills = Math.min(1, coastWindmillCandidates.length)
+      for (let i = 0; i < maxCoastWindmills; i++) {
+        const { tile, roadAngle: waterAngle } = coastWindmillCandidates[i]
+        const localPos = HexTileGeometry.getWorldPosition(
+          tile.gridX - gridRadius,
+          tile.gridZ - gridRadius
+        )
+        const baseY = tile.level * LEVEL_HEIGHT + TILE_SURFACE
+
+        // Place windmill base
+        const baseGeomId = this.buildingGeomIds.get('building_windmill_yellow')
+        const baseInstanceId = this.buildingMesh.addInstance(baseGeomId)
+        this.buildingMesh.setColorAt(baseInstanceId, WHITE)
+        this.dummy.position.set(localPos.x, baseY, localPos.z)
+        this.dummy.rotation.y = waterAngle
+        this.dummy.scale.setScalar(1)
+        this.dummy.updateMatrix()
+        this.buildingMesh.setMatrixAt(baseInstanceId, this.dummy.matrix)
+        this.buildings.push({ tile, meshName: 'building_windmill_yellow', instanceId: baseInstanceId, rotationY: waterAngle, oy: 0 })
+
+        // Place windmill top
+        const topGeomId = this.buildingGeomIds.get('building_windmill_top_yellow')
+        const topInstanceId = this.buildingMesh.addInstance(topGeomId)
+        this.buildingMesh.setColorAt(topInstanceId, WHITE)
+        const cosA = Math.cos(waterAngle), sinA = Math.sin(waterAngle)
+        const topOx = WINDMILL_TOP_OFFSET.x * cosA + WINDMILL_TOP_OFFSET.z * sinA
+        const topOz = -WINDMILL_TOP_OFFSET.x * sinA + WINDMILL_TOP_OFFSET.z * cosA
+        this.dummy.position.set(localPos.x + topOx, baseY + WINDMILL_TOP_OFFSET.y, localPos.z + topOz)
+        this.dummy.rotation.y = waterAngle
+        this.dummy.scale.setScalar(1)
+        this.dummy.updateMatrix()
+        this.buildingMesh.setMatrixAt(topInstanceId, this.dummy.matrix)
+        this.buildings.push({ tile, meshName: 'building_windmill_top_yellow', instanceId: topInstanceId, rotationY: waterAngle, oy: WINDMILL_TOP_OFFSET.y })
+
+        // Place windmill fan
+        const fanGeomId = this.buildingGeomIds.get('building_windmill_top_fan_yellow')
+        const fanInstanceId = this.buildingMesh.addInstance(fanGeomId)
+        this.buildingMesh.setColorAt(fanInstanceId, WHITE)
+        const fanOx = WINDMILL_FAN_OFFSET.x * cosA + WINDMILL_FAN_OFFSET.z * sinA
+        const fanOz = -WINDMILL_FAN_OFFSET.x * sinA + WINDMILL_FAN_OFFSET.z * cosA
+        const fanX = localPos.x + fanOx
+        const fanY = baseY + WINDMILL_FAN_OFFSET.y
+        const fanZ = localPos.z + fanOz
+        this.dummy.position.set(fanX, fanY, fanZ)
+        this.dummy.rotation.y = waterAngle
+        this.dummy.scale.setScalar(1)
+        this.dummy.updateMatrix()
+        this.buildingMesh.setMatrixAt(fanInstanceId, this.dummy.matrix)
+        this.buildings.push({ tile, meshName: 'building_windmill_top_fan_yellow', instanceId: fanInstanceId, rotationY: waterAngle, oy: WINDMILL_FAN_OFFSET.y, oz: fanOz, ox: fanOx })
+        const fan = { instanceId: fanInstanceId, x: fanX, y: fanY, z: fanZ, baseRotationY: waterAngle, spin: { angle: 0 } }
+        fan.tween = gsap.to(fan.spin, {
+          angle: Math.PI * 2,
+          duration: 4,
+          repeat: -1,
+          ease: 'none',
+          onUpdate: () => {
+            this.dummy.position.set(fan.x, fan.y, fan.z)
+            this.dummy.rotation.set(0, fan.baseRotationY, 0)
+            this.dummy.rotateZ(fan.spin.angle)
+            this.dummy.scale.setScalar(1)
+            this.dummy.updateMatrix()
+            try { this.buildingMesh.setMatrixAt(fan.instanceId, this.dummy.matrix) } catch (_) {}
+          }
+        })
+        this.windmillFans.push(fan)
       }
     }
   }
@@ -894,7 +929,7 @@ export class Decorations {
       const oz = (random() - 0.5) * 0.3
       const rotationY = random() * Math.PI * 2
 
-      this.dummy.position.set(localPos.x + ox, tile.level * LEVEL_HEIGHT + TILE_SURFACE, localPos.z + oz)
+      this.dummy.position.set(localPos.x + ox, tile.level * LEVEL_HEIGHT + TILE_SURFACE - 0.2, localPos.z + oz)
       this.dummy.rotation.y = rotationY
       this.dummy.scale.setScalar(2)
       this.dummy.updateMatrix()
@@ -1021,7 +1056,9 @@ export class Decorations {
         const oz = (random() - 0.5) * 1.2
         const rotationY = random() * Math.PI * 2
 
-        this.dummy.position.set(localPos.x + ox, tile.level * LEVEL_HEIGHT + TILE_SURFACE, localPos.z + oz)
+        const tileName = TILE_LIST[tile.type]?.name || ''
+        const oceanDip = (tileName.startsWith('COAST_') || tileName === 'WATER') ? -0.2 : 0
+        this.dummy.position.set(localPos.x + ox, tile.level * LEVEL_HEIGHT + TILE_SURFACE + oceanDip, localPos.z + oz)
         this.dummy.rotation.y = rotationY
         this.dummy.scale.setScalar(1)
         this.dummy.updateMatrix()
@@ -1064,7 +1101,7 @@ export class Decorations {
         tile.gridZ - gridRadius
       )
       const baseY = tile.level * LEVEL_HEIGHT + TILE_SURFACE
-      const rotationY = -tile.rotation * Math.PI / 3
+      const rotationY = random() * Math.PI * 2
 
       // High grass gets mountains
       if (isHighGrass && hasMountains) {

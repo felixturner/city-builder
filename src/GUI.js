@@ -1,4 +1,8 @@
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
+import {
+  NoToneMapping, LinearToneMapping, ReinhardToneMapping,
+  CineonToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping,
+} from 'three/webgpu'
 import { Sounds } from './lib/Sounds.js'
 import { TileGeometry } from './Tiles.js'
 import { setSeed } from './SeededRandom.js'
@@ -28,18 +32,18 @@ export class GUIManager {
       skipChance: 0.1,
     },
     lighting: {
-      exposure: 1.7,
+      exposure: 1,
+      toneMapping: 'None',
       envIntensity: 0.95,
       hdr: 'venice_sunset_1k.hdr',
       dirLight: 2.15,
       hemiLight: 0.25,
       shadowIntensity: 1.0,
-      lightX: 50,
-      lightY: 100,
-      lightZ: 50,
+      lightX: 35,
+      lightY: 50,
+      lightZ: 45,
       showHelper: false,
       hdrRotation: 191,
-      hdrTilt: -90,
     },
     material: {
       color: '#ffffff',
@@ -70,6 +74,8 @@ export class GUIManager {
       floor: true,
       levelColors: false,
       whiteMode: false,
+      blendNoiseScale: 0.03,
+      blendOffset: 0.0,
     },
     renderer: {
       dpr: 1, // Will be set dynamically based on device
@@ -79,7 +85,7 @@ export class GUIManager {
       maxTiles: 150,
       layers: 1,
       useWFC: true,
-      wfcSeed: 0,
+      wfcSeed: 245510,
       useHex: true,
       hexGridRadius: 6,
       animateWFC: true,
@@ -91,6 +97,9 @@ export class GUIManager {
     decoration: {
       treeNoiseFreq: 0.05,
       treeThreshold: 0.5,
+      windStrength: 0.0375,
+      windSpeed: 1.46,
+      windFreq: 0.902,
     },
   }
 
@@ -155,6 +164,27 @@ export class GUIManager {
       demo.city.setWhiteMode(v)
     })
 
+    // Biome texture pickers + level bias
+    const biomeOptions = {
+      'moody': './assets/textures/moody.png',
+      'summer': './assets/textures/summer.png',
+      'fall': './assets/textures/fall.png',
+      'winter': './assets/textures/winter.png',
+      'default': './assets/textures/default.png',
+    }
+    allParams.debug.biomeLo = 'moody'
+    allParams.debug.biomeHi = 'winter'
+    allParams.debug.levelBias = 0.0
+    gui.add(allParams.debug, 'biomeLo', Object.keys(biomeOptions)).name('Biome Lo').onChange((v) => {
+      demo.city.swapBiomeTexture('lo', biomeOptions[v])
+    })
+    gui.add(allParams.debug, 'biomeHi', Object.keys(biomeOptions)).name('Biome Hi').onChange((v) => {
+      demo.city.swapBiomeTexture('hi', biomeOptions[v])
+    })
+    gui.add(allParams.debug, 'levelBias', -1, 1, 0.05).name('Level Bias').onChange((v) => {
+      if (demo.city._levelBias) demo.city._levelBias.value = v
+    })
+
     // Action buttons
     gui.add({ regen: () => {
       // Reset global RNG to seed value before regenerating
@@ -213,6 +243,15 @@ export class GUIManager {
       setTreeThreshold(v)
       demo.city.repopulateDecorations()
     })
+    decorationFolder.add(allParams.decoration, 'windStrength', 0, 0.15).name('Wind Strength').onChange((v) => {
+      if (demo.city._windStrength) demo.city._windStrength.value = v
+    })
+    decorationFolder.add(allParams.decoration, 'windSpeed', 0, 2.0).name('Wind Speed').onChange((v) => {
+      if (demo.city._windSpeed) demo.city._windSpeed.value = v
+    })
+    decorationFolder.add(allParams.decoration, 'windFreq', 0, 1.0).name('Wind Noise Freq').onChange((v) => {
+      if (demo.city._windFreq) demo.city._windFreq.value = v
+    })
 
     // Lights folder
     const lightsFolder = gui.addFolder('Lights').close()
@@ -223,26 +262,31 @@ export class GUIManager {
       'royal_esplanade_1k.hdr',
       'solitude_interior_1k.hdr',
       'venice_sunset_1k.hdr',
+      'kloofendal_48d_partly_cloudy_puresky_1k.hdr',
+      'overcast_soil_puresky_1k.hdr',
+      'simons_town_rocks_1k.hdr',
+      'tiber_island_1k.hdr',
     ]
     lightsFolder.add(allParams.lighting, 'hdr', hdrOptions).name('HDR').onChange((v) => {
       demo.lighting.loadHDR(v)
     })
-    lightsFolder.add(allParams.lighting, 'hdrRotation', 0, 360, 1).name('HDR Rotation').onChange((v) => {
-      const rad = v * Math.PI / 180
-      demo.scene.backgroundRotation.y = rad
-      if (demo.city.envRotation) {
-        demo.city.envRotation.value = rad
-      }
-    })
-    lightsFolder.add(allParams.lighting, 'hdrTilt', -90, 90, 1).name('HDR Tilt').onChange((v) => {
-      const rad = v * Math.PI / 180
-      demo.scene.backgroundRotation.x = rad
-      if (demo.city.envRotationX) {
-        demo.city.envRotationX.value = rad
-      }
-    })
+    // HDR rotation disabled — see TODO.md for details
+    // lightsFolder.add(allParams.lighting, 'hdrRotation', 0, 360, 1).name('HDR Rotation')
     lightsFolder.add(allParams.lighting, 'exposure', 0, 2, 0.05).name('Exposure').onChange((v) => {
       demo.renderer.toneMappingExposure = v
+    })
+    const toneMappingMap = {
+      'None': NoToneMapping,
+      'Linear': LinearToneMapping,
+      'Reinhard': ReinhardToneMapping,
+      'Cineon': CineonToneMapping,
+      'ACES': ACESFilmicToneMapping,
+      'AgX': AgXToneMapping,
+      'Neutral': NeutralToneMapping,
+    }
+    lightsFolder.add(allParams.lighting, 'toneMapping', Object.keys(toneMappingMap)).name('Tone Mapping').onChange((v) => {
+      demo.renderer.toneMapping = toneMappingMap[v]
+      if (demo.postFX) demo.postFX.postProcessing.needsUpdate = true
     })
     lightsFolder.add(allParams.lighting, 'envIntensity', 0, 2, 0.05).name('Env Intensity').onChange((v) => {
       demo.scene.environmentIntensity = v
@@ -310,6 +354,12 @@ export class GUIManager {
     const { params } = demo
 
     // Lighting
+    const toneMappingMap = {
+      'None': NoToneMapping, 'Linear': LinearToneMapping, 'Reinhard': ReinhardToneMapping,
+      'Cineon': CineonToneMapping, 'ACES': ACESFilmicToneMapping,
+      'AgX': AgXToneMapping, 'Neutral': NeutralToneMapping,
+    }
+    demo.renderer.toneMapping = toneMappingMap[params.lighting.toneMapping] || NoToneMapping
     demo.renderer.toneMappingExposure = params.lighting.exposure
     demo.scene.environmentIntensity = params.lighting.envIntensity
     if (demo.lighting.dirLight) {
@@ -324,17 +374,6 @@ export class GUIManager {
       demo.lighting.updateShadowFrustum()
     }
     if (demo.lighting.dirLightHelper) demo.lighting.dirLightHelper.visible = params.lighting.showHelper
-    const hdrRad = params.lighting.hdrRotation * Math.PI / 180
-    demo.scene.backgroundRotation.y = hdrRad
-    if (demo.city.envRotation) {
-      demo.city.envRotation.value = hdrRad
-    }
-    const hdrTiltRad = params.lighting.hdrTilt * Math.PI / 180
-    demo.scene.backgroundRotation.x = hdrTiltRad
-    if (demo.city.envRotationX) {
-      demo.city.envRotationX.value = hdrTiltRad
-    }
-
     // Material override removed - using GLB material directly for hex tiles
 
     // Post processing

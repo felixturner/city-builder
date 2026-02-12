@@ -42,9 +42,10 @@ export const HexGridState = {
  * - POPULATED: Hides Placeholder, shows Helper (if debug enabled)
  */
 export class HexGrid {
-  constructor(scene, material, gridRadius, worldOffset = { x: 0, z: 0 }) {
+  constructor(scene, material, gridRadius, worldOffset = { x: 0, z: 0 }, treeMaterial = null) {
     this.scene = scene
     this.material = material
+    this.treeMaterial = treeMaterial
     this.gridRadius = gridRadius
     this.worldOffset = worldOffset
 
@@ -180,7 +181,7 @@ export class HexGrid {
 
     // Initialize decorations for this grid (pass worldOffset for noise sampling)
     this.decorations = new Decorations(this.group, this.worldOffset)
-    await this.decorations.init(HexTileGeometry.gltfScene, this.material)
+    await this.decorations.init(HexTileGeometry.gltfScene, this.material, this.treeMaterial)
 
     return true
   }
@@ -336,23 +337,10 @@ export class HexGrid {
   }
 
   /**
-   * Fade out placeholder and outline
+   * Fade out placeholder (outline visibility is controlled separately via GUI)
    */
   fadeOut() {
     this.placeholder?.fadeOut()
-    if (this.outline) {
-      clearTimeout(this._outlineFadeTimer)
-      gsap.killTweensOf(this._outlineAnim)
-      this.outline.visible = true
-      this._outlineAnim = { opacity: this.outline.material.opacity }
-      gsap.to(this._outlineAnim, {
-        opacity: 0,
-        duration: 0.2,
-        ease: 'power2.in',
-        onUpdate: () => { this.outline.material.opacity = this._outlineAnim.opacity },
-        onComplete: () => { this.outline.visible = false },
-      })
-    }
   }
 
   /**
@@ -516,9 +504,8 @@ export class HexGrid {
         this.bottomFills.delete(fillKey)
       }
       if (newLevel >= 1 && this.bottomGeomId !== null) {
-        const WHITE = new Color(0xffffff)
         const fillId = this.hexMesh.addInstance(this.bottomGeomId)
-        this.hexMesh.setColorAt(fillId, WHITE)
+        this.hexMesh.setColorAt(fillId, oldTile.color)
         const tileY = newLevel * LEVEL_HEIGHT
         this.dummy.position.set(pos.x, tileY, pos.z)
         this.dummy.rotation.y = 0
@@ -590,7 +577,7 @@ export class HexGrid {
     const DROP_HEIGHT = 5
     const ANIM_DURATION = 0.4
     const DEC_DELAY = 400 // Decoration drops after its tile
-    const dummy = new Object3D()
+    const dummy = this.dummy
 
     // Build decoration lookup by tile position
     const decsByTile = this.buildDecorationMap()
@@ -724,11 +711,13 @@ export class HexGrid {
         lily.tile.gridZ - this.gridRadius
       )
       if (!map.has(key)) map.set(key, [])
+      const lilyName = TILE_LIST[lily.tile.type]?.name || ''
+      const lilyOceanDip = (lilyName.startsWith('COAST_') || lilyName === 'WATER') ? -0.2 : 0
       map.get(key).push({
         mesh: this.decorations.waterlilyMesh,
         instanceId: lily.instanceId,
         x: pos.x + (lily.ox ?? 0),
-        y: lily.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        y: lily.tile.level * LEVEL_HEIGHT + TILE_SURFACE + lilyOceanDip,
         z: pos.z + (lily.oz ?? 0),
         rotationY: lily.rotationY ?? 0,
         scale: 2
@@ -760,11 +749,13 @@ export class HexGrid {
         rock.tile.gridZ - this.gridRadius
       )
       if (!map.has(key)) map.set(key, [])
+      const rockName = TILE_LIST[rock.tile.type]?.name || ''
+      const rockOceanDip = (rockName.startsWith('COAST_') || rockName === 'WATER') ? -0.2 : 0
       map.get(key).push({
         mesh: this.decorations.rockMesh,
         instanceId: rock.instanceId,
         x: pos.x + (rock.ox ?? 0),
-        y: rock.tile.level * LEVEL_HEIGHT + TILE_SURFACE,
+        y: rock.tile.level * LEVEL_HEIGHT + TILE_SURFACE + rockOceanDip,
         z: pos.z + (rock.oz ?? 0),
         rotationY: rock.rotationY ?? 0
       })
@@ -813,7 +804,7 @@ export class HexGrid {
   animateDecoration(items) {
     const DROP_HEIGHT = 4
     const ANIM_DURATION = 0.3
-    const dummy = new Object3D()
+    const dummy = this.dummy
 
     const list = Array.isArray(items) ? items : [items]
     for (const item of list) {
@@ -876,7 +867,7 @@ export class HexGrid {
       // Add bottom fill under elevated tiles (geometry hangs downward from Y=0)
       if (tile.level >= 1 && this.bottomGeomId !== null) {
         const fillId = this.hexMesh.addInstance(this.bottomGeomId)
-        this.hexMesh.setColorAt(fillId, WHITE)
+        this.hexMesh.setColorAt(fillId, tile.color)
         const tileY = tile.level * LEVEL_HEIGHT
         dummy.position.set(pos.x, tileY, pos.z)
         dummy.rotation.y = 0

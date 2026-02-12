@@ -150,6 +150,22 @@ class HexWFCSolver {
         this.previousStates.set(key, state)
       }
     }
+
+    // Precompute set of tile types that prevent self-adjacency
+    this.noChainTypes = new Set()
+    for (const type of types) {
+      if (TILE_LIST[type]?.preventChaining) {
+        this.noChainTypes.add(type)
+      }
+    }
+
+    // Prune chaining from fixed cells into adjacent solve cells
+    for (const fc of fixedCells) {
+      if (this.noChainTypes.has(fc.type)) {
+        const key = cubeKey(fc.q, fc.r, fc.s)
+        this._pruneChaining(key, fc.type)
+      }
+    }
   }
 
   findLowestEntropyCell() {
@@ -209,7 +225,33 @@ class HexWFCSolver {
     const { q, r: cr, s } = parseCubeKey(key)
     this.collapseOrder.push({ q, r: cr, s, type: state.type, rotation: state.rotation, level: state.level })
 
+    // Prevent chaining: remove same tile type from all neighbors
+    if (this.noChainTypes.has(state.type)) {
+      this._pruneChaining(key, state.type)
+    }
+
     return true
+  }
+
+  /**
+   * Remove all states of the given tile type from neighbors of key
+   */
+  _pruneChaining(key, type) {
+    const nbrs = this.neighbors.get(key)
+    if (!nbrs) return
+    const prefix = `${type}_`
+    for (const { key: nKey } of nbrs) {
+      const neighbor = this.cells.get(nKey)
+      if (!neighbor || neighbor.collapsed) continue
+      for (const stateKey of [...neighbor.possibilities]) {
+        if (stateKey.startsWith(prefix)) {
+          neighbor.possibilities.delete(stateKey)
+        }
+      }
+      if (neighbor.possibilities.size > 0) {
+        this.propagationStack.push(nKey)
+      }
+    }
   }
 
   /**

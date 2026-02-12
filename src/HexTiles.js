@@ -84,21 +84,12 @@ export class HexTile {
   }
 
   /**
-   * Update color based on current level (for debug visualization)
+   * Encode tile level as greyscale in instance color (0 at level 0, 1 at level 3)
+   * The shader reads this value for both texture blending and debug HSL visualization
    */
   updateLevelColor() {
-    if (HexTile.debugLevelColors) {
-      const baseDef = TILE_LIST[this.type]
-      if (baseDef && baseDef.highEdges && baseDef.highEdges.length > 0) {
-        const lo = HexTile.getLevelColor(this.level)
-        const hi = HexTile.getLevelColor(this.level + (baseDef.levelIncrement ?? 1))
-        this.color.copy(lo).lerp(hi, 0.5)
-      } else {
-        this.color.copy(HexTile.getLevelColor(this.level))
-      }
-    } else {
-      this.color.copy(HexTile.DEFAULT_COLOR)
-    }
+    const blend = Math.min(this.level / 3, 1)
+    this.color.setRGB(blend, blend, blend)
   }
 
   /**

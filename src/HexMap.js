@@ -6,9 +6,11 @@ import {
   MeshStandardMaterial,
   Raycaster,
   Vector2,
+  TextureLoader,
+  SRGBColorSpace,
 } from 'three/webgpu'
 import WFCWorker from './workers/wfc.worker.js?worker'
-import { uniform, varyingProperty, materialColor, vec3 } from 'three/tsl'
+import { uniform, varyingProperty, materialColor, diffuseColor, materialOpacity, vec3, vec4, texture, uv, mix, select, positionWorld, positionLocal, positionGeometry, mx_noise_float, float, clamp, time as tslTime, sin, cos, modelWorldMatrix } from 'three/tsl'
 import { CSS2DObject } from 'three/examples/jsm/Addons.js'
 import { HexWFCAdjacencyRules, HexWFCCell, CUBE_DIRS, cubeKey, parseCubeKey, cubeCoordsInRadius, cubeDistance, offsetToCube, cubeToOffset, localToGlobalCoords, edgesCompatible, getEdgeLevel } from './HexWFCCore.js'
 import { setStatus } from './Demo.js'
@@ -52,12 +54,10 @@ export class HexMap {
     this.overlapRings = 1  // Number of overlap rings (neighbor cells made solvable)
     this.roadMaterial = null
 
+
+
     // WFC rules (shared across all grids)
     this.hexWfcRules = null
-
-    // Environment rotation uniforms
-    this.envRotation = uniform(0)
-    this.envRotationX = uniform(0)
 
     // Global cell map — all collapsed cells across all grids
     // key: "q,r,s" cube coords, value: { q, r, s, type, rotation, level, gridKey }
@@ -116,21 +116,114 @@ export class HexMap {
       return
     }
 
-    const glbMat = HexTileGeometry.material
-    if (glbMat) {
-      this.roadMaterial = glbMat
-    } else {
-      const mat = new MeshPhysicalNodeMaterial()
-      mat.color.setHex(0x88aa88)
-      mat.roughness = 0.8
-      mat.metalness = 0.1
-      this.roadMaterial = mat
+    const mat = new MeshPhysicalNodeMaterial()
+    mat.roughness = 0.5
+    mat.metalness = 0
+    this.roadMaterial = mat
+
+    // Override setupDiffuseColor to skip the automatic batchColor multiply.
+    // We read vBatchColor ourselves in the colorNode for level data, not as a tint.
+    this.roadMaterial.setupDiffuseColor = function(builder) {
+      const colorNode = this.colorNode ? vec4(this.colorNode) : materialColor
+      diffuseColor.assign(colorNode)
+      const opacityNode = this.opacityNode ? float(this.opacityNode) : materialOpacity
+      diffuseColor.a.assign(diffuseColor.a.mul(opacityNode))
     }
 
-    // Enable instance colors (multiplied with base material color)
-    // BatchedMesh stores per-instance colors in vBatchColor varying
+    // Clone material for trees (separate so we can add wind sway positionNode)
+    this.treeMaterial = this.roadMaterial.clone()
+    this.treeMaterial.setupDiffuseColor = this.roadMaterial.setupDiffuseColor
+
+    // Load season textures and set up noise-blended colorNode
+    await this._initTextureBlend()
+
+    this.roadMaterial.colorNode = this._combinedColor
+    this.treeMaterial.colorNode = this._combinedColor
+
+    // Wind sway — override setupPosition to add displacement AFTER batching.
+    // Nodes must be built inside setupPosition so positionLocal references the
+    // post-batch value (built outside, it resolves to the raw attribute).
+    this._windStrength = uniform(0.0375)
+    this._windSpeed = uniform(1.46)
+    this._windFreq = uniform(0.902)
+    const time = tslTime
+    const windStrength = this._windStrength
+    const windSpeed = this._windSpeed
+    const windFreq = this._windFreq
+
+    // positionNode is evaluated after batching in Three.js pipeline.
+    // The isPositionNodeInput context makes positionLocal resolve to post-batch value.
+    const worldPos = modelWorldMatrix.mul(vec4(positionLocal, float(1))).xyz
+    const phase = worldPos.x.mul(windFreq).add(worldPos.z.mul(windFreq).mul(0.6))
+    const swayMask = positionGeometry.y.mul(windStrength)
+    const swayX = sin(time.mul(windSpeed).add(phase)).mul(swayMask)
+    const swayZ = sin(time.mul(windSpeed).mul(0.85).add(phase).add(1.5)).mul(swayMask)
+
+    this.treeMaterial.positionNode = positionLocal.add(vec3(swayX, float(0), swayZ))
+
+  }
+
+  /**
+   * Load season textures and build the TSL blend node
+   */
+  async _initTextureBlend() {
+    // Load both season textures
+    const loader = new TextureLoader()
+    const loadTex = (path) => new Promise((resolve) => {
+      loader.load(path, (tex) => {
+        tex.flipY = false  // GLB geometry UVs expect non-flipped textures
+        tex.colorSpace = SRGBColorSpace
+        tex.needsUpdate = true
+        resolve(tex)
+      })
+    })
+
+    const [texA, texB] = await Promise.all([
+      loadTex('./assets/textures/moody.png'),
+      loadTex('./assets/textures/winter.png'),
+    ])
+
+    this._texA = texA
+    this._texB = texB
+
+    // Sample both textures at the same UVs (store nodes for runtime swapping)
+    const texCoord = uv()
+    this._texNodeA = texture(texA, texCoord)
+    this._texNodeB = texture(texB, texCoord)
+    const sampleA = this._texNodeA
+    const sampleB = this._texNodeB
+
+    // Tile level stored as greyscale in instance color (0 at level 0, 1 at level 3)
+    // setupDiffuseColor override prevents auto-multiply, so this is pure data
     const batchColor = varyingProperty('vec3', 'vBatchColor')
-    this.roadMaterial.colorNode = materialColor.mul(batchColor)
+    const levelBlend = batchColor.r
+    // Raw geometry Y (before batch transform) for slope gradient
+    // Tile surface is at geomY=1.0, each 0.5u above = +1 level, max 3 levels
+    // So slope contribution = (geomY - 1.0) / 0.5 / 3 = (geomY - 1.0) * 2/3
+    const rawGeomPos = positionGeometry.varying('vRawGeomPos')
+    const slopeContrib = rawGeomPos.y.sub(1.0).mul(2.0 / 3.0)
+    // Level bias shifts the blend ramp up or down (-1 to 1)
+    this._levelBias = uniform(0)
+    const blendFactor = clamp(levelBlend.add(slopeContrib).add(this._levelBias), 0, 1)
+
+    // Blended season textures (normal mode)
+    const blendedColor = mix(sampleA, sampleB, blendFactor)
+
+    // Debug HSL gradient (level colors mode): hue 0 (red) → 250/360 (blue)
+    const hue = blendFactor.mul(250.0 / 360.0)
+    const h6 = hue.mul(6.0)
+    const hslR = clamp(h6.sub(3.0).abs().sub(1.0), 0, 1)
+    const hslG = clamp(float(2.0).sub(h6.sub(2.0).abs()), 0, 1)
+    const hslB = clamp(float(2.0).sub(h6.sub(4.0).abs()), 0, 1)
+    const debugColor = vec3(hslR, hslG, hslB)
+
+    // Mode uniform: 0 = normal (blended textures), 1 = debug HSL, 2 = white
+    this._colorMode = uniform(0)
+    const isDebug = this._colorMode.equal(1)
+    const isWhite = this._colorMode.equal(2)
+    this._combinedColor = select(isWhite, vec3(1, 1, 1), select(isDebug, debugColor, blendedColor))
+
+    this.roadMaterial.needsUpdate = true
   }
 
   /**
@@ -727,7 +820,7 @@ export class HexMap {
     const globalCenterCube = worldOffsetToGlobalCube(worldOffset)
 
     // Create grid in PLACEHOLDER state
-    const grid = new HexGrid(this.scene, this.roadMaterial, this.hexGridRadius, worldOffset)
+    const grid = new HexGrid(this.scene, this.roadMaterial, this.hexGridRadius, worldOffset, this.treeMaterial)
     grid.gridCoords = { x: gridX, z: gridZ }
     grid.globalCenterCube = globalCenterCube
     grid.onClick = () => this.onGridClick(grid)
@@ -993,7 +1086,11 @@ export class HexMap {
    * @param {number} radius - Grid radius
    */
   addWaterEdgeSeeds(initialCollapses, center, radius) {
-    if (random() >= 0.5) return
+    if (random() >= 0.5) {
+      console.log('%c[Water seed] skipped (50% roll)', 'color: blue')
+      return
+    }
+    console.log('%c[Water seed] triggered', 'color: blue')
 
     const selectedEdge = Math.floor(random() * 6)
 
@@ -1692,43 +1789,59 @@ export class HexMap {
   }
 
   /**
-   * Toggle white mode — removes texture so everything renders as flat white
+   * Toggle white mode — strips texture so everything renders as flat white
    */
   setWhiteMode(enabled) {
     this._whiteMode = enabled
-    const mat = HexTileGeometry.material
-    if (!mat) return
-    if (enabled) {
-      if (!mat._savedMap) mat._savedMap = mat.map
-      mat.map = null
-      mat.needsUpdate = true
-    } else if (!HexTile.debugLevelColors) {
-      // Only restore map if level colors isn't also active
-      if (mat._savedMap) {
-        mat.map = mat._savedMap
-        mat._savedMap = null
-        mat.needsUpdate = true
-      }
+    this._updateColorNode()
+  }
+
+  /**
+   * Update the material color mode: 0 = normal, 1 = debug HSL, 2 = white
+   */
+  _updateColorNode() {
+    if (!this._colorMode) return
+    if (this._whiteMode) {
+      this._colorMode.value = 2
+    } else if (HexTile.debugLevelColors) {
+      this._colorMode.value = 1
+    } else {
+      this._colorMode.value = 0
     }
+  }
+
+  /**
+   * Swap a biome texture at runtime (lo or hi)
+   * @param {'lo'|'hi'} slot - Which texture to replace
+   * @param {string} path - Texture file path (e.g. './assets/textures/summer.png')
+   */
+  swapBiomeTexture(slot, path) {
+    const node = slot === 'lo' ? this._texNodeA : this._texNodeB
+    if (!node) return
+    const ref = this._texA // use existing texture settings as reference
+    const loader = new TextureLoader()
+    loader.load(path, (tex) => {
+      if (ref) {
+        tex.flipY = ref.flipY
+        tex.colorSpace = ref.colorSpace
+        tex.wrapS = ref.wrapS
+        tex.wrapT = ref.wrapT
+        tex.channel = ref.channel
+      }
+      tex.needsUpdate = true
+      node.value = tex
+      if (slot === 'lo') this._texA = tex
+      else this._texB = tex
+      this.roadMaterial.needsUpdate = true
+      if (this.treeMaterial) this.treeMaterial.needsUpdate = true
+    })
   }
 
   /**
    * Update tile colors on all populated grids (for debug level visualization)
    */
   updateTileColors() {
-    // Toggle material texture so instance colors fully override (not multiply)
-    const mat = HexTileGeometry.material
-    if (mat) {
-      if (HexTile.debugLevelColors || this._whiteMode) {
-        if (!mat._savedMap) mat._savedMap = mat.map
-        mat.map = null
-        mat.needsUpdate = true
-      } else if (mat._savedMap) {
-        mat.map = mat._savedMap
-        mat._savedMap = null
-        mat.needsUpdate = true
-      }
-    }
+    this._updateColorNode()
     for (const grid of this.grids.values()) {
       if (grid.state === HexGridState.POPULATED) {
         grid.updateTileColors()

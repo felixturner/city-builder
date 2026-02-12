@@ -92,7 +92,8 @@ export class Demo {
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
-    const seed = Math.floor(Math.random() * 1000000)
+    const defaultSeed = this.params.roads.wfcSeed
+    const seed = defaultSeed || Math.floor(Math.random() * 1000000)
     setSeed(seed)
     console.log(`%c[SEED] ${seed}`, 'color: black')
     this.seed = seed
