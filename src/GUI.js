@@ -101,6 +101,15 @@ export class GUIManager {
       windSpeed: 1.46,
       windFreq: 0.902,
     },
+    weather: {
+      mode: 'snow',
+      intensity: 0.1,
+      opacity: 0.8,
+      speed: 0.4,
+      wind: 0,
+      wobble: 0.5,
+      snowSize: 5,
+    },
   }
 
   init() {
@@ -251,6 +260,30 @@ export class GUIManager {
     })
     decorationFolder.add(allParams.decoration, 'windFreq', 0, 1.0).name('Wind Noise Freq').onChange((v) => {
       if (demo.city._windFreq) demo.city._windFreq.value = v
+    })
+
+    // Weather folder
+    const weatherFolder = gui.addFolder('Weather').close()
+    weatherFolder.add(allParams.weather, 'mode', ['none', 'rain', 'snow']).name('Mode').onChange((v) => {
+      demo.city.weather?.setMode(v)
+    })
+    weatherFolder.add(allParams.weather, 'intensity', 0, 1, 0.05).name('Intensity').onChange((v) => {
+      demo.city.weather?.setIntensity(v)
+    })
+    weatherFolder.add(allParams.weather, 'opacity', 0, 1, 0.05).name('Opacity').onChange((v) => {
+      demo.city.weather?.setOpacity(v)
+    })
+    weatherFolder.add(allParams.weather, 'speed', 0, 2, 0.05).name('Speed').onChange((v) => {
+      demo.city.weather?.setSpeed(v)
+    })
+    weatherFolder.add(allParams.weather, 'wind', -1, 1, 0.05).name('Wind').onChange((v) => {
+      demo.city.weather?.setWind(v)
+    })
+    weatherFolder.add(allParams.weather, 'wobble', 0, 5, 0.1).name('Wobble').onChange((v) => {
+      demo.city.weather?.setWobble(v)
+    })
+    weatherFolder.add(allParams.weather, 'snowSize', 1, 20, 0.5).name('Snow Size').onChange((v) => {
+      demo.city.weather?.setSnowSize(v)
     })
 
     // Lights folder

@@ -27,6 +27,7 @@ import {
 } from './HexGridConnector.js'
 import { Demo } from './Demo.js'
 import { initGlobalTreeNoise } from './Decorations.js'
+import { Weather } from './Weather.js'
 import { random, getSeed } from './SeededRandom.js'
 
 /**
@@ -80,6 +81,9 @@ export class HexMap {
     this.helpersVisible = false
     this.axesHelpersVisible = false
 
+    // Weather
+    this.weather = null
+
     // Regeneration state (prevents overlay rendering during disposal)
     this.isRegenerating = false
 
@@ -96,6 +100,10 @@ export class HexMap {
     this.initWfcRules()
     this.initWfcWorker()
     initGlobalTreeNoise()  // Initialize shared noise for tree placement
+
+    this.weather = new Weather()
+    this.weather.init()
+    this.scene.add(this.weather.group)
 
     // Create center grid at (0,0) and immediately populate it
     const centerGrid = await this.createGrid(0, 0)
@@ -1563,8 +1571,13 @@ export class HexMap {
     this.isRegenerating = false
   }
 
-  update(_dt) {
-    // Future: animate tiles
+  update(dt) {
+    if (this.weather) {
+      const demo = Demo.instance
+      const target = demo?.controls?.target
+      const camera = demo?.camera
+      this.weather.update(dt, target, camera)
+    }
   }
 
   // === Accessors for backward compatibility ===
@@ -1858,6 +1871,7 @@ export class HexMap {
     if (this.isRegenerating) return []
 
     const overlays = []
+    if (this.weather) overlays.push(...this.weather.getOverlayObjects())
     for (const grid of this.grids.values()) {
       // Placeholder group (button + triangles)
       if (grid.placeholder?.group) {

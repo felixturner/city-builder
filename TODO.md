@@ -4,6 +4,7 @@
 - add water shader like azuki village (only show noise on water color on map?) expensive? use other channel like emission for water shader area?
 - add better skybox - styormy skies
 - add rain / snow (like bad north / nuclear throne)
+- snow: lock snow area to cam view so more snow visible. do weather scaling to lock min/max sizes on zoom.
 - improve color maps textures for 2 levels. keep rivers/roads the same color on both
 - add wind trails like zelda
 - coast ripples shader like diney map

@@ -179,7 +179,7 @@ export class PostFX {
     // Hide everything except overlay objects
     const savedVisibility = new Map()
     scene.traverse((child) => {
-      if (!child.isMesh && !child.isLine && !child.isLineSegments) return
+      if (!child.isMesh && !child.isLine && !child.isLineSegments && !child.isPoints) return
       const isOverlay = overlayObjects.some(o => o === child || o.getObjectById?.(child.id))
       if (!isOverlay) {
         savedVisibility.set(child, child.visible)
