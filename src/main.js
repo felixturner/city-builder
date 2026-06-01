@@ -34,7 +34,10 @@ function start() {
   demo.fadeIn(1000)
 
   // Start intro build animation
-  demo.city.startIntroAnimation(demo.camera, demo.controls, 4)
+  demo.city.startIntroAnimation(demo.camera, demo.controls, 1)
+
+  // Release the creeps (grace period counts from here)
+  demo.creeps.start()
 }
 
 startBtn.addEventListener('click', start)

@@ -13,6 +13,17 @@ class SoundsManager {
       debris: new Howl({ src: ['assets/sfx/debris.mp3'] }),
       good: new Howl({ src: ['assets/sfx/good.mp3'] }),
       intro: new Howl({ src: ['assets/sfx/intro.mp3'] }),
+      incorrect: new Howl({ src: ['assets/sfx/incorrect.mp3'] }),
+      pluck: new Howl({ src: ['assets/sfx/pluck.mp3'] }),
+      energy: new Howl({ src: ['assets/sfx/energy.mp3'] }),
+      spawn: new Howl({ src: ['assets/sfx/spawn.mp3'] }),
+      step1: new Howl({ src: ['assets/sfx/step1.mp3'] }),
+      step2: new Howl({ src: ['assets/sfx/step2.mp3'] }),
+      attack: new Howl({ src: ['assets/sfx/attack.mp3'] }),
+      burn: new Howl({ src: ['assets/sfx/burn.mp3'] }),
+      break: new Howl({ src: ['assets/sfx/break.mp3'] }),
+      break2: new Howl({ src: ['assets/sfx/break2.mp3'] }),
+      hit: new Howl({ src: ['assets/sfx/hit.mp3'] }),
     }
     // Multiple stone sounds for random selection
     this.stoneSounds = [
@@ -32,6 +43,12 @@ class SoundsManager {
       new Howl({ src: ['assets/sfx/clink06.mp3'] }),
       new Howl({ src: ['assets/sfx/clink07.mp3'] }),
       new Howl({ src: ['assets/sfx/clink08.mp3'] }),
+    ]
+    // Turret shot sounds for random selection
+    this.shootSounds = [
+      new Howl({ src: ['assets/sfx/shoot1.mp3'] }),
+      new Howl({ src: ['assets/sfx/shoot2.mp3'] }),
+      new Howl({ src: ['assets/sfx/shoot3.mp3'] }),
     ]
   }
 
@@ -53,6 +70,9 @@ class SoundsManager {
     } else if (name === 'clink') {
       // Randomly select one of the clink sounds
       sound = this.clinkSounds[Math.floor(Math.random() * this.clinkSounds.length)]
+    } else if (name === 'shoot') {
+      // Randomly select one of the turret shot sounds
+      sound = this.shootSounds[Math.floor(Math.random() * this.shootSounds.length)]
     } else {
       sound = this.sounds[name]
     }

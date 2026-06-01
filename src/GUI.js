@@ -66,6 +66,7 @@ export class GUIManager {
   init() {
     const { demo } = this
     const gui = new GUI()
+    gui.close() // collapsed at start
     this.gui = gui
 
     // Store params on demo for single source of truth

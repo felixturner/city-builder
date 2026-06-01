@@ -90,6 +90,7 @@ export class Trails {
     this.scene = scene
     this.city = cityBuilder
     this.paths = []
+    this.pathTowers = [] // [towerA, towerB] per path index, for setConnectors
     this.meshes = []
 
     // Grid layout constants (from City)
@@ -186,6 +187,25 @@ export class Trails {
     }
 
     console.log(`Total paths created: ${pathsCreated} (from ${attempts} attempts)`)
+  }
+
+  /**
+   * Draw connectors for an explicit list of tower pairs (power lines).
+   * Each pair is [towerA, towerB]; the trail color follows towerA's colorIndex.
+   * @param {Array<[Tower, Tower]>} pairs
+   */
+  setConnectors(pairs) {
+    this.clear()
+    let idx = 0
+    for (const [a, b] of pairs) {
+      const path = this.findPath(a, b)
+      if (path && path.length >= 2) {
+        this.paths.push(path)
+        this.pathTowers.push([a, b])
+        this.createPathMesh(path, idx, a.colorIndex)
+        idx++
+      }
+    }
   }
 
   /**
@@ -551,6 +571,7 @@ export class Trails {
     material.transparent = true
     material.side = DoubleSide
     material.depthWrite = false
+    material.depthTest = false // draw over blocks
     material.blending = AdditiveBlending
 
     // UV.y is actual distance along path in world units
@@ -620,6 +641,7 @@ export class Trails {
     }
     this.meshes = []
     this.paths = []
+    this.pathTowers = []
   }
 
   /**

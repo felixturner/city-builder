@@ -492,9 +492,9 @@ export class Tower {
     const size = this.box.getSize(new Vector2())
     const radius = Math.max(size.x, size.y) / 2
 
-    // Spawn debris immediately
-    debris.setupNearbyCollisions(this, allTowers, floorHeight, city)
-    debris.spawn(world.x, numFloors * floorHeight, world.z, radius, debrisColor)
+    // Tiny bricks disabled for now (perf)
+    // debris.setupNearbyCollisions(this, allTowers, floorHeight, city)
+    // debris.spawn(world.x, numFloors * floorHeight, world.z, radius, debrisColor)
 
     // Animate the deletion
     this.animateDelete(mesh, floorHeight, numFloors, () => {
@@ -524,8 +524,9 @@ export class Tower {
 
     // Callback to spawn debris when floor reaches max scale
     const onFloorPop = () => {
-      debris.setupNearbyCollisions(this, allTowers, floorHeight, city)
-      debris.spawn(world.x, newFloorY, world.z, radius, debrisColor)
+      // Tiny build bricks disabled for now (perf)
+      // debris.setupNearbyCollisions(this, allTowers, floorHeight, city)
+      // debris.spawn(world.x, newFloorY, world.z, radius, debrisColor)
     }
 
     this.animateNewFloor(mesh, floorHeight, oldNumFloors, newFloorColor, onComplete, onFloorPop)

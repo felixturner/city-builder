@@ -35,6 +35,16 @@ export class Pointer {
     this.onPointerUpCallback = callbacks.onPointerUp
     this.onPointerMoveCallback = callbacks.onPointerMove
     this.onRightClickCallback = callbacks.onRightClick
+    // Optional custom picker: (ray) => intersection|null. When set it replaces
+    // geometry raycasting (e.g. bounding-box picks so plus-block holes still hit).
+    this.pickFn = callbacks.pick || null
+  }
+
+  /** Current single intersection using the custom picker or geometry raycast. */
+  pickIntersection() {
+    if (this.pickFn) return this.pickFn(this.rayCaster.ray)
+    const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
+    return intersects.length > 0 ? intersects[0] : null
   }
 
   onPointerDown(e) {
@@ -51,8 +61,7 @@ export class Pointer {
           -(e.clientY / window.innerHeight) * 2 + 1
         )
         this.rayCaster.setFromCamera(this.pointer, this.camera)
-        const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
-        const intersection = intersects.length > 0 ? intersects[0] : null
+        const intersection = this.pickIntersection()
 
         // For touch, store intersection for later use on pointerup
         // For mouse, call callback immediately
@@ -115,8 +124,7 @@ export class Pointer {
 
     // Raycast for hover detection
     if (this.raycastTargets.length > 0 && this.onHoverCallback) {
-      const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
-      this.onHoverCallback(intersects.length > 0 ? intersects[0] : null)
+      this.onHoverCallback(this.pickIntersection())
     }
   }
 
@@ -130,9 +138,9 @@ export class Pointer {
         -(e.clientY / window.innerHeight) * 2 + 1
       )
       this.rayCaster.setFromCamera(this.pointer, this.camera)
-      const intersects = this.rayCaster.intersectObjects(this.raycastTargets, false)
-      if (intersects.length > 0) {
-        this.onRightClickCallback(intersects[0])
+      const intersection = this.pickIntersection()
+      if (intersection) {
+        this.onRightClickCallback(intersection)
         // Block the subsequent touch tap (long press triggers contextmenu then pointerup)
         this.pendingTouchIntersection = undefined
       }

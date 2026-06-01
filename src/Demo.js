@@ -20,6 +20,9 @@ import { City } from './City.js'
 import { Lighting } from './Lighting.js'
 import { Trails } from './lib/Trails.js'
 import { PostFX } from './PostFX.js'
+import { Mana } from './Mana.js'
+import { Creeps } from './Creeps.js'
+import { Turrets } from './Turrets.js'
 
 export class Demo {
   static instance = null
@@ -88,6 +91,12 @@ export class Demo {
     // Initialize modules
     this.lighting = new Lighting(this.scene, this.renderer, this.params)
     this.city = new City(this.scene, this.params)
+    // Let the city read the ground-plane pointer for empty-slot building
+    this.city.pointer = this.pointerHandler
+
+    // Resource meter (mana) - clicks cost mana
+    this.mana = new Mana(50, 20)
+    this.city.mana = this.mana
 
     await this.lighting.init()
     await this.city.init()
@@ -100,7 +109,9 @@ export class Demo {
         onPointerDown: (intersection, x, y, isTouch) => this.city.onPointerDown(intersection, x, y, isTouch),
         onPointerUp: (isTouch, touchIntersection) => this.city.onPointerUp(isTouch, touchIntersection),
         onPointerMove: (x, y) => this.city.onPointerMove(x, y),
-        onRightClick: (intersection) => this.city.onRightClick(intersection)
+        onRightClick: (intersection) => this.city.onRightClick(intersection),
+        // Bounding-box picking so plus-block holes are still clickable
+        pick: (ray) => this.city.pickTowerBox(ray)
       }
     )
 
@@ -113,9 +124,15 @@ export class Demo {
     this.axesHelper.visible = false
     this.scene.add(this.axesHelper)
 
-    // Glowing trails between towers
+    // Glowing trails (power lines) between towers - built during gameplay, none at init
     this.trails = new Trails(this.scene, this.city)
-    this.trails.generatePaths(30)
+    this.city.trails = this.trails
+
+    // Enemy creeps marching in from the map edges
+    this.creeps = new Creeps(this.scene, this.city)
+
+    // Peg_Top towers act as turrets that shoot creeps
+    this.turrets = new Turrets(this.scene, this.city, this.creeps)
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
@@ -157,7 +174,7 @@ export class Demo {
 
     // Set up perspective camera (closer position for FOV 30)
     // Initial camera position - same rotation but targeting origin
-    this.perspCamera.position.set(-18.574, 50.428, -12.617)
+    this.perspCamera.position.set(-36.833, 100, -25.02)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -272,6 +289,12 @@ export class Demo {
 
     // Update trails animation
     this.trails.update(dt)
+
+    // Update enemy creeps
+    this.creeps.update(dt)
+
+    // Update turrets (fire at creeps)
+    this.turrets.update(dt)
 
     postFX.render()
 
