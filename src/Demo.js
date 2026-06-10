@@ -95,8 +95,8 @@ export class Demo {
     // Initialize modules
     this.lighting = new Lighting(this.scene, this.renderer, this.params)
     this.city = new City(this.scene, this.params)
-    // Let the city read the ground-plane pointer for empty-slot building
-    this.city.pointer = this.pointerHandler
+    // Let interaction read the ground-plane pointer for empty-slot building
+    this.city.interaction.pointer = this.pointerHandler
 
     // Energy/population HUD - grey blocks generate energy and raise its cap
     this.mana = new Mana(50, 50)
@@ -109,13 +109,13 @@ export class Demo {
     this.pointerHandler.setRaycastTargets(
       [this.city.towerMesh],
       {
-        onHover: (intersection) => this.city.onHover(intersection),
-        onPointerDown: (intersection, x, y, isTouch) => this.city.onPointerDown(intersection, x, y, isTouch),
-        onPointerUp: (isTouch, touchIntersection) => this.city.onPointerUp(isTouch, touchIntersection),
-        onPointerMove: (x, y) => this.city.onPointerMove(x, y),
-        onRightClick: (intersection) => this.city.onRightClick(intersection),
+        onHover: (intersection) => this.city.interaction.onHover(intersection),
+        onPointerDown: (intersection, x, y, isTouch) => this.city.interaction.onPointerDown(intersection, x, y, isTouch),
+        onPointerUp: (isTouch, touchIntersection) => this.city.interaction.onPointerUp(isTouch, touchIntersection),
+        onPointerMove: (x, y) => this.city.interaction.onPointerMove(x, y),
+        onRightClick: (intersection) => this.city.interaction.onRightClick(intersection),
         // Bounding-box picking so plus-block holes are still clickable
-        pick: (ray) => this.city.pickTowerBox(ray)
+        pick: (ray) => this.city.interaction.pickTowerBox(ray)
       }
     )
 
@@ -338,12 +338,11 @@ export class Demo {
     btn.textContent = '⏸ Pause'
     Object.assign(btn.style, {
       position: 'fixed',
-      left: '50%',
-      bottom: '20px',
-      transform: 'translateX(-50%)',
+      top: '9px',
+      right: 'calc(50% + 17vw + 10px)', // just left of the 34vw centered timeline
       zIndex: '600',
-      padding: '8px 18px',
-      font: '600 14px system-ui, sans-serif',
+      padding: '5px 12px',
+      font: '600 13px system-ui, sans-serif',
       color: '#fff',
       background: 'rgba(20,20,28,0.8)',
       border: '1px solid rgba(255,255,255,0.35)',
@@ -359,18 +358,18 @@ export class Demo {
     this.pauseButton = btn
   }
 
-  /** Bottom-right fast-forward button: advance the creep wave clock 30s. */
+  /** Fast-forward button (right of the creep timeline): advance the wave clock 30s. */
   _buildFastForwardButton() {
     const btn = document.createElement('button')
     btn.id = 'fast-forward'
     btn.textContent = '⏩ +30s'
     Object.assign(btn.style, {
       position: 'fixed',
-      right: '20px',
-      bottom: '20px',
+      top: '9px',
+      left: 'calc(50% + 17vw + 10px)', // just right of the 34vw centered timeline
       zIndex: '600',
-      padding: '8px 18px',
-      font: '600 14px system-ui, sans-serif',
+      padding: '5px 12px',
+      font: '600 13px system-ui, sans-serif',
       color: '#fff',
       background: 'rgba(20,20,28,0.8)',
       border: '1px solid rgba(255,255,255,0.35)',

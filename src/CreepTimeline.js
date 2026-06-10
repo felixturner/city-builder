@@ -8,7 +8,7 @@
 export class CreepTimeline {
   constructor(creeps) {
     this.creeps = creeps
-    this.windowSeconds = 180 // show the next 3 minutes
+    this.windowSeconds = 60 // show the next 1 minute
     this.bars = []
     this._build()
   }
@@ -21,7 +21,7 @@ export class CreepTimeline {
       top: '14px',
       left: '50%',
       transform: 'translateX(-50%)',
-      width: '50vw',
+      width: '34vw',
       height: '18px',
       zIndex: '500',
       pointerEvents: 'none',
@@ -41,22 +41,6 @@ export class CreepTimeline {
       overflow: 'hidden',
     })
     wrap.appendChild(track)
-
-    // Minute tick labels (1m / 2m / 3m) for context.
-    for (let m = 1; m <= 3; m++) {
-      const tick = document.createElement('div')
-      tick.textContent = `${m}m`
-      Object.assign(tick.style, {
-        position: 'absolute',
-        left: `${(m / 3) * 100}%`,
-        top: '0',
-        transform: 'translateX(-50%)',
-        font: '600 9px ui-monospace, Menlo, monospace',
-        color: 'rgba(255,255,255,0.35)',
-        pointerEvents: 'none',
-      })
-      track.appendChild(tick)
-    }
 
     // "Now" marker pinned to the left edge.
     const now = document.createElement('div')
@@ -78,7 +62,7 @@ export class CreepTimeline {
         position: 'absolute',
         top: '0',
         bottom: '0',
-        background: 'linear-gradient(180deg, #ff6a3c, #c23415)',
+        background: 'rgba(255,255,255,0.85)',
         borderRadius: '2px',
         display: 'none',
       })

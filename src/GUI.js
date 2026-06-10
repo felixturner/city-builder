@@ -79,7 +79,7 @@ export class GUIManager {
     // Gameplay folder (open at start)
     const gameplayFolder = gui.addFolder('Gameplay')
     gameplayFolder.add(allParams.gameplay, 'spawnThreshold', 5, 200, 1).name('Lot Spawn Points').onChange((v) => {
-      demo.city.lotSpawnThreshold = v
+      demo.city.lotGrowth.spawnThreshold = v
     })
     gameplayFolder.add(allParams.gameplay, 'spawnCreeps').name('Creeps').onChange((v) => {
       if (demo.creeps) demo.creeps.spawnEnabled = v
@@ -135,8 +135,8 @@ export class GUIManager {
       demo.trails.generatePaths(30)
     } }, 'regenCity').name('Regen City')
     viewFolder.add({ replayBuild: () => {
-      demo.city.recalculateHeights()
-      demo.city.recalculateVisibility()
+      demo.city.generator.recalculateHeights()
+      demo.city.renderer.recalculateVisibility()
       demo.postFX.fadeOpacity.value = 0
       demo.fadeIn(1000)
       Sounds.play('intro')
@@ -175,31 +175,31 @@ export class GUIManager {
     const cityFolder = viewFolder.addFolder('City').close()
     cityFolder.add(allParams.scene, 'noiseScale', 0.005, 0.05, 0.005).name('Noise Scale').onChange((v) => {
       demo.city.noiseFrequency = v
-      demo.city.recalculateNoise()
+      demo.city.generator.recalculateNoise()
     })
     cityFolder.add(allParams.scene, 'noiseSubtract', 0, 0.5, 0.05).name('Noise Subtract').onChange((v) => {
       demo.city.noiseSubtract = v
-      demo.city.recalculateHeights()
+      demo.city.generator.recalculateHeights()
     })
     cityFolder.add(allParams.scene, 'noiseHeight', 0, 50, 1).name('Noise Height').onChange((v) => {
       demo.city.heightNoiseScale = v
-      demo.city.recalculateHeights()
+      demo.city.generator.recalculateHeights()
     })
     cityFolder.add(allParams.scene, 'randHeight', 0, 25, 1).name('Rand Height').onChange((v) => {
       demo.city.randHeightAmount = v
-      demo.city.recalculateHeights()
+      demo.city.generator.recalculateHeights()
     })
     cityFolder.add(allParams.scene, 'randHeightPower', 1, 10, 0.5).name('Rand Height Pow').onChange((v) => {
       demo.city.randHeightPower = v
-      demo.city.recalculateHeights()
+      demo.city.generator.recalculateHeights()
     })
     cityFolder.add(allParams.scene, 'centerFalloff', 0, 1, 0.05).name('Center Falloff').onChange((v) => {
       demo.city.centerFalloff = v
-      demo.city.recalculateHeights()
+      demo.city.generator.recalculateHeights()
     })
     cityFolder.add(allParams.scene, 'skipChance', 0, 1, 0.05).name('Skip Chance').onChange((v) => {
       demo.city.skipChance = v
-      demo.city.recalculateVisibility()
+      demo.city.renderer.recalculateVisibility()
     })
 
     // Lights folder

@@ -244,7 +244,7 @@ export class Creeps {
       b.mesh.rotation.z += dt * 6
       if (b.y <= 0.4) {
         const tower = this.towerAt(b.x, b.z)
-        if (tower) this.city.damageTower(tower)
+        if (tower) this.city.renderer.damageTower(tower)
         const debris = this.city.debris
         if (debris) debris.spawn(b.x, 0.5, b.z, 0.9, this._black, 10)
         Sounds.play('break2', 0.9, 0.2)
@@ -440,7 +440,7 @@ export class Creeps {
       const dist = Math.hypot(dx, dy, dz) || 1
       const step = this.shotSpeed * dt
       if (dist <= 1.0 + step) {
-        this.city.damageTower(target)
+        this.city.renderer.damageTower(target)
         this.scene.remove(s.mesh)
         this.shots.splice(i, 1)
         continue
@@ -552,7 +552,7 @@ export class Creeps {
         const pair = this.city.trails.pathTowers[lineIdx]
         if (pair) {
           const victim = pair[0].numFloors >= pair[1].numFloors ? pair[0] : pair[1]
-          this.city.damageTower(victim)
+          this.city.renderer.damageTower(victim)
         }
         continue
       }
@@ -603,7 +603,7 @@ export class Creeps {
           c.knocks++
           if (c.knocks >= this.knocksPerFloor) {
             // Big creeps hit harder (knock multiple floors).
-            for (let n = 0; n < c.knockFloors; n++) this.city.damageTower(target)
+            for (let n = 0; n < c.knockFloors; n++) this.city.renderer.damageTower(target)
             // Job done: the creep bursts into debris after landing its kill.
             this.explode(c)
             this.scene.remove(c.mesh)
