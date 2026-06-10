@@ -25,6 +25,7 @@ import { Creeps } from './Creeps.js'
 import { Turrets } from './Turrets.js'
 import { CreepTimeline } from './CreepTimeline.js'
 import { FloatingText } from './FloatingText.js'
+import { TilePalette } from './systems/TilePalette.js'
 
 export class Demo {
   static instance = null
@@ -141,6 +142,9 @@ export class Demo {
     // Floating "+N" energy captions above buildings
     this.floatingText = new FloatingText()
     this.city.floatingText = this.floatingText
+
+    // Bottom-center hand of draggable tiles to fill spawned empty slots
+    this.tilePalette = new TilePalette(this)
 
     // Peg_Top / Divot_Top towers act as turrets that shoot creeps
     this.turrets = new Turrets(this.scene, this.city, this.creeps)
@@ -312,6 +316,7 @@ export class Demo {
 
     this.creepTimeline.update()
     this.floatingText.update(this.camera, dt)
+    this.tilePalette.update(dt)
 
     // Feed turret range circles to the coverage-glow mask.
     if (!this._turretCircles) this._turretCircles = []

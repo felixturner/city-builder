@@ -79,13 +79,10 @@ export class TowerRenderer {
    * points the instances at the new geometries.
    */
   rerollTower(tower) {
-    const city = this.city
-    const mesh = city.towerMesh
-
     tower.typeTop = MathUtils.randInt(0, 5)
-    const size = tower.box.getSize(city.towerSize)
-    const w = Math.round(size.x / city.cellUnit)
-    const h = Math.round(size.y / city.cellUnit)
+    const size = tower.box.getSize(this.city.towerSize)
+    const w = Math.round(size.x / this.city.cellUnit)
+    const h = Math.round(size.y / this.city.cellUnit)
     // Footprint constraints: generators only on squares, turrets only on 1x1
     // (capped 2/lot), holes only on squares; demote violators to plain.
     if (tower.typeTop === TopType.PATH_GENERATOR && w !== h) tower.typeTop = MathUtils.randInt(0, 2)
@@ -93,8 +90,39 @@ export class TowerRenderer {
       tower.typeTop = MathUtils.randInt(0, 2)
     }
     if (tower.typeTop === TopType.ADJ_GENERATOR && w !== h) tower.typeTop = MathUtils.randInt(0, 1)
-    tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
     tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
+    this.applyTypeVisuals(tower)
+  }
+
+  /**
+   * Place a specific tile (from the palette) into an empty slot: set its type +
+   * colour, reveal it as a level-0 block, and notify. The slot footprint must
+   * already match the tile (checked by the palette).
+   */
+  placeTile(tower, typeTop, colorIndex, topColorIndex) {
+    const city = this.city
+    tower.emptyTower = false
+    tower.visible = true
+    tower.numFloors = 0
+    tower.typeTop = typeTop
+    tower.colorIndex = colorIndex
+    tower.setTopColorIndex(topColorIndex)
+    this.applyTypeVisuals(tower)
+    this.clearEmptyTowerOutline(tower)
+    city.updateTowerMatrices(tower)
+    Sounds.play('pop', 0.8, 0.15)
+    city.onTowerChanged(tower)
+  }
+
+  /**
+   * Point a tower's instances at the geometries for its current typeTop and
+   * colour it by type (path/adj generators -> accent, turret -> grey + laser
+   * colour, grey -> base/top). Shared by reroll and palette placement.
+   */
+  applyTypeVisuals(tower) {
+    const city = this.city
+    const mesh = city.towerMesh
+    tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
 
     for (const idx of tower.floorInstances) mesh.setGeometryIdAt(idx, city.geomIds[tower.typeBottom])
     mesh.setGeometryIdAt(tower.roofInstance, city.geomIds[tower.typeTop])
@@ -140,6 +168,12 @@ export class TowerRenderer {
       tower.numFloors -= 1
       city.onTowerChanged(tower)
       return tower.numFloors
+    }
+    // Destroyed: freely-placed tiles free their cell (debris already spawned
+    // above); pre-built center-lot towers become a grey-outline empty slot.
+    if (tower.placed) {
+      city.freePlacedTower(tower)
+      return 0
     }
     this.setEmptyTower(tower)
     city.onTowerChanged(tower)

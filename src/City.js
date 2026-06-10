@@ -160,41 +160,38 @@ export class City {
     this.gridOffsetX = -(this.centerLotX * this.cellSize + this.lotSize / 2)
     this.gridOffsetZ = -(this.centerLotZ * this.cellSize + this.lotSize / 2)
 
-    // Pre-generate every lot in the city so the BatchedMesh has instances for
-    // all of them. Only the central 3x3 starts "active" (visible/buildable);
-    // the rest are dormant (hidden) until the player grows into them. Spawned
-    // lots reveal their pre-baked sparse fill. Center lot is full; everything
-    // else is sparse so growth radiates from a dense core.
+    // Buildable cells per lot side (5x5 grid of 1-cell slots).
+    this.lotCells = this.lotSize / this.cellUnit
+
+    // Only the CENTER lot is pre-generated (the old varied, pre-built model).
+    // Every other lot starts as an empty grid the player fills from the tile
+    // palette via free placement (see placeTileFree). occupied[][] tracks which
+    // cells are taken; the center lot is marked fully occupied (no free-place).
     this.lots = []
     for (let lotY = 0; lotY < this.numLotsY; lotY++) {
       const row = []
       for (let lotX = 0; lotX < this.numLotsX; lotX++) {
-        const startX = lotX * this.cellSize
-        const startY = lotY * this.cellSize
-        const firstTower = this.towers.length
-
-        // Only the center lot starts active; its 8 neighbours (and everything
-        // beyond) grow in via the normal lot-spawning logic.
         const isCenter = lotX === this.centerLotX && lotY === this.centerLotZ
-        const density = isCenter ? 0.8 : 0.5
-
-        this.generator.fillLot(startX, startY, startX + this.lotSize, startY + this.lotSize, density)
-        this.generator.assignLotPlus(firstTower)
-
-        // Each lot has one of the 3 accent colors; its colored blocks (plus
-        // blocks and turrets), outline, and growth square all use it.
         const lotColorIndex = MathUtils.randInt(0, this.accentColors.length - 1)
+        const occupied = Array.from({ length: this.lotCells }, () => Array(this.lotCells).fill(isCenter))
 
-        const towers = this.towers.slice(firstTower)
-        for (const t of towers) {
-          t.lotX = lotX
-          t.lotY = lotY
-          t.colorIndex = lotColorIndex // all colored blocks match the lot
-          t.dormant = !isCenter
-          // Visible only if its lot is active AND the slot isn't an empty one.
-          t.visible = isCenter && !t.empty
+        let towers = []
+        if (isCenter) {
+          const startX = lotX * this.cellSize
+          const startY = lotY * this.cellSize
+          const firstTower = this.towers.length
+          this.generator.fillLot(startX, startY, startX + this.lotSize, startY + this.lotSize, 0.8)
+          this.generator.assignLotPlus(firstTower)
+          towers = this.towers.slice(firstTower)
+          for (const t of towers) {
+            t.lotX = lotX
+            t.lotY = lotY
+            t.colorIndex = lotColorIndex
+            t.dormant = false
+            t.visible = !t.empty
+          }
         }
-        row.push({ lotX, lotY, colorIndex: lotColorIndex, towers, active: isCenter })
+        row.push({ lotX, lotY, colorIndex: lotColorIndex, towers, active: isCenter, occupied })
       }
       this.lots.push(row)
     }
@@ -215,6 +212,108 @@ export class City {
       x: gridX + this.gridOffsetX,
       z: gridZ + this.gridOffsetZ
     }
+  }
+
+  /**
+   * Map a world-space ground point to its lot + cell (0..lotCells-1). Returns
+   * null for road gaps or out-of-bounds.
+   */
+  worldToLotCell(worldX, worldZ) {
+    const gx = worldX - this.gridOffsetX
+    const gz = worldZ - this.gridOffsetZ
+    const lotX = Math.floor(gx / this.cellSize)
+    const lotY = Math.floor(gz / this.cellSize)
+    if (lotX < 0 || lotY < 0 || lotX >= this.numLotsX || lotY >= this.numLotsY) return null
+    const inX = gx - lotX * this.cellSize
+    const inZ = gz - lotY * this.cellSize
+    if (inX > this.lotSize || inZ > this.lotSize) return null // road gap
+    return {
+      lot: this.lots[lotY][lotX],
+      cx: Math.min(this.lotCells - 1, Math.floor(inX / this.cellUnit)),
+      cy: Math.min(this.lotCells - 1, Math.floor(inZ / this.cellUnit)),
+    }
+  }
+
+  /** Whether a w×h footprint anchored at (cx,cy) fits free within a lot. */
+  fits(lot, cx, cy, w, h) {
+    if (cx < 0 || cy < 0 || cx + w > this.lotCells || cy + h > this.lotCells) return false
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        if (lot.occupied[cy + j][cx + i]) return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * Place a palette tile freely into a lot's empty cells. Grabs a pooled tower,
+   * sizes its footprint to the cells, builds it at level 0. Returns the tower or
+   * null if the pool is exhausted.
+   */
+  placeTileFree(lot, cx, cy, w, h, typeTop, colorIndex, topColorIndex) {
+    const t = this.towerPool.pop()
+    if (!t) return null
+
+    const x0 = lot.lotX * this.cellSize + cx * this.cellUnit
+    const z0 = lot.lotY * this.cellSize + cy * this.cellUnit
+    t.box.min.set(x0, z0)
+    t.box.max.set(x0 + w * this.cellUnit, z0 + h * this.cellUnit)
+    t.lotX = lot.lotX
+    t.lotY = lot.lotY
+    t.cellX = cx
+    t.cellY = cy
+    t.cellW = w
+    t.cellH = h
+    t.dormant = false
+    t.empty = false
+    t.emptyTower = false
+    t.placed = true
+    t.visible = true
+    t.numFloors = 0
+    t.rotation = 0
+    t.skipFactor = 2 // always passes visibility
+    t.colorIndex = colorIndex
+    t.typeTop = typeTop
+    t.setTopColorIndex(topColorIndex)
+
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) lot.occupied[cy + j][cx + i] = true
+    }
+    lot.towers.push(t)
+
+    this.renderer.applyTypeVisuals(t)
+    this.updateTowerMatrices(t)
+    Sounds.play('pop', 0.8, 0.15)
+    this.onTowerChanged(t)
+    return t
+  }
+
+  /** Demolish a freely-placed tower (right-click): debris + free its cells. */
+  demolishPlaced(tower) {
+    const center = tower.box.getCenter(this.towerCenter)
+    const y = Math.max(0.5, tower.numFloors - 0.5) * this.floorHeight
+    this.debris.spawn(center.x + this.gridOffsetX, y, center.y + this.gridOffsetZ, 0.8,
+      tower.litColor || tower.baseColor, 12)
+    Sounds.play('break2', 1.0, 0.2)
+    this.freePlacedTower(tower)
+  }
+
+  /** Free a placed tower's cells and return it to the pool (no debris/sound). */
+  freePlacedTower(tower) {
+    const lot = this.lots[tower.lotY][tower.lotX]
+    for (let j = 0; j < tower.cellH; j++) {
+      for (let i = 0; i < tower.cellW; i++) lot.occupied[tower.cellY + j][tower.cellX + i] = false
+    }
+    const k = lot.towers.indexOf(tower)
+    if (k >= 0) lot.towers.splice(k, 1)
+
+    tower.placed = false
+    tower.dormant = true
+    tower.visible = false
+    tower.numFloors = 0
+    this.updateTowerMatrices(tower)
+    this.towerPool.push(tower)
+    this.onTowerChanged(tower)
   }
 
   async initTowers() {
@@ -242,19 +341,17 @@ export class City {
       iCounts.push(g.index.count)
     }
 
-    // Calculate total geometry needed for all towers with max floors
+    // Geometry buffer = the unique block geometries (added once, shared by all
+    // instances). Instances (center towers + the free-placement pool) reference
+    // them by id and add no vertices.
     let totalV = 0
     let totalI = 0
-    for (let i = 0; i < this.towers.length; i++) {
-      const tower = this.towers[i]
-      // maxFloors base instances + 1 roof instance per tower
-      totalV += vCounts[tower.typeBottom] * this.maxFloors
-      totalV += vCounts[tower.typeTop]
-      totalI += iCounts[tower.typeBottom] * this.maxFloors
-      totalI += iCounts[tower.typeTop]
-    }
+    for (let i = 0; i < geoms.length; i++) { totalV += vCounts[i]; totalI += iCounts[i] }
 
-    const maxInstances = this.towers.length * (this.maxFloors + 1) + 10 // +10 for debug instances
+    // Center-lot towers + a pool of generic towers grabbed on free placement.
+    this.poolSize = 900
+    const totalTowers = this.towers.length + this.poolSize
+    const maxInstances = totalTowers * (this.maxFloors + 1) + 10
     this.towerMesh = new BatchedMesh(maxInstances, totalV, totalI, mat)
     this.towerMesh.sortObjects = false
     this.towerMesh.castShadow = true
@@ -289,6 +386,33 @@ export class City {
       this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
       this.towerMesh.setVisibleAt(tower.roofInstance, false)
       this.instanceToTower.set(tower.roofInstance, tower)
+    }
+
+    // Free-placement pool: generic hidden towers, each pre-allocated maxFloors+1
+    // instances. A tile drop grabs one (placeTileFree); demolish returns it.
+    this.towerPool = []
+    const defBottom = BlockGeometry.topToBottom.get(0)
+    for (let p = 0; p < this.poolSize; p++) {
+      const t = new Tower()
+      t.dormant = true
+      t.visible = false
+      t.placed = false
+      t.typeTop = 0
+      t.typeBottom = defBottom
+      t.floorInstances = []
+      for (let f = 0; f < this.maxFloors; f++) {
+        const idx = this.towerMesh.addInstance(geomIds[defBottom])
+        this.towerMesh.setColorAt(idx, t.baseColor)
+        this.towerMesh.setVisibleAt(idx, false)
+        t.floorInstances.push(idx)
+        this.instanceToTower.set(idx, t)
+      }
+      t.roofInstance = this.towerMesh.addInstance(geomIds[0])
+      this.towerMesh.setColorAt(t.roofInstance, t.topColor)
+      this.towerMesh.setVisibleAt(t.roofInstance, false)
+      this.instanceToTower.set(t.roofInstance, t)
+      this.towers.push(t)
+      this.towerPool.push(t)
     }
 
     console.log('Tower count:', this.towers.length, 'Max instances:', maxInstances)
@@ -448,8 +572,11 @@ export class City {
   }
 
   regenerate() {
-    // Re-randomize all tower properties and recalculate the city
+    // Re-randomize all tower properties and recalculate the city. Skip the free-
+    // placement pool (dormant) and player-placed tiles - only the pre-built
+    // center lot regenerates.
     for (const tower of this.towers) {
+      if (tower.dormant || tower.placed) continue
       tower.randFactor = MathUtils.randFloat(0, 1)
       tower.skipFactor = MathUtils.randFloat(0, 1)
       tower.colorIndex = MathUtils.randInt(0, 2)

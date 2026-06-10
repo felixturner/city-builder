@@ -123,54 +123,21 @@ export class LotGrowth {
     for (const lot of toSpawn) this.activateLot(lot)
   }
 
-  /** Reveal a dormant lot and animate its towers up from the ground. */
+  /**
+   * Activate a dormant lot. Grown lots start EMPTY (no pre-baked towers) - the
+   * player fills the 5x5 grid from the tile palette via free placement. Just
+   * reveal the outline and refresh dependent visuals.
+   */
   activateLot(lot) {
     lot.active = true
     if (lot.outline) lot.outline.visible = true
     if (lot.fillRect) lot.fillRect.visible = false
     Sounds.play('good')
-    this.animateLotBuild(lot)
-  }
 
-  /** Spawn a lot's towers at level 0, staggered from the centre outward. */
-  animateLotBuild(lot) {
     const city = this.city
-    const cx = (lot.lotX + 0.5) * city.cellSize - city.roadWidth / 2
-    const cy = (lot.lotY + 0.5) * city.cellSize - city.roadWidth / 2
-
-    const blocks = []
-    for (const t of lot.towers) {
-      t.dormant = false
-      t.numFloors = 0
-      t.visible = false // hidden until its staggered reveal (empty stays hidden)
-      if (t.empty) continue
-      const center = t.box.getCenter(new Vector2())
-      blocks.push({ tower: t, dist: Math.hypot(center.x - cx, center.y - cy) })
-    }
-    city.updateMatrices()
-
-    blocks.sort((a, b) => a.dist - b.dist)
-    const maxDist = blocks[blocks.length - 1]?.dist || 1
-    const staggerDuration = 0.7
-
-    let maxDelay = 0
-    for (const { tower, dist } of blocks) {
-      const delay = (dist / maxDist) * staggerDuration
-      maxDelay = Math.max(maxDelay, delay)
-      setTimeout(() => {
-        tower.visible = true
-        city.updateTowerMatrices(tower)
-        Sounds.play('pop', 0.9, 0.15, 0.4)
-      }, delay * 1000)
-    }
-
-    // After the lot finishes appearing, refresh visuals. Do NOT re-run
-    // trySpawnLots: a fresh lot is level-0 and would chain-spawn off its source.
-    setTimeout(() => {
-      city.energy.refresh()
-      city.rangeVisuals.updateZocCircles()
-      this.updateLotFills()
-    }, (maxDelay + 0.4) * 1000)
+    city.energy.refresh()
+    city.rangeVisuals.updateZocCircles()
+    this.updateLotFills()
   }
 
   /** Dashed square outline + grow-fill indicator for every lot. */

@@ -115,10 +115,11 @@ export class TowerInteraction {
       city.towers, () => city.onTowerChanged(tower), () => city.updateTowerVisuals())
   }
 
-  /** Click a dormant lot, else try to rebuild an empty slot, under the cursor. */
+  /** Click a dormant lot to add growth points. Empty slots are filled by the
+   *  tile palette (drag), not by clicking. */
   clickGround() {
     const p = this.pointer.scenePointer
-    if (!this.city.lotGrowth.clickLot(p.x, p.z)) this.trySpawnEmptyAt(p.x, p.z)
+    this.city.lotGrowth.clickLot(p.x, p.z)
   }
 
   /**
@@ -141,22 +142,15 @@ export class TowerInteraction {
     return true
   }
 
-  /** Click empty ground: rebuild a demolished (grey-outline) slot if hit. */
-  trySpawnEmptyAt(worldX, worldZ) {
-    const city = this.city
-    const p = new Vector2(worldX - city.gridOffsetX, worldZ - city.gridOffsetZ)
-    for (const t of city.towers) {
-      if (!t.emptyTower || !t.box.containsPoint(p)) continue
-      city.renderer.regenEmptyTower(t)
-      return true
-    }
-    return false
-  }
-
-  /** Right-click a tower to reroll it (knock down, then a timed build-wheel). */
+  /** Right-click a tower: demolish freely-placed tiles (free their cells); the
+   *  pre-built center lot still rerolls (knock down + timed build-wheel). */
   onRightClick(intersection) {
     const tower = this.towerFor(intersection)
     if (!tower || !tower.visible) return
+    if (tower.placed) {
+      this.city.demolishPlaced(tower)
+      return
+    }
     if (tower.numFloors >= 1) {
       tower.handleRightClick(this.city, this.city.floorHeight, this.city.debris,
         this.city.towers, () => this.beginReroll(tower))
