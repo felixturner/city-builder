@@ -36,6 +36,8 @@ export class Tower {
     this.skipFactor = 0 // For realtime visibility toggle
     this.colorIndex = 0 // Hover color index
     this.visible = true
+    this.empty = false // permanent inactive slot (a pre-baked gap)
+    this.emptyTower = false // demolished tower: grey floor outline, click to regen
 
 
     // Instance IDs for BatchedMesh
@@ -443,7 +445,7 @@ export class Tower {
    * @param {Tower[]} allTowers - All towers for debris collision
    * @param {Function} onComplete - Called when animation completes
    */
-  handleClick(city, floorHeight, maxFloors, debris, allTowers, onComplete) {
+  handleClick(city, floorHeight, maxFloors, debris, allTowers, onComplete, onBlockAdded) {
     const mesh = city.towerMesh
     const numFloors = this.numFloors
 
@@ -459,6 +461,10 @@ export class Tower {
     this.animateOffset(mesh, floorHeight, maxFloors, -pushAmount, 0.1, () => {
       // Increment floor count
       this.numFloors = numFloors + 1
+
+      // Refresh ZOC radius / connectors immediately so they grow with the new
+      // block right away, rather than waiting for the emerge animation to end.
+      onBlockAdded?.()
 
       // Pitch increases with floor height (0.8 at ground, 2.0 at top)
       const pitch = 0.8 + (numFloors / maxFloors) * 1.2

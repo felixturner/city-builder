@@ -23,6 +23,8 @@ import { PostFX } from './PostFX.js'
 import { Mana } from './Mana.js'
 import { Creeps } from './Creeps.js'
 import { Turrets } from './Turrets.js'
+import { CreepTimeline } from './CreepTimeline.js'
+import { FloatingText } from './FloatingText.js'
 
 export class Demo {
   static instance = null
@@ -38,6 +40,8 @@ export class Demo {
     this.scene = new Scene()
     this.pointerHandler = null
     this.clock = new Clock(false)
+    // Gameplay stays frozen until the player presses Start (see main.js).
+    this.started = false
     this.targetFPS = 60
     this.frameInterval = 1 / 60
     this.lastFrameTime = 0
@@ -94,8 +98,8 @@ export class Demo {
     // Let the city read the ground-plane pointer for empty-slot building
     this.city.pointer = this.pointerHandler
 
-    // Resource meter (mana) - clicks cost mana
-    this.mana = new Mana(50, 20)
+    // Energy/population HUD - grey blocks generate energy and raise its cap
+    this.mana = new Mana(50, 50)
     this.city.mana = this.mana
 
     await this.lighting.init()
@@ -131,13 +135,25 @@ export class Demo {
     // Enemy creeps marching in from the map edges
     this.creeps = new Creeps(this.scene, this.city)
 
-    // Peg_Top towers act as turrets that shoot creeps
+    // Incoming-wave timeline strip across the top of the screen
+    this.creepTimeline = new CreepTimeline(this.creeps)
+
+    // Floating "+N" energy captions above buildings
+    this.floatingText = new FloatingText()
+    this.city.floatingText = this.floatingText
+
+    // Peg_Top / Divot_Top towers act as turrets that shoot creeps
     this.turrets = new Turrets(this.scene, this.city, this.creeps)
+    await this.turrets.init()
 
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
     this.gui.init()
     this.gui.applyParams()
+
+    // Play/pause toggle button at the bottom of the screen
+    this._buildPauseButton()
+    this._buildFastForwardButton()
 
     this.clock.start()
 
@@ -174,7 +190,7 @@ export class Demo {
 
     // Set up perspective camera (closer position for FOV 30)
     // Initial camera position - same rotation but targeting origin
-    this.perspCamera.position.set(-36.833, 100, -25.02)
+    this.perspCamera.position.set(-22.0998, 60, -15.012)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -256,6 +272,8 @@ export class Demo {
   initStats() {
     this.stats = new Stats()
     this.stats.showPanel(0) // 0: fps, 1: ms, 2: mb
+    this.stats.dom.style.top = 'auto'
+    this.stats.dom.style.bottom = '0'
     document.body.appendChild(this.stats.dom)
   }
 
@@ -270,6 +288,8 @@ export class Demo {
     renderer.setSize(size.x, size.y)
     renderer.domElement.style.width = `${size.x}px`
     renderer.domElement.style.height = `${size.y}px`
+
+    if (this.postFX) this.postFX.resize()
   }
 
   animate() {
@@ -284,21 +304,86 @@ export class Demo {
     if (controls.target.y < 0) controls.target.y = 0
     this.lighting.updateShadowCamera(this.controls.target, this.camera, this.orthoCamera, this.perspCamera)
 
-    // Update debris physics
-    this.city.update(dt)
+    // Game systems freeze before Start and while paused; camera + rendering
+    // keep going so the scene is visible/orbitable on the start screen.
+    if (this.started && !this.paused) {
+      this.stepGame(dt)
+    }
 
-    // Update trails animation
-    this.trails.update(dt)
+    this.creepTimeline.update()
+    this.floatingText.update(this.camera, dt)
 
-    // Update enemy creeps
-    this.creeps.update(dt)
-
-    // Update turrets (fire at creeps)
-    this.turrets.update(dt)
+    // Feed turret range circles to the coverage-glow mask.
+    if (!this._turretCircles) this._turretCircles = []
+    postFX.setTurretCircles(this.city.getTurretCircles(this._turretCircles))
 
     postFX.render()
 
     this.stats.end()
+  }
+
+  /** Advance all game systems by `dt` seconds. */
+  stepGame(dt) {
+    this.city.update(dt)
+    this.trails.update(dt)
+    this.creeps.update(dt)
+    this.turrets.update(dt)
+  }
+
+  /** Floating play/pause button at the bottom-center of the screen. */
+  _buildPauseButton() {
+    this.paused = false
+    const btn = document.createElement('button')
+    btn.id = 'pause-toggle'
+    btn.textContent = '⏸ Pause'
+    Object.assign(btn.style, {
+      position: 'fixed',
+      left: '50%',
+      bottom: '20px',
+      transform: 'translateX(-50%)',
+      zIndex: '600',
+      padding: '8px 18px',
+      font: '600 14px system-ui, sans-serif',
+      color: '#fff',
+      background: 'rgba(20,20,28,0.8)',
+      border: '1px solid rgba(255,255,255,0.35)',
+      borderRadius: '999px',
+      cursor: 'pointer',
+      backdropFilter: 'blur(4px)',
+    })
+    btn.addEventListener('click', () => {
+      this.paused = !this.paused
+      btn.textContent = this.paused ? '▶ Play' : '⏸ Pause'
+    })
+    document.body.appendChild(btn)
+    this.pauseButton = btn
+  }
+
+  /** Bottom-right fast-forward button: advance the creep wave clock 30s. */
+  _buildFastForwardButton() {
+    const btn = document.createElement('button')
+    btn.id = 'fast-forward'
+    btn.textContent = '⏩ +30s'
+    Object.assign(btn.style, {
+      position: 'fixed',
+      right: '20px',
+      bottom: '20px',
+      zIndex: '600',
+      padding: '8px 18px',
+      font: '600 14px system-ui, sans-serif',
+      color: '#fff',
+      background: 'rgba(20,20,28,0.8)',
+      border: '1px solid rgba(255,255,255,0.35)',
+      borderRadius: '999px',
+      cursor: 'pointer',
+      backdropFilter: 'blur(4px)',
+    })
+    btn.addEventListener('click', () => {
+      // Jump the creep wave schedule forward 30s (no time simulation).
+      this.creeps.skipAhead(30)
+    })
+    document.body.appendChild(btn)
+    this.fastForwardButton = btn
   }
 
   exportPNG() {

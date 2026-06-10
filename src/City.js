@@ -85,6 +85,8 @@ export class City {
       return new Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(1, hsl.l + 0.2))
     })
     this.instanceToTower = new Map() // Maps instance ID to tower
+    this.turretColor = new Color(0xbbbbbb) // grey shade for turret tower blocks
+    this.emptyTowerOutlines = new Map() // tower -> grey floor-outline mesh
 
     // Floor stacking config
     this.maxFloors = 10
@@ -104,22 +106,55 @@ export class City {
     // Power-line connectors (Trails instance set by Demo).
     this.trails = null
     this.activeConnectorCount = 0
+    this.connectorMana = 0 // mana per tick from connectors (height/area weighted)
+    this.connectorContribution = new Map() // tower -> its share of connectorMana
+    // Monastery scoring: clustered plain towers swap to the Hole_Top (type 2)
+    // and earn points per adjacent monastery.
+    this.monasteryMana = 0
+    this.monasteryClusters = [] // [{members, energy, cx, cy, cz}] generating hole groups
+    this.litMonasteries = new Set() // built hole blocks that pulse-glow on the tick
+    // Scheduled per-tower generation flashes: {tower, t, amt, sound}. Each fires
+    // its glow + caption + sound together at its own offset within the cycle.
+    this.pulseEvents = []
     this.manaTimer = 0 // Accumulates toward mana generation from connectors
     this.greyManaTimer = 0 // Accumulates toward passive mana from grey blocks
 
+    // Floating "+N" energy captions (FloatingText instance set by Demo).
+    this.floatingText = null
+
     // Towers currently part of an active connector pulse to show they're live
     this.connectedTowers = new Set()
-    this.pulseEnv = 0 // flash envelope, kicked to 1 on each mana-generation tick
+    // Per-tower flash envelopes live on each tower (tower.pulseEnv), set to 1
+    // when that tower's scheduled generation event fires (see pulseEvents).
     this._pulseColor = new Color()
 
     // Lot growth: a developed lot spreads into an empty neighbour once its
     // total built height (sum of floors) crosses this threshold.
     this.lots = []
-    this.lotSpawnThreshold = 10
+    // Points (neighbours + clicks) a dormant lot needs to spawn. Tunable via GUI.
+    this.lotSpawnThreshold = 15
+    // Lots spawn on neighbour points; clicking a lot's rect adds bonus points.
+    this.lotClickValue = 5 // points added per direct click on a dormant lot
+    // When true, clicks (build/destroy/spawn) don't cost mana (GUI toggle).
+    this.freeClicks = false
+
+    // Active reroll build-wheel timers (right-click): {tower, ring, mat, t, step}.
+    this.rerollTimers = []
+    this.rerollDuration = 5 // seconds for a rerolled block to spawn
+    this.rerollSteps = 48 // discrete fill steps of the build-wheel ring
+    // Cached ring-fill geometries (step -> RingGeometry). NEVER disposed: in the
+    // WebGPU backend disposing a live geometry / swapping a mesh's .geometry
+    // triggers a setIndexBuffer crash, so we keep them and rebuild the mesh.
+    this.rerollRingGeos = new Map()
 
     // ZOC circle visuals (one translucent ring outline per visible plus block).
     this.zocCircles = new Map() // tower -> Mesh
     this.zocRingGeos = new Map() // numFloors -> RingGeometry (fixed thickness)
+    // Turret range circles (one white ring per visible turret tower). Hidden by
+    // default now that the post-process coverage gradient shows range instead.
+    this.showTurretRanges = false
+    this.rangeCircles = new Map() // tower -> Mesh
+    this.rangeRingGeos = new Map() // numFloors -> RingGeometry ((n+1) cells radius)
     this._zc = new Vector2()
   }
 
@@ -129,6 +164,7 @@ export class City {
     await this.initTowers()
     this.updateMatrices()
     this.recalculateVisibility()
+    this.refreshManaStats()
   }
 
   initGrid() {
@@ -171,20 +207,25 @@ export class City {
         // Only the center lot starts active; its 8 neighbours (and everything
         // beyond) grow in via the normal lot-spawning logic.
         const isCenter = lotX === this.centerLotX && lotY === this.centerLotZ
-        const density = isCenter ? 1 : 0.4
+        const density = isCenter ? 0.8 : 0.5
 
         this.fillLot(startX, startY, startX + this.lotSize, startY + this.lotSize, density)
         this.assignLotPlus(firstTower)
+
+        // Each lot has one of the 3 accent colors; its colored blocks (plus
+        // blocks and turrets), outline, and growth square all use it.
+        const lotColorIndex = MathUtils.randInt(0, this.accentColors.length - 1)
 
         const towers = this.towers.slice(firstTower)
         for (const t of towers) {
           t.lotX = lotX
           t.lotY = lotY
+          t.colorIndex = lotColorIndex // all colored blocks match the lot
           t.dormant = !isCenter
           // Visible only if its lot is active AND the slot isn't an empty one.
           t.visible = isCenter && !t.empty
         }
-        row.push({ lotX, lotY, towers, active: isCenter })
+        row.push({ lotX, lotY, colorIndex: lotColorIndex, towers, active: isCenter })
       }
       this.lots.push(row)
     }
@@ -193,21 +234,21 @@ export class City {
   }
 
   /**
-   * Turn exactly one tower (from index `firstTower` to the end of this.towers)
-   * into a plus block. Prefers a square-footprint tower so the cross top isn't stretched.
+   * Turn exactly one SQUARE tower into the lot's plus block (generator). Plus
+   * blocks (Cross_Top) only go on square footprints; if a lot has no square,
+   * it gets no generator.
    */
   assignLotPlus(firstTower) {
-    // Only present (non-empty) towers can be the lot's plus block.
-    const lotTowers = this.towers.slice(firstTower).filter(t => !t.empty)
-    if (lotTowers.length === 0) return
-
+    // Only present (non-empty) square towers can be the lot's plus block.
     const size = new Vector2()
-    const squares = lotTowers.filter(t => {
+    const squares = this.towers.slice(firstTower).filter(t => {
+      if (t.empty) return false
       t.box.getSize(size)
       return size.x === size.y
     })
-    const pool = squares.length > 0 ? squares : lotTowers
-    const plus = pool[MathUtils.randInt(0, pool.length - 1)]
+    if (squares.length === 0) return
+
+    const plus = squares[MathUtils.randInt(0, squares.length - 1)]
     plus.typeTop = 5 // Cross_Top
     plus.typeBottom = BlockGeometry.topToBottom.get(5)
   }
@@ -243,6 +284,7 @@ export class City {
     const squareChance = 0.5
     let px = 0
     let py = 0
+    let turretCount = 0 // cap turrets (Peg=3 / Divot=4) per lot
 
     while (py < height) {
       while (px < width) {
@@ -261,10 +303,6 @@ export class City {
 
         const tower = new Tower()
         const isSquare = MathUtils.randFloat(0, 1) < squareChance
-        // Plus blocks (type 5) are assigned exactly once per lot in initGrid
-        tower.typeTop = isSquare ? MathUtils.randInt(0, 4) : 0
-        tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
-        tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
 
         const sx = MathUtils.randInt(1, maxW)
         const sy = isSquare ? sx : MathUtils.randInt(1, Math.min(maxBlockSize.y, height - py))
@@ -274,6 +312,19 @@ export class City {
           px++
           continue
         }
+
+        // Top type: turrets (Peg=3 / Divot=4) only on 1x1 blocks; holes (2) and
+        // bigger decorative tops on any square. Plus blocks (5) set in initGrid.
+        const is1x1 = sx === 1 && sy === 1
+        let tt = isSquare ? MathUtils.randInt(0, is1x1 ? 4 : 2) : 0
+        if (tt === 3 || tt === 4) {
+          // Allow at most 2 turrets per lot; extras become plain towers.
+          if (turretCount >= 2) tt = MathUtils.randInt(0, 2)
+          else turretCount++
+        }
+        tower.typeTop = tt
+        tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
+        tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
 
         // Sparse lots: some slots start "empty" - the block size is locked in
         // here, but it's hidden until the player clicks that ground to build it.
@@ -323,9 +374,12 @@ export class City {
 
   finalizeGrid() {
     console.log('Tower count:', this.towers.length, 'instances:', this.towers.length * 2)
-    // Game start: every tower begins flat (0 floors = just the thin top block)
+    // Game start: the central lot gets procedural random heights; every other
+    // lot begins flat (0 floors = just the thin top block) until grown into.
+    // The intro animation reads numFloors as each tower's target build height.
     for (const tower of this.towers) {
-      tower.numFloors = 0
+      const isCenterLot = tower.lotX === this.centerLotX && tower.lotY === this.centerLotZ
+      tower.numFloors = isCenterLot ? this.floorsForTower(tower) : 0
     }
     this.updateMatrices()
   }
@@ -426,34 +480,62 @@ export class City {
         }
         // Apply to roof too
         this.towerMesh.setColorAt(tower.roofInstance, accentColor)
+      } else if (tower.typeTop === 2) {
+        // Hole block: whole tower the lot accent; litColor enables the glow.
+        const accent = this.accentColors[tower.colorIndex]
+        tower.litColor = accent.clone()
+        tower.baseColor = accent.clone()
+        tower.topColor = accent.clone()
+        this._setTowerColor(tower, accent)
       } else {
         tower.litColor = null
+        // Peg (3) and Divot (4) towers are turrets - give them one accent color.
+        if (tower.typeTop === 3 || tower.typeTop === 4) {
+          this.colorTurretTower(tower)
+          this._setTowerColor(tower, tower.baseColor)
+        }
       }
     }
   }
 
-  recalculateHeights() {
+  /**
+   * Turret towers keep grey blocks, but stash the lot's accent color on
+   * laserColor so the laser beam / projectiles still read colored.
+   */
+  colorTurretTower(tower) {
+    tower.laserColor = this.accentColors[tower.colorIndex].clone()
+    tower.baseColor = this.turretColor
+    tower.topColor = this.turretColor
+  }
+
+  /**
+   * Compute a tower's procedural floor count from city noise + a skewed random
+   * factor, attenuated by distance from the city center. Pure: returns the
+   * floor count without mutating the tower.
+   */
+  floorsForTower(tower) {
     const gridCenterX = this.actualGridWidth / 2
     const gridCenterY = this.actualGridHeight / 2
+    const center = tower.box.getCenter(this.towerCenter)
 
+    // Distance from center falloff using max axis distance (0 at center, 1 at any edge)
+    const dx = Math.abs(center.x - gridCenterX)
+    const dy = Math.abs(center.y - gridCenterY)
+    const normalizedDist = Math.max(dx / gridCenterX, dy / gridCenterY)
+    const distFactor = 1 - Math.pow(normalizedDist, 2) * this.centerFalloff
+
+    // Subtract from noise, clamp to 0, then cube for contrast
+    const adjustedNoise = Math.max(0, tower.cityNoiseVal - this.noiseSubtract)
+    const noiseHeight = Math.pow(adjustedNoise, 3) * this.heightNoiseScale
+    // Power > 1 skews distribution: most towers short, few tall outliers
+    const randHeight = Math.pow(tower.randFactor, this.randHeightPower) * this.randHeightAmount
+    const height = (noiseHeight + randHeight) * distFactor
+    return Math.floor(height / this.floorHeight)
+  }
+
+  recalculateHeights() {
     for (let i = 0; i < this.towers.length; i++) {
-      const tower = this.towers[i]
-      const center = tower.box.getCenter(this.towerCenter)
-
-      // Distance from center falloff using max axis distance (0 at center, 1 at any edge)
-      const dx = Math.abs(center.x - gridCenterX)
-      const dy = Math.abs(center.y - gridCenterY)
-      const normalizedDist = Math.max(dx / gridCenterX, dy / gridCenterY)
-      const distFactor = 1 - Math.pow(normalizedDist, 2) * this.centerFalloff
-
-      // Subtract from noise, clamp to 0, then cube for contrast
-      const adjustedNoise = Math.max(0, tower.cityNoiseVal - this.noiseSubtract)
-      const noiseHeight = Math.pow(adjustedNoise, 3) * this.heightNoiseScale
-      // Power > 1 skews distribution: most towers short, few tall outliers
-      const randHeight = Math.pow(tower.randFactor, this.randHeightPower) * this.randHeightAmount
-      const height = (noiseHeight + randHeight) * distFactor
-      // Floor to discrete floor count
-      tower.numFloors = Math.floor(height / this.floorHeight)
+      this.towers[i].numFloors = this.floorsForTower(this.towers[i])
     }
     this.updateMatrices()
   }
@@ -473,9 +555,11 @@ export class City {
     const debrisWasEnabled = this.debris.enabled
     this.debris.enabled = false
 
-    // 1. Store target floor counts, set all to 0
+    // 1. Store target floor counts, set all to 0. Only visible towers build;
+    //    hidden slots (empty/dormant) keep targetFloors 0 so they aren't flashed
+    //    in and then erased when updateTowerMatrices re-hides them.
     const towerData = this.towers.map(tower => {
-      const targetFloors = tower.numFloors
+      const targetFloors = tower.visible ? tower.numFloors : 0
       const center = tower.box.getCenter(new Vector2())
       const dist = Math.hypot(center.x - gridCenterX, center.y - gridCenterY)
       tower.numFloors = 0
@@ -483,13 +567,16 @@ export class City {
     })
     this.updateMatrices()
 
-    // 2. Sort by distance (center first)
+    // 2. Sort by distance (center first). Normalize the stagger against the
+    //    farthest *building* tower (not the whole-city diagonal), so the active
+    //    lot ripples across the full stagger window instead of starting at once.
     towerData.sort((a, b) => a.dist - b.dist)
-    const maxDist = towerData[towerData.length - 1]?.dist || 1
+    const building = towerData.filter(t => t.targetFloors > 0)
+    const maxDist = building[building.length - 1]?.dist || 1
 
     // 3. Animate each tower's floors with stagger
     const staggerDuration = duration * 0.85 // 85% of duration for stagger spread
-    const floorDelay = 0.12 // 120ms between floors of same tower
+    const floorDelay = 0.25 // 250ms between floors of same tower
 
     let maxDelay = 0
     towerData.forEach(({ tower, targetFloors, dist }) => {
@@ -523,10 +610,13 @@ export class City {
       }
     })
 
-    // Unmute sounds and restore debris after intro completes
+    // Unmute sounds and restore debris after intro completes. Also refresh
+    // tower visuals once so monasteries/connectors reflect the settled city
+    // (the intro builds via updateTowerMatrices, which skips that pass).
     setTimeout(() => {
       Sounds.unmute(['stone', 'tick', 'clink'])
       this.debris.enabled = debrisWasEnabled
+      this.updateTowerVisuals()
     }, (maxDelay + 1) * 1000)
 
     // 4. Camera zoom animation (angle-based distance)
@@ -711,7 +801,10 @@ export class City {
     let nearestDist = Infinity
     for (const tower of this.towers) {
       if (!tower.visible) continue
-      const top = tower.numFloors * this.floorHeight + this.floorHeight
+      // Top of the actual geometry: floors plus the roof tile's real thickness.
+      // (A 0-floor tower is just the thin roof tile, so its hit zone is short.)
+      const roofHalf = BlockGeometry.halfHeights[tower.typeTop]
+      const top = tower.numFloors * this.floorHeight + 2 * roofHalf
       this._pickBox.min.set(
         tower.box.min.x + this.gridOffsetX, 0, tower.box.min.y + this.gridOffsetZ
       )
@@ -817,12 +910,12 @@ export class City {
       if (tower && tower.visible) {
         if (this._tryBuild(tower)) {
           tower.handleClick(this, this.floorHeight, this.maxFloors, this.debris,
-            this.towers, () => this.onTowerChanged(tower))
+            this.towers, () => this.onTowerChanged(tower), () => this.updateTowerVisuals())
         }
       } else if (this.pointer) {
-        // Tapped empty ground - try to build an empty slot there.
+        // Tapped empty ground - click a dormant lot, else build an empty slot.
         const p = this.pointer.scenePointer
-        this.trySpawnEmptyAt(p.x, p.z)
+        if (!this.clickLot(p.x, p.z)) this.trySpawnEmptyAt(p.x, p.z)
       }
       return
     }
@@ -833,7 +926,7 @@ export class City {
     if (tower) {
       if (this._tryBuild(tower)) {
         tower.handleClick(this, this.floorHeight, this.maxFloors, this.debris,
-          this.towers, () => this.onTowerChanged(tower))
+          this.towers, () => this.onTowerChanged(tower), () => this.updateTowerVisuals())
       }
       return
     }
@@ -845,7 +938,7 @@ export class City {
     const dy = up.y - this.pointerDownPos.y
     if (Math.sqrt(dx * dx + dy * dy) > this.dragThreshold) return
     const p = this.pointer.scenePointer
-    this.trySpawnEmptyAt(p.x, p.z)
+    if (!this.clickLot(p.x, p.z)) this.trySpawnEmptyAt(p.x, p.z)
   }
 
   /**
@@ -854,40 +947,35 @@ export class City {
    * Returns true if the build should happen.
    */
   _tryBuild(tower) {
-    if (tower.numFloors >= this.maxFloors) return false
-    if (!this.mana) return true
-    // Power towers (plus blocks) and turrets cost 2 mana per floor; others 1.
-    const cost = (tower.typeTop === 5 || tower.typeTop === 3) ? 2 : 1
-    if (!this.mana.spend(cost)) {
-      // Out of mana: don't block the build for now, just signal it
+    if (tower.numFloors >= this.maxFloors) {
+      // Already at max height: nothing to build, signal it.
       Sounds.play('incorrect')
+      return false
+    }
+    if (!this.mana) return true
+    // Power towers (plus) and turrets (peg/laser) cost 2 per floor; else 1.
+    // Cost scales with footprint area (a 2x2 tower costs 4x a 1x1).
+    const colored = tower.typeTop === 5 || tower.typeTop === 3 || tower.typeTop === 4
+    const cost = (colored ? 2 : 1) * this.towerArea(tower)
+    if (!this.freeClicks && !this.mana.spend(cost)) {
+      // Out of mana: block the build and signal it.
+      Sounds.play('incorrect')
+      return false
     }
     return true
   }
 
   /**
-   * Try to build on an empty slot at a ground point (world coords). Finds the
-   * hidden empty tower in an active lot whose footprint contains the point and
-   * spawns it as a level-0 tower.
+   * Click on the ground: if it lands on an empty tower (a demolished tile shown
+   * as a grey outline), regenerate a new random level-0 tile there. Pre-baked
+   * empty slots are permanent gaps and are NOT clickable.
    */
   trySpawnEmptyAt(worldX, worldZ) {
     const p = new Vector2(worldX - this.gridOffsetX, worldZ - this.gridOffsetZ)
-    for (const row of this.lots) {
-      for (const lot of row) {
-        if (!lot.active) continue
-        for (const t of lot.towers) {
-          if (!t.empty || !t.box.containsPoint(p)) continue
-          // Spend mana (don't block when empty, just signal)
-          if (this.mana && !this.mana.spend(1)) Sounds.play('incorrect')
-          t.empty = false
-          t.visible = true
-          t.numFloors = 0
-          this.updateMatrices()
-          Sounds.play('pop', 0.8, 0.15)
-          this.onTowerChanged(t)
-          return true
-        }
-      }
+    for (const t of this.towers) {
+      if (!t.emptyTower || !t.box.containsPoint(p)) continue
+      this.regenEmptyTower(t)
+      return true
     }
     return false
   }
@@ -903,19 +991,69 @@ export class City {
     }
 
     if (!tower || !tower.visible) return
-    if (tower.numFloors < 1) return // nothing to destroy, no mana charged
 
-    // Destroying costs mana too (don't block when empty, just signal)
-    if (this.mana && !this.mana.spend(1)) {
-      Sounds.play('incorrect')
+    // Reroll: knock the tower down (no energy refund), then a build-wheel timer
+    // spins for `rerollDuration` seconds before a fresh random block appears.
+    if (tower.numFloors >= 1) {
+      tower.handleRightClick(this, this.floorHeight, this.debris,
+        this.towers, () => this.beginReroll(tower))
+    } else {
+      // Level-0 tower: nothing to animate, start the timer straight away.
+      this.beginReroll(tower)
     }
+  }
 
-    tower.handleRightClick(this, this.floorHeight, this.debris,
-      this.towers, () => {
-        // Once the tower has collapsed to level 0, re-roll its tile in place
-        this.rerollTower(tower)
-        this.onTowerChanged(tower)
-      })
+  /**
+   * Start a reroll: hide the tower and spin a radial build-wheel timer over its
+   * slot. When the ring fills (see update()), a new random block spawns.
+   */
+  beginReroll(tower) {
+    tower.visible = false
+    tower.numFloors = 0
+    this.updateTowerMatrices(tower)
+    this.onTowerChanged(tower)
+
+    const center = tower.box.getCenter(this.towerCenter)
+    const mat = new MeshBasicNodeMaterial({
+      color: this.accentColors[tower.colorIndex].clone(),
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false,
+    })
+    const ring = new Mesh(this.rerollRingGeoFor(0), mat)
+    ring.rotation.x = -Math.PI / 2
+    ring.position.set(center.x + this.gridOffsetX, 0.12, center.y + this.gridOffsetZ)
+    ring.renderOrder = 6
+    this.scene.add(ring)
+    this.rerollTimers.push({ tower, ring, mat, t: 0, step: 0 })
+  }
+
+  /**
+   * Cached pie-wedge annulus filled clockwise from the top for a discrete fill
+   * step (0..rerollSteps). Cached and never disposed (see rerollRingGeos).
+   */
+  rerollRingGeoFor(step) {
+    let g = this.rerollRingGeos.get(step)
+    if (!g) {
+      const inner = this.cellUnit * 0.26
+      const outer = this.cellUnit * 0.42
+      const len = Math.max(0.0001, (step / this.rerollSteps) * Math.PI * 2)
+      const start = Math.PI / 2 - len // grow clockwise from 12 o'clock
+      g = new RingGeometry(inner, outer, 48, 1, start, len)
+      this.rerollRingGeos.set(step, g)
+    }
+    return g
+  }
+
+  /** Finish a reroll: reveal the slot with a fresh random block. */
+  finishReroll(tower) {
+    tower.emptyTower = false
+    tower.visible = true
+    tower.numFloors = 0
+    this.rerollTower(tower)
+    this.updateTowerMatrices(tower)
+    Sounds.play('pop', 0.8, 0.15)
+    this.onTowerChanged(tower)
   }
 
   /**
@@ -927,9 +1065,24 @@ export class City {
     const mesh = this.towerMesh
 
     tower.typeTop = MathUtils.randInt(0, 5) // 5 = Cross_Top plus block
+    // Footprint constraints: generators (5) only on squares, turrets (3/4) only
+    // on 1x1 blocks and capped at 2 per lot. Demote violators to plain towers.
+    const size = tower.box.getSize(this.towerSize)
+    const w = Math.round(size.x / this.cellUnit)
+    const h = Math.round(size.y / this.cellUnit)
+    if (tower.typeTop === 5 && w !== h) {
+      tower.typeTop = MathUtils.randInt(0, 2)
+    }
+    if (tower.typeTop === 3 || tower.typeTop === 4) {
+      if (!(w === 1 && h === 1) || this.countLotTurrets(tower) >= 2) {
+        tower.typeTop = MathUtils.randInt(0, 2)
+      }
+    }
+    // Hole blocks (2) only on square footprints (like generators).
+    if (tower.typeTop === 2 && w !== h) tower.typeTop = MathUtils.randInt(0, 1)
     tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
     tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
-    tower.colorIndex = MathUtils.randInt(0, this.accentColors.length - 1)
+    // colorIndex stays the lot's color (set at init), so colored blocks match.
 
     // Point existing instances at the new geometries (footprint stays the same)
     for (const idx of tower.floorInstances) {
@@ -937,15 +1090,33 @@ export class City {
     }
     mesh.setGeometryIdAt(tower.roofInstance, this.geomIds[tower.typeTop])
 
-    // Plus blocks get an accent color; everything else uses base/top colors
+    // Plus blocks + hole blocks get an accent color; everything else uses base/top.
     tower.isLit = tower.typeTop === 5
     if (tower.isLit) {
       const accent = this.accentColors[tower.colorIndex]
       tower.litColor = accent.clone()
       for (const idx of tower.floorInstances) mesh.setColorAt(idx, accent)
       mesh.setColorAt(tower.roofInstance, accent)
+    } else if (tower.typeTop === 2) {
+      // Hole block: whole tower the lot accent; litColor lets it pulse-glow
+      // when it's generating (orthogonally adjacent to another hole).
+      const accent = this.accentColors[tower.colorIndex]
+      tower.litColor = accent.clone()
+      tower.baseColor = accent.clone()
+      tower.topColor = accent.clone()
+      for (const idx of tower.floorInstances) mesh.setColorAt(idx, accent)
+      mesh.setColorAt(tower.roofInstance, accent)
     } else {
       tower.litColor = null
+      if (tower.typeTop === 3 || tower.typeTop === 4) {
+        // Became a turret: assign one accent color.
+        this.colorTurretTower(tower)
+      } else {
+        // Plain tower: reset to default grey base/top colors.
+        tower.laserColor = null
+        tower.baseColor = Tower.BASE_COLOR
+        tower.topColor = Tower.COLORS[tower.topColorIndex]
+      }
       for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.baseColor)
       mesh.setColorAt(tower.roofInstance, tower.topColor)
     }
@@ -958,9 +1129,63 @@ export class City {
   onTowerChanged(tower) {
     this.updateTowerMatrices(tower)
     this.trySpawnLots()
+    this.updateTowerVisuals()
+  }
+
+  /**
+   * Refresh connector lines, ZOC circles, and lot fills (no matrix update or
+   * lot spawning). Called the instant a block is added so the radius/connections
+   * grow with the new block instead of lagging behind its emerge animation.
+   */
+  updateTowerVisuals() {
     this.updateConnectors()
+    this.updateMonasteries()
     this.updateZocCircles()
+    this.updateTurretRanges()
     this.updateLotFills()
+    this.refreshManaStats()
+  }
+
+  /**
+   * Maintain a white ring on each visible turret (peg/laser) showing its firing
+   * range (radius = (numFloors + 1) cells, matching Turrets.nearestCreep).
+   */
+  updateTurretRanges() {
+    const thickness = 0.12
+    const ringFor = (numFloors) => {
+      let g = this.rangeRingGeos.get(numFloors)
+      if (!g) {
+        const r = (numFloors + 1) * this.cellUnit
+        g = new RingGeometry(r - thickness / 2, r + thickness / 2, 64)
+        this.rangeRingGeos.set(numFloors, g)
+      }
+      return g
+    }
+    const seen = new Set()
+    for (const t of this.towers) {
+      if (!t.visible || (t.typeTop !== 3 && t.typeTop !== 4)) continue
+      seen.add(t)
+      const geo = ringFor(t.numFloors)
+      let m = this.rangeCircles.get(t)
+      if (!m || m.geometry !== geo) {
+        const mat = m ? m.material : new MeshBasicNodeMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.4,
+          depthWrite: false,
+        })
+        if (m) this.scene.remove(m)
+        m = new Mesh(geo, mat)
+        m.rotation.x = -Math.PI / 2
+        m.renderOrder = -1
+        this.scene.add(m)
+        this.rangeCircles.set(t, m)
+      }
+      t.box.getCenter(this._zc)
+      m.position.set(this._zc.x + this.gridOffsetX, 0.07, this._zc.y + this.gridOffsetZ)
+      m.visible = this.showTurretRanges
+    }
+    for (const [t, m] of this.rangeCircles) if (!seen.has(t)) m.visible = false
   }
 
   /**
@@ -1012,6 +1237,21 @@ export class City {
     for (const [t, m] of this.zocCircles) if (!seen.has(t)) m.visible = false
   }
 
+  /** World centres + range radii of every visible turret (for the coverage glow). */
+  getTurretCircles(out = []) {
+    out.length = 0
+    for (const t of this.towers) {
+      if (!t.visible || (t.typeTop !== 3 && t.typeTop !== 4)) continue
+      t.box.getCenter(this._zc)
+      out.push({
+        x: this._zc.x + this.gridOffsetX,
+        z: this._zc.y + this.gridOffsetZ,
+        r: (t.numFloors + 1) * this.cellUnit,
+      })
+    }
+    return out
+  }
+
   /** Combined built-up strength of all active orthogonal neighbours of a lot. */
   activeNeighbourStrength(lot) {
     const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]]
@@ -1026,54 +1266,312 @@ export class City {
     return sum
   }
 
+  /** Total spawn progress: neighbour points + bonus points from direct clicks. */
+  lotProgress(lot) {
+    return this.activeNeighbourStrength(lot) + (lot.clickPoints || 0)
+  }
+
+  /** True if any orthogonal neighbour lot is active. */
+  hasActiveNeighbour(lot) {
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    for (const [dx, dy] of dirs) {
+      const nx = lot.lotX + dx
+      const ny = lot.lotY + dy
+      if (nx < 0 || ny < 0 || nx >= this.numLotsX || ny >= this.numLotsY) continue
+      if (this.lots[ny][nx].active) return true
+    }
+    return false
+  }
+
   /**
-   * Fade in a yellow fill rect over each dormant lot as its built-up neighbours
-   * approach the spawn threshold, previewing where growth is about to happen.
+   * Grow a fill rect over each dormant lot as its active neighbours' combined
+   * points approach the spawn threshold; reaching full size = about to spawn.
    */
   updateLotFills() {
+    const minScale = this.cellUnit / this.lotSize
     for (const row of this.lots) {
       for (const lot of row) {
         if (!lot.fillRect) continue
         if (lot.active) { lot.fillRect.visible = false; continue }
-        const p = Math.min(1, this.activeNeighbourStrength(lot) / this.lotSpawnThreshold)
+        const p = Math.min(1, this.lotProgress(lot) / this.lotSpawnThreshold)
         lot.fillRect.visible = p > 0
-        lot.fillRect.material.opacity = 0.2 * p
+        if (lot.outline) lot.outline.visible = p > 0
+        const s = minScale + (1 - minScale) * p
+        lot.fillRect.scale.set(s, 1, s)
+        lot.fillRect.material.opacity = 0.8
       }
     }
   }
 
-  /** Knock a tower down one floor (creep attack). Returns the new floor count. */
+  /**
+   * Click on a dormant lot's rect to add bonus spawn points (on top of its
+   * neighbour points). Spawns once total progress crosses the threshold.
+   * Returns true if the click landed on an eligible lot.
+   */
+  clickLot(worldX, worldZ) {
+    const gx = worldX - this.gridOffsetX
+    const gz = worldZ - this.gridOffsetZ
+    const lotX = Math.floor(gx / this.cellSize)
+    const lotY = Math.floor(gz / this.cellSize)
+    if (lotX < 0 || lotY < 0 || lotX >= this.numLotsX || lotY >= this.numLotsY) return false
+    // Ignore clicks that land in the road gap between lots.
+    const inLotX = gx - lotX * this.cellSize
+    const inLotZ = gz - lotY * this.cellSize
+    if (inLotX > this.lotSize || inLotZ > this.lotSize) return false
+
+    const lot = this.lots[lotY][lotX]
+    if (lot.active || !this.hasActiveNeighbour(lot)) return false
+
+    // Each click costs 1 mana; out of mana - block and signal (consume click).
+    if (!this.freeClicks && this.mana && !this.mana.spend(1)) {
+      Sounds.play('incorrect')
+      return true
+    }
+
+    lot.clickPoints = (lot.clickPoints || 0) + this.lotClickValue
+    Sounds.play('clink', 1.0, 0.1, 0.7)
+    if (this.lotProgress(lot) >= this.lotSpawnThreshold) {
+      this.activateLot(lot)
+    } else {
+      this.updateLotFills()
+    }
+    return true
+  }
+
+  /**
+   * Knock a tower down. Removes one floor, or - if it's already a level-0 tower
+   * (just the thin block) - destroys it into an empty tower. Returns new floors.
+   */
   damageTower(tower) {
-    if (!tower || !tower.visible || tower.numFloors < 1) return 0
+    if (!tower || !tower.visible || tower.emptyTower) return 0
 
     // Burst the top block into debris where it sat.
     const center = tower.box.getCenter(this.towerCenter)
-    const y = (tower.numFloors - 0.5) * this.floorHeight
+    const y = Math.max(0.5, tower.numFloors - 0.5) * this.floorHeight
     const color = tower.litColor || tower.baseColor
     this.debris.spawn(
       center.x + this.gridOffsetX, y, center.y + this.gridOffsetZ, 0.8, color, 10
     )
-
-    tower.numFloors -= 1
     Sounds.play('break2', 1.0, 0.2)
+
+    if (tower.numFloors >= 1) {
+      tower.numFloors -= 1
+      this.onTowerChanged(tower)
+      return tower.numFloors
+    }
+    // Level-0 tower destroyed -> empty tower (grey outline).
+    this.setEmptyTower(tower)
     this.onTowerChanged(tower)
-    return tower.numFloors
+    return 0
   }
 
-  /** Count visible grey blocks: regular unlit towers (not plus blocks). */
-  countGreyBlocks() {
+  /** Convert a tower into an empty tower: all blocks gone, grey floor outline. */
+  setEmptyTower(tower) {
+    tower.emptyTower = true
+    tower.numFloors = 0
+    tower.visible = false
+    this.updateTowerMatrices(tower) // hides every instance
+    this.showEmptyTowerOutline(tower)
+  }
+
+  /** Click an empty tower to regenerate a new random level-0 tile in its spot. */
+  regenEmptyTower(tower) {
+    tower.emptyTower = false
+    tower.visible = true
+    tower.numFloors = 0
+    this.rerollTower(tower) // new random top (turret/generator/etc), colors, geom
+    this.clearEmptyTowerOutline(tower)
+    this.updateTowerMatrices(tower)
+    Sounds.play('pop', 0.8, 0.15)
+    this.onTowerChanged(tower)
+  }
+
+  /** Show (building lazily) the grey floor outline for an empty tower. */
+  showEmptyTowerOutline(tower) {
+    let o = this.emptyTowerOutlines.get(tower)
+    if (!o) {
+      // LineSegments (not LineLoop) - LineLoop doesn't render in this WebGPU
+      // build; the lot outlines use LineSegments and show fine.
+      if (!this.emptyTowerMat) {
+        this.emptyTowerMat = new LineBasicNodeMaterial({
+          color: 0xffffff, depthTest: false,
+        })
+      }
+      const x0 = tower.box.min.x + this.gridOffsetX
+      const z0 = tower.box.min.y + this.gridOffsetZ
+      const x1 = tower.box.max.x + this.gridOffsetX
+      const z1 = tower.box.max.y + this.gridOffsetZ
+      const y = 0.08
+      const geom = new BufferGeometry()
+      geom.setAttribute('position', new Float32BufferAttribute([
+        x0, y, z0, x1, y, z0,
+        x1, y, z0, x1, y, z1,
+        x1, y, z1, x0, y, z1,
+        x0, y, z1, x0, y, z0,
+      ], 3))
+      o = new LineSegments(geom, this.emptyTowerMat)
+      o.renderOrder = 3
+      this.scene.add(o)
+      this.emptyTowerOutlines.set(tower, o)
+    }
+    o.visible = true
+  }
+
+  /** Hide an empty tower's floor outline. */
+  clearEmptyTowerOutline(tower) {
+    const o = this.emptyTowerOutlines.get(tower)
+    if (o) o.visible = false
+  }
+
+  /** Count turret towers (peg/divot) in a tower's lot, excluding itself. */
+  countLotTurrets(tower) {
+    const lot = this.lots?.[tower.lotY]?.[tower.lotX]
+    if (!lot) return 0
     let n = 0
-    for (const t of this.towers) {
-      if (t.visible && t.numFloors >= 1 && t.typeTop !== 5) n++
+    for (const t of lot.towers) {
+      if (t === tower) continue
+      if (t.typeTop === 3 || t.typeTop === 4) n++
     }
     return n
   }
 
-  /** Total built height of a lot (sum of floors across its visible towers). */
+  /** True if a tower is a grey block (regular - not a generator, turret, or monastery). */
+  isGreyTower(t) {
+    return t.typeTop !== 5 && t.typeTop !== 3 && t.typeTop !== 4 && t.typeTop !== 2
+  }
+
+  /**
+   * Orthogonal (edge-sharing) adjacency only - excludes diagonal corner touches.
+   * Two boxes share an edge when they touch on one axis and overlap on the other.
+   */
+  towersOrthAdjacent(a, b, tol) {
+    const ba = a.box, bb = b.box
+    const sepX = Math.max(bb.min.x - ba.max.x, ba.min.x - bb.max.x) // >0 apart, <0 overlap
+    const sepZ = Math.max(bb.min.y - ba.max.y, ba.min.y - bb.max.y)
+    const closeX = sepX <= tol, closeZ = sepZ <= tol
+    const overlapX = sepX < -tol, overlapZ = sepZ < -tol
+    return (overlapX && closeZ) || (overlapZ && closeX)
+  }
+
+  /**
+   * Hole blocks (typeTop 2, spawned randomly like any block) generate energy
+   * only in clusters: a connected group of orthogonally-adjacent holes is one
+   * unit that generates a single summed energy (1 per built member) and whose
+   * members pulse-glow together. A hole with no orthogonal hole neighbour pays
+   * nothing.
+   */
+  updateMonasteries() {
+    const tol = this.cellUnit * 0.5
+    const clusters = [] // {members, energy, cx, cy, cz}
+    const lit = new Set()     // built hole blocks that pulse-glow
+    let mana = 0
+
+    for (const row of this.lots) {
+      for (const lot of row) {
+        if (!lot.active) continue
+        const holes = lot.towers.filter(t => t.visible && t.typeTop === 2)
+        // Reset every hole to static accent; the per-frame pulse re-brightens
+        // only the generating ones, so a hole that stops generating doesn't
+        // freeze at its last pulsed brightness.
+        for (const t of holes) this._setTowerColor(t, this.accentColors[t.colorIndex])
+        if (holes.length < 2) continue
+
+        const visited = new Set()
+        for (const start of holes) {
+          if (visited.has(start)) continue
+          const stack = [start]
+          visited.add(start)
+          const cluster = []
+          while (stack.length) {
+            const cur = stack.pop()
+            cluster.push(cur)
+            for (const o of holes) {
+              if (!visited.has(o) && this.towersOrthAdjacent(cur, o, tol)) {
+                visited.add(o)
+                stack.push(o)
+              }
+            }
+          }
+
+          // Cluster of >= 2 (orthogonally adjacent) generates; energy = 1 per
+          // built member, summed. EVERY hole in the group (built + flat) pulses
+          // together, and a single "+N" caption pops at the centre of the group.
+          if (cluster.length < 2) continue
+          let energy = 0, sx = 0, sz = 0, topY = 0
+          for (const m of cluster) {
+            if (m.numFloors >= 1) energy++ // only built members produce energy
+            const c = m.box.getCenter(this.towerCenter)
+            sx += c.x + this.gridOffsetX
+            sz += c.y + this.gridOffsetZ
+            const roofHalf = BlockGeometry.halfHeights[m.typeTop]
+            topY = Math.max(topY, m.numFloors * this.floorHeight + 2 * roofHalf)
+          }
+          if (energy > 0) {
+            mana += energy
+            for (const m of cluster) lit.add(m) // whole group glows together
+            clusters.push({
+              members: cluster.slice(), energy,
+              cx: sx / cluster.length, cy: topY + 0.5, cz: sz / cluster.length,
+            })
+          }
+        }
+      }
+    }
+    this.monasteryMana = mana
+    this.monasteryClusters = clusters
+    this.litMonasteries = lit
+  }
+
+  /** Total grey blocks = sum of heights over visible grey towers. */
+  countGreyBlocks() {
+    let n = 0
+    for (const t of this.towers) {
+      if (!t.visible || t.numFloors < 1 || !this.isGreyTower(t)) continue
+      n += t.numFloors
+    }
+    return n
+  }
+
+  /** Push the current grey-block totals to the energy/population HUD. */
+  refreshManaStats() {
+    if (this.mana) this.mana.setStats(this.countGreyBlocks())
+  }
+
+  /** Float a "+N" caption at a world position. */
+  spawnTextAt(x, y, z, text, color, sound, delay = 0) {
+    if (!this.floatingText) return
+    const css = color && color.getHexString ? `#${color.getHexString()}` : color
+    this.floatingText.spawn(x, y, z, text, css, delay, sound)
+  }
+
+  /**
+   * Float a "+N" caption rising from the top of a tower. `delay` staggers the
+   * pop-in (default random spread); pass 0 to sync exactly with the tick/glow.
+   */
+  spawnTowerText(tower, text, color, sound = 'pluck', delay = Math.random()) {
+    const c = tower.box.getCenter(this.towerCenter)
+    const roofHalf = BlockGeometry.halfHeights[tower.typeTop]
+    const topY = tower.numFloors * this.floorHeight + 2 * roofHalf
+    this.spawnTextAt(c.x + this.gridOffsetX, topY + 0.5, c.y + this.gridOffsetZ, text, color, sound, delay)
+  }
+
+  /** Footprint area of a tower in cells (1x1 = 1, 2x2 = 4, etc). */
+  towerArea(tower) {
+    const size = tower.box.getSize(this.towerSize)
+    return Math.max(1, Math.round((size.x / this.cellUnit) * (size.y / this.cellUnit)))
+  }
+
+  /**
+   * Lot "points" for neighbour spawning = sum over GREY towers of
+   * height * footprint area (generators and turrets don't count).
+   */
   lotStrength(lot) {
-    let s = 0
-    for (const t of lot.towers) if (t.visible) s += t.numFloors
-    return s
+    let pts = 0
+    for (const t of lot.towers) {
+      if (!t.visible || t.numFloors < 1 || !this.isGreyTower(t)) continue
+      pts += t.numFloors * this.towerArea(t)
+    }
+    return pts
   }
 
   /** Empty (un-spawned) orthogonal neighbour lots of the given lot. */
@@ -1100,88 +1598,74 @@ export class City {
   }
 
   /**
-   * Staggered rise-from-ground build for one lot's towers, mirroring the intro
-   * animation: each tower gets a small random target height, starts at 0, and
-   * its floors pop up in sequence, ordered from the lot centre outward.
+   * Spawn a lot's towers at level 0, staggering each block in (centre outward)
+   * so the lot pops into existence one block at a time instead of all at once.
    */
   animateLotBuild(lot) {
     const cx = (lot.lotX + 0.5) * this.cellSize - this.roadWidth / 2
     const cy = (lot.lotY + 0.5) * this.cellSize - this.roadWidth / 2
 
-    const builds = []
+    const blocks = []
     for (const t of lot.towers) {
       t.dormant = false
-      t.visible = !t.empty // empty slots stay hidden until clicked
       t.numFloors = 0
+      t.visible = false // hidden until its staggered reveal (empty stays hidden)
       if (t.empty) continue
-      const target = MathUtils.randInt(1, 4)
       const center = t.box.getCenter(new Vector2())
       const dist = Math.hypot(center.x - cx, center.y - cy)
-      builds.push({ tower: t, target, dist })
+      blocks.push({ tower: t, dist })
     }
     this.updateMatrices()
 
-    builds.sort((a, b) => a.dist - b.dist)
-    const maxDist = builds[builds.length - 1]?.dist || 1
-    const staggerDuration = 0.6
-    const floorDelay = 0.1
+    blocks.sort((a, b) => a.dist - b.dist)
+    const maxDist = blocks[blocks.length - 1]?.dist || 1
+    const staggerDuration = 0.7
 
     let maxDelay = 0
-    for (const { tower, target, dist } of builds) {
-      const staggerDelay = (dist / maxDist) * staggerDuration
-      const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
-      const newFloorColor = Tower.lightenColor(baseColor)
-      for (let f = 0; f < target; f++) {
-        const delay = staggerDelay + f * floorDelay
-        maxDelay = Math.max(maxDelay, delay)
-        setTimeout(() => {
-          tower.numFloors = f + 1
-          const pitch = 0.8 + (f / this.maxFloors) * 1.2
-          Sounds.play('pop', pitch, 0.15, 0.4)
-          tower.animateNewFloor(
-            this.towerMesh,
-            this.floorHeight,
-            f,
-            newFloorColor,
-            () => this.updateTowerMatrices(tower),
-            null // no debris during the grow-in
-          )
-        }, delay * 1000)
-      }
+    for (const { tower, dist } of blocks) {
+      const delay = (dist / maxDist) * staggerDuration
+      maxDelay = Math.max(maxDelay, delay)
+      setTimeout(() => {
+        tower.visible = true
+        this.updateTowerMatrices(tower)
+        Sounds.play('pop', 0.9, 0.15, 0.4)
+      }, delay * 1000)
     }
 
-    // Once the lot has finished rising, refresh connectors/ZOC/fills and let
-    // growth cascade into the next dormant neighbour.
+    // Once the lot has finished appearing, refresh connectors/ZOC/fills. We do
+    // NOT re-run trySpawnLots here: a fresh lot is all level-0 (0 strength), and
+    // re-triggering off the still-strong source lot would chain-spawn lots.
     setTimeout(() => {
       this.updateConnectors()
+      this.updateMonasteries()
       this.updateZocCircles()
       this.updateLotFills()
-      this.trySpawnLots()
     }, (maxDelay + 0.4) * 1000)
   }
 
   /**
    * Empty-lot pull: each dormant lot looks at its neighbours, and activates
-   * itself once an adjacent active lot crosses the strength threshold. This is
-   * deterministic/directional - growth follows where you've actually built up,
-   * instead of an active lot pushing into a random neighbour. One spawn per
-   * change event so growth stays gradual.
+   * itself once an adjacent active lot's combined points cross the threshold.
+   * One spawn per change event so growth stays gradual.
    */
   trySpawnLots() {
     if (!this.lots.length) return
+    // Collect every eligible dormant lot first, then activate them - so a full
+    // rect never stalls waiting for the next change (a fresh lot is level 0, so
+    // activating it doesn't retroactively push its neighbours over threshold).
+    const toSpawn = []
     for (const row of this.lots) {
       for (const lot of row) {
         if (lot.active) continue // only empty lots pull
-        if (!this.hasStrongActiveNeighbour(lot)) continue
-        this.activateLot(lot)
-        return
+        if (this.hasStrongActiveNeighbour(lot)) toSpawn.push(lot)
       }
     }
+    for (const lot of toSpawn) this.activateLot(lot)
   }
 
-  /** True if the combined active-neighbour strength is over the spawn threshold. */
+  /** True if the lot's total progress (neighbours + clicks) is over threshold. */
   hasStrongActiveNeighbour(lot) {
-    return this.activeNeighbourStrength(lot) >= this.lotSpawnThreshold
+    return this.lotProgress(lot) >= this.lotSpawnThreshold
   }
 
   /**
@@ -1214,6 +1698,21 @@ export class City {
     }
 
     this.activeConnectorCount = pairs.length
+
+    // Mana per generation tick = sum over connectors of both plus towers'
+    // points (height * footprint area, so a 2x2 tower yields 4x a 1x1). Also
+    // attribute each tower's share so we can float "+N" above it on each tick.
+    let mana = 0
+    const contrib = new Map()
+    for (const [a, b] of pairs) {
+      const pa = a.numFloors * this.towerArea(a)
+      const pb = b.numFloors * this.towerArea(b)
+      mana += pa + pb
+      contrib.set(a, (contrib.get(a) || 0) + pa)
+      contrib.set(b, (contrib.get(b) || 0) + pb)
+    }
+    this.connectorMana = mana
+    this.connectorContribution = contrib
 
     // Build a stable signature of the connector set. Rebuilding the trail meshes
     // every tower change leaks (disposed WebGPU node materials aren't fully
@@ -1268,15 +1767,75 @@ export class City {
   update(dt) {
     this.debris.update(dt)
 
-    // Each active connector generates 1 mana every 2 seconds. Each generation
-    // tick (which plays the pluck sound) also kicks the pulse envelope to 1 so
-    // the tower flash stays in sync with the sound.
-    if (this.activeConnectorCount > 0 && this.mana) {
+    // Advance reroll build-wheels; fill the ring clockwise, spawn on completion.
+    for (let i = this.rerollTimers.length - 1; i >= 0; i--) {
+      const rt = this.rerollTimers[i]
+      rt.t += dt
+      const p = Math.min(1, rt.t / this.rerollDuration)
+      // Swap to the next cached fill geometry by REBUILDING the mesh (never swap
+      // .geometry on a live mesh or dispose it -> WebGPU setIndexBuffer crash).
+      const step = Math.min(this.rerollSteps, Math.floor(p * this.rerollSteps))
+      if (step !== rt.step) {
+        rt.step = step
+        const old = rt.ring
+        const ring = new Mesh(this.rerollRingGeoFor(step), rt.mat)
+        ring.rotation.copy(old.rotation)
+        ring.position.copy(old.position)
+        ring.renderOrder = old.renderOrder
+        this.scene.add(ring)
+        this.scene.remove(old)
+        rt.ring = ring
+      }
+      if (p >= 1) {
+        this.scene.remove(rt.ring)
+        this.rerollTimers.splice(i, 1)
+        this.finishReroll(rt.tower)
+      }
+    }
+
+    // Each active connector/monastery generates mana every 2 seconds. Rather
+    // than flashing everything at once, schedule each tower's flash at its own
+    // random offset within the cycle; when it fires, its glow + caption + sound
+    // all happen together (see the firing loop below).
+    const genMana = this.connectorMana + this.monasteryMana
+    if (genMana > 0 && this.mana) {
       this.manaTimer += dt
       while (this.manaTimer >= 2) {
         this.manaTimer -= 2
-        this.mana.add(this.activeConnectorCount)
-        this.pulseEnv = 1
+        this.mana.add(genMana)
+        // Generators: each flashes itself, caption above its own top.
+        for (const [tower, amt] of this.connectorContribution) {
+          if (amt > 0 && tower.visible) {
+            const c = tower.box.getCenter(this.towerCenter)
+            const roofHalf = BlockGeometry.halfHeights[tower.typeTop]
+            const topY = tower.numFloors * this.floorHeight + 2 * roofHalf
+            this.pulseEvents.push({
+              members: [tower], t: Math.random(), amt, sound: 'pluck',
+              color: this.accentColors[tower.colorIndex],
+              cx: c.x + this.gridOffsetX, cy: topY + 0.5, cz: c.y + this.gridOffsetZ,
+            })
+          }
+        }
+        // Hole clusters: the whole group flashes together, caption at its centre.
+        for (const cl of this.monasteryClusters) {
+          this.pulseEvents.push({
+            members: cl.members, t: Math.random(), amt: cl.energy, sound: 'dink',
+            color: this.accentColors[cl.members[0].colorIndex],
+            cx: cl.cx, cy: cl.cy, cz: cl.cz,
+          })
+        }
+      }
+    }
+
+    // Fire scheduled flashes: glow (per-tower envelope), caption, and sound all
+    // trigger together at the moment the event's offset elapses.
+    for (let i = this.pulseEvents.length - 1; i >= 0; i--) {
+      const e = this.pulseEvents[i]
+      e.t -= dt
+      if (e.t <= 0) {
+        for (const m of e.members) if (m.visible) m.pulseEnv = 1
+        this.spawnTextAt(e.cx, e.cy, e.cz, `+${e.amt}`, e.color, e.sound)
+        this.pulseEvents.splice(i, 1)
       }
     }
 
@@ -1287,20 +1846,32 @@ export class City {
         this.greyManaTimer -= 10
         const n = this.countGreyBlocks()
         if (n > 0) this.mana.add(n)
+        // Float "+height" above each grey block, each offset by a random amount
+        // up to the full 10s interval so they spread out across the whole cycle
+        // instead of all popping right after the tick.
+        for (const t of this.towers) {
+          if (!t.visible || t.numFloors < 1 || !this.isGreyTower(t)) continue
+          this.spawnTowerText(t, `+${t.numFloors}`, '#dfe6ff', 'pluck', Math.random() * 10)
+        }
       }
     }
 
-    // Pulse the brightness of connected towers, driven by the flash envelope
-    // (sharp attack on the mana tick, then decays out before the next one).
-    if (this.connectedTowers.size > 0) {
-      this.pulseEnv = Math.max(0, this.pulseEnv - dt / 0.8) // decay over ~0.8s
-      const brightness = 0.7 + this.pulseEnv * 0.7 // 0.7..1.4
-      for (const tower of this.connectedTowers) {
-        if (!tower.litColor) continue
-        this._pulseColor.copy(tower.litColor).multiplyScalar(brightness)
-        this._setTowerColor(tower, this._pulseColor)
-      }
+    // Brightness of connected towers + lit monasteries, driven by each tower's
+    // OWN flash envelope (set to 1 when its scheduled event fires, decaying back
+    // to the 0.7 baseline) so flashes stagger with their captions/sounds.
+    if (this.connectedTowers.size > 0 || this.litMonasteries.size > 0) {
+      for (const tower of this.connectedTowers) this._pulseTower(tower, dt)
+      for (const tower of this.litMonasteries) this._pulseTower(tower, dt)
     }
+  }
+
+  /** Decay a tower's flash envelope and apply its pulsed brightness. */
+  _pulseTower(tower, dt) {
+    if (!tower.litColor) return
+    tower.pulseEnv = Math.max(0, (tower.pulseEnv || 0) - dt / 0.8) // decay ~0.8s
+    const brightness = 0.7 + tower.pulseEnv * 0.7 // 0.7..1.4
+    this._pulseColor.copy(tower.litColor).multiplyScalar(brightness)
+    this._setTowerColor(tower, this._pulseColor)
   }
 
   /**
@@ -1308,6 +1879,16 @@ export class City {
    */
   updateTowerMatrices(tower) {
     const { dummy, towerMesh } = this
+
+    // Hidden tower: hide all of its instances (floors + roof) and bail.
+    if (tower.visible === false) {
+      for (let f = 0; f < this.maxFloors; f++) {
+        towerMesh.setVisibleAt(tower.floorInstances[f], false)
+      }
+      towerMesh.setVisibleAt(tower.roofInstance, false)
+      return
+    }
+
     const center = tower.box.getCenter(this.towerCenter)
     const size = tower.box.getSize(this.towerSize)
     const numFloors = tower.numFloors
@@ -1330,7 +1911,10 @@ export class City {
       }
     }
 
-    // Skip roof update if animation is in progress (roof is being controlled by GSAP)
+    // A visible tower always shows its roof (even at level 0, roof-only).
+    towerMesh.setVisibleAt(tower.roofInstance, true)
+
+    // Skip roof matrix if animation is in progress (roof controlled by GSAP)
     if (tower.roofAnimating) return
 
     // Roof on top
@@ -1413,9 +1997,19 @@ export class City {
       }
     }
 
-    // One outline per lot so it can be shown only when the lot becomes active.
-    this.lotOutlineMat = new LineBasicNodeMaterial({ color: 0xffe000 })
-    this.lotFillGeo = new PlaneGeometry(this.lotSize, this.lotSize)
+    // One line material per accent color; each lot uses its own color.
+    this.lotOutlineMats = this.accentColors.map(c => new LineBasicNodeMaterial({ color: c.clone() }))
+
+    // Dashed square (centered at origin, XZ plane) for the neighbour-progress
+    // indicator. Same dash style as the lot outline; scaled per-lot by progress.
+    const half = this.lotSize / 2
+    const fillPositions = []
+    dashEdge(fillPositions, -half, -half, half, -half)
+    dashEdge(fillPositions, half, -half, half, half)
+    dashEdge(fillPositions, half, half, -half, half)
+    dashEdge(fillPositions, -half, half, -half, -half)
+    this.lotFillGeo = new BufferGeometry()
+    this.lotFillGeo.setAttribute('position', new Float32BufferAttribute(fillPositions, 3))
     for (let lotY = 0; lotY < this.numLotsY; lotY++) {
       for (let lotX = 0; lotX < this.numLotsX; lotX++) {
         const gx0 = lotX * this.cellSize
@@ -1428,24 +2022,23 @@ export class City {
         dashEdge(positions, b.x, b.z, a.x, b.z)
         dashEdge(positions, a.x, b.z, a.x, a.z)
 
+        const lot = this.lots[lotY][lotX]
         const geom = new BufferGeometry()
         geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
-        const outline = new LineSegments(geom, this.lotOutlineMat)
-        const lot = this.lots[lotY][lotX]
+        const outline = new LineSegments(geom, this.lotOutlineMats[lot.colorIndex])
         outline.visible = lot.active
         lot.outline = outline
         this.scene.add(outline)
 
-        // Yellow fill rect that fades in as neighbours build up (dormant lots).
+        // Dashed line square (lot color) that grows as neighbours build up.
         const center = this.gridToWorld(gx0 + this.lotSize / 2, gz0 + this.lotSize / 2)
-        const fillMat = new MeshBasicNodeMaterial({
-          color: 0xffe000,
+        const fillMat = new LineBasicNodeMaterial({
+          color: this.accentColors[lot.colorIndex].clone(),
           transparent: true,
           opacity: 0,
           depthWrite: false,
         })
-        const fillRect = new Mesh(this.lotFillGeo, fillMat)
-        fillRect.rotation.x = -Math.PI / 2
+        const fillRect = new LineSegments(this.lotFillGeo, fillMat)
         fillRect.position.set(center.x, 0.03, center.z)
         fillRect.renderOrder = -2
         fillRect.visible = false
@@ -1456,6 +2049,7 @@ export class City {
 
     // Seed the initial state for the starting (center) lot.
     this.updateZocCircles()
+    this.updateTurretRanges()
     this.updateLotFills()
   }
 }

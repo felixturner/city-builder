@@ -10,6 +10,11 @@ export class GUIManager {
 
   // Default params - single source of truth
   static defaultParams = {
+    gameplay: {
+      spawnThreshold: 15,
+      spawnCreeps: true,
+      freeClicks: false,
+    },
     camera: {
       perspective: true,
       fov: 20,
@@ -66,56 +71,70 @@ export class GUIManager {
   init() {
     const { demo } = this
     const gui = new GUI()
-    gui.close() // collapsed at start
     this.gui = gui
 
     // Store params on demo for single source of truth
     const allParams = demo.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
 
-    // Top-level controls (no folder)
-    gui.add(allParams.camera, 'perspective').name('Perspective Cam').onChange((v) => {
+    // Gameplay folder (open at start)
+    const gameplayFolder = gui.addFolder('Gameplay')
+    gameplayFolder.add(allParams.gameplay, 'spawnThreshold', 5, 200, 1).name('Lot Spawn Points').onChange((v) => {
+      demo.city.lotSpawnThreshold = v
+    })
+    gameplayFolder.add(allParams.gameplay, 'spawnCreeps').name('Creeps').onChange((v) => {
+      if (demo.creeps) demo.creeps.spawnEnabled = v
+    })
+    gameplayFolder.add(allParams.gameplay, 'freeClicks').name('Free Clicks').onChange((v) => {
+      demo.city.freeClicks = v
+    })
+
+    // View folder holds all rendering/debug controls (collapsed at start)
+    const viewFolder = gui.addFolder('View').close()
+
+    // Top-level controls (now under View)
+    viewFolder.add(allParams.camera, 'perspective').name('Perspective Cam').onChange((v) => {
       demo.switchCamera(v)
     })
-    this.fovController = gui.add(allParams.camera, 'fov', 20, 90, 1).name('FOV').onChange((v) => {
+    this.fovController = viewFolder.add(allParams.camera, 'fov', 20, 90, 1).name('FOV').onChange((v) => {
       demo.perspCamera.fov = v
       demo.perspCamera.updateProjectionMatrix()
     })
 
     // Debug view
     const viewMap = { final: 0, color: 1, depth: 2, normal: 3, ao: 4 }
-    gui.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
+    viewFolder.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
       demo.debugView.value = viewMap[v]
     })
 
     // Visual toggles at top level
-    gui.add(allParams.fx, 'trails').name('Trails').onChange((v) => {
+    viewFolder.add(allParams.fx, 'trails').name('Trails').onChange((v) => {
       if (demo.trails && demo.trails.meshes) {
         for (const mesh of demo.trails.meshes) mesh.visible = v
       }
     })
-    gui.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
+    viewFolder.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
       if (demo.dotMesh) demo.dotMesh.visible = v
     })
-    gui.add(allParams.fx, 'debris').name('Debris').onChange((v) => {
+    viewFolder.add(allParams.fx, 'debris').name('Debris').onChange((v) => {
       if (demo.city.debris) demo.city.debris.enabled = v
     })
-    gui.add(allParams.debug, 'originHelper').name('Origin Helper').onChange((v) => {
+    viewFolder.add(allParams.debug, 'originHelper').name('Origin Helper').onChange((v) => {
       if (demo.axesHelper) demo.axesHelper.visible = v
     })
 
     // DPR dropdown (default 1)
     allParams.renderer.dpr = 1
-    gui.add(allParams.renderer, 'dpr', [1, 1.5, 2]).name('DPR').onChange((v) => {
+    viewFolder.add(allParams.renderer, 'dpr', [1, 1.5, 2]).name('DPR').onChange((v) => {
       demo.renderer.setPixelRatio(v)
       demo.onResize()
     })
 
     // Action buttons
-    gui.add({ regenCity: () => {
+    viewFolder.add({ regenCity: () => {
       demo.city.regenerate()
       demo.trails.generatePaths(30)
     } }, 'regenCity').name('Regen City')
-    gui.add({ replayBuild: () => {
+    viewFolder.add({ replayBuild: () => {
       demo.city.recalculateHeights()
       demo.city.recalculateVisibility()
       demo.postFX.fadeOpacity.value = 0
@@ -123,9 +142,9 @@ export class GUIManager {
       Sounds.play('intro')
       demo.city.startIntroAnimation(demo.camera, demo.controls, 4)
     } }, 'replayBuild').name('Replay Build')
-    gui.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
+    viewFolder.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
 
-    gui.add({
+    viewFolder.add({
       copyState: () => {
         const exportData = {
           ...allParams,
@@ -139,7 +158,7 @@ export class GUIManager {
         console.log('GUI State copied:\n', json)
       }
     }, 'copyState').name('Copy GUI State')
-    gui.add({
+    viewFolder.add({
       logControls: () => {
         const c = demo.controls
         const cam = demo.camera
@@ -153,7 +172,7 @@ export class GUIManager {
     }, 'logControls').name('Log Orbit State')
 
     // City folder
-    const cityFolder = gui.addFolder('City').close()
+    const cityFolder = viewFolder.addFolder('City').close()
     cityFolder.add(allParams.scene, 'noiseScale', 0.005, 0.05, 0.005).name('Noise Scale').onChange((v) => {
       demo.city.noiseFrequency = v
       demo.city.recalculateNoise()
@@ -184,7 +203,7 @@ export class GUIManager {
     })
 
     // Lights folder
-    const lightsFolder = gui.addFolder('Lights').close()
+    const lightsFolder = viewFolder.addFolder('Lights').close()
     const hdrOptions = [
       'studio_small_05_2k.hdr',
       'studio_small_08_2k.hdr',
@@ -241,7 +260,7 @@ export class GUIManager {
     })
 
     // Material folder
-    const matFolder = gui.addFolder('Material').close()
+    const matFolder = viewFolder.addFolder('Material').close()
     matFolder.add(allParams.material, 'roughness', 0, 1, 0.01).name('Roughness').onChange((v) => {
       if (demo.city.towerMaterial) demo.city.towerMaterial.roughness = v
     })
@@ -259,7 +278,7 @@ export class GUIManager {
     })
 
     // Effects folder
-    const fxFolder = gui.addFolder('Post Processing').close()
+    const fxFolder = viewFolder.addFolder('Post Processing').close()
     fxFolder.add(allParams.fx, 'ao').name('AO').onChange((v) => {
       demo.aoEnabled.value = v ? 1 : 0
     })

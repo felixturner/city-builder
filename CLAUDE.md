@@ -15,6 +15,8 @@ a city builder toy.
 
 ## TODO
 
+- [ ] Improve neighbour lot spawn so growth is directional, not all-4-neighbours-at-once. Currently a dormant lot's progress = whole `lotStrength` of each active neighbour lot (City.js `activeNeighbourStrength`), so the center lot feeds all 4 empties equally and they spawn together. Cheap fix (A): weight each neighbour by the strength of the blocks along the shared border edge only, so growth flows toward where you built. Bigger option (B): true block-level sprawl (dissolves lot identity/color/outline/plus-block — see gameplay.md §8). Perf is a non-issue either way (event-driven via onTowerChanged, not per-frame).
+- [ ] Tilt only the turret barrel up/down to match shot direction (not the whole model). Needs turrets.blend re-exported with the barrel as its own object/pivot — currently turrets.glb splits each turret by material (Blosm/DarkDetail/MainBody/RedDetail), not by part, so there's no barrel node to rotate.
 - [ ] Consider manual compositing passes instead of MRT (fixes transparency, enables half-res AO for perf)
 - [ ] Fix AO flicker on pan when zoomed out
 - [ ] Dial in AO (some AO is banding)

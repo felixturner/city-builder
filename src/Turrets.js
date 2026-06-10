@@ -1,27 +1,38 @@
 import {
   Mesh,
   SphereGeometry,
+  CylinderGeometry,
   MeshStandardNodeMaterial,
+  MeshBasicNodeMaterial,
   Vector2,
   Vector3,
+  Quaternion,
   Color,
+  Group,
+  Box3,
 } from 'three/webgpu'
+import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Sounds } from './lib/Sounds.js'
+import { BlockGeometry } from './lib/BlockGeometry.js'
 
 /**
- * Turrets - any visible Peg_Top tower (typeTop === 3) is a turret. It auto-fires
- * a small glowing sphere at the nearest creep in range; three hits destroy the
- * creep (Creeps.hit handles the explosion). Range scales with tower height.
+ * Turrets - two kinds of auto-firing tower:
+ *  - Peg_Top (typeTop 3): lobs a small glowing sphere at the nearest creep;
+ *    several hits destroy it. Range scales with tower height.
+ *  - Divot_Top (typeTop 4): a laser turret. Fires less often but hitscans for
+ *    2 damage and flashes a quick colored beam from muzzle to creep. Each laser
+ *    tower has its own random color (tower.laserColor, assigned by City).
  */
 export class Turrets {
   static TURRET_TYPE = 3 // Peg_Top
+  static LASER_TYPE = 4 // Divot_Top
 
   constructor(scene, city, creeps) {
     this.scene = scene
     this.city = city
     this.creeps = creeps
 
-    this.projGeo = new SphereGeometry(0.2, 12, 8)
+    this.projGeo = new SphereGeometry(0.4, 12, 8)
     this.projMat = new MeshStandardNodeMaterial({
       color: new Color(0xfff3c0),
       emissive: new Color(0xffd060),
@@ -32,12 +43,145 @@ export class Turrets {
     this.projectiles = []
     this.cooldowns = new Map() // tower -> seconds until next shot
 
-    this.fireCooldown = 0.7 // seconds between shots
+    this.fireCooldown = 0.35 // seconds between Peg shots
     this.projectileSpeed = 50 // world units / sec
     this.hitRadius = 1.0 // sphere considered "on" the creep within this
     this.baseY = 0.8
 
+    // Laser turret config + a small pool of reusable beam cylinders.
+    this.laserCooldown = 0.9 // fires less often than the peg turret
+    this.laserDamage = 2
+    this.beamDuration = 0.16 // seconds the beam flash lingers
+    this.beamGeo = new CylinderGeometry(0.28, 0.28, 1, 8) // unit length along Y
+    this.beams = []
+    for (let i = 0; i < 8; i++) {
+      const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0, depthWrite: false })
+      const mesh = new Mesh(this.beamGeo, mat)
+      mesh.visible = false
+      this.scene.add(mesh)
+      this.beams.push({ mesh, life: 0, active: false })
+    }
+
+    // Turret models from turrets.glb: Cube.002 = peg (bullet), Cube.006 = laser.
+    this.pegProto = null
+    this.laserProto = null
+    this.turretModels = new Map() // tower -> placed model clone
+
     this._tc = new Vector2()
+    this._q = new Quaternion()
+    this._up = new Vector3(0, 1, 0)
+    this._from = new Vector3()
+    this._to = new Vector3()
+    this._dir = new Vector3()
+    this._white = new Color(0xffffff)
+  }
+
+  /** Load the turret models and build normalized prototypes to clone per tower. */
+  async init() {
+    const loader = new GLTFLoader()
+    let gltf
+    try {
+      gltf = await loader.loadAsync('./assets/models/turrets.glb')
+    } catch (e) {
+      console.warn('Turret model load failed:', e)
+      return
+    }
+    gltf.scene.updateMatrixWorld(true)
+    this.pegProto = this.buildProto(gltf, 'Cube002')
+    this.laserProto = this.buildProto(gltf, 'Cube006')
+  }
+
+  /**
+   * Gather all sub-meshes of a GLB node (by sanitized name prefix) into one
+   * normalized prototype Group: centered on XZ, base at y=0, footprint ~1 cell.
+   * GLTFLoader strips dots from names, so 'Cube.002' is matched as 'Cube002'.
+   */
+  buildProto(gltf, prefix) {
+    const parts = []
+    gltf.scene.traverse((o) => {
+      if (o.isMesh && o.name.replace(/[\s.]/g, '').startsWith(prefix)) parts.push(o)
+    })
+    if (parts.length === 0) {
+      console.warn(`${prefix} meshes not found in turrets.glb`)
+      return null
+    }
+    const inner = new Group()
+    for (const p of parts) {
+      if (!p.geometry.attributes.normal) p.geometry.computeVertexNormals()
+      inner.attach(p)
+    }
+    const box = new Box3().setFromObject(inner)
+    const size = new Vector3()
+    const center = new Vector3()
+    box.getSize(size)
+    box.getCenter(center)
+    inner.position.set(-center.x, -box.min.y, -center.z)
+
+    const proto = new Group()
+    proto.add(inner)
+    const maxXZ = Math.max(size.x, size.z) || 1
+    proto.scale.setScalar((this.city.cellUnit * 1.1) / maxXZ)
+    proto.traverse((o) => { if (o.isMesh) o.castShadow = true })
+    return proto
+  }
+
+  /** Place / aim a turret model on top of every visible turret tower. */
+  updateTurretModels(dt) {
+    if (!this.pegProto && !this.laserProto) return
+    const seen = new Set()
+    for (const tower of this.city.towers) {
+      if (!tower.visible) continue
+      const isLaser = tower.typeTop === Turrets.LASER_TYPE
+      const isPeg = tower.typeTop === Turrets.TURRET_TYPE
+      if (!isPeg && !isLaser) continue
+      const proto = isLaser ? this.laserProto : this.pegProto
+      if (!proto) continue
+      seen.add(tower)
+
+      let m = this.turretModels.get(tower)
+      // Rebuild the clone if the tower's turret type changed (e.g. via reroll).
+      if (m && m.userData.kind !== tower.typeTop) {
+        this.scene.remove(m)
+        m = null
+      }
+      if (!m) {
+        m = proto.clone(true)
+        m.userData.kind = tower.typeTop
+        // Yaw-then-pitch order so the up/down tilt is applied in the yawed frame.
+        m.rotation.order = 'YXZ'
+        this.scene.add(m)
+        this.turretModels.set(tower, m)
+      }
+
+      tower.box.getCenter(this._tc)
+      const wx = this._tc.x + this.city.gridOffsetX
+      const wz = this._tc.y + this.city.gridOffsetZ
+      // Sit on top of the roof block. While the roof is animating (new-block
+      // pop), follow its live center so the turret moves with it.
+      const roofHalf = BlockGeometry.halfHeights[tower.typeTop]
+      const roofTop = tower.roofAnimating
+        ? tower.roofAnim.y + roofHalf
+        : tower.numFloors * this.city.floorHeight + 2 * roofHalf
+      m.position.set(wx, roofTop, wz)
+
+      // Smoothly turn to face the nearest creep (yaw + pitch, shortest path).
+      const target = this.nearestCreep(wx, wz, Infinity)
+      if (target) {
+        const tx = target.mesh.position.x - wx
+        const tz = target.mesh.position.z - wz
+        const ty = target.mesh.position.y - roofTop
+        const yaw = Math.atan2(tx, tz)
+        let diff = yaw - m.rotation.y
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff)) // wrap to [-PI, PI]
+        m.rotation.y += diff * Math.min(1, dt * 8) // ease toward target
+        // Pitch down toward the creep on the ground (barrel aims along +Z).
+        const horiz = Math.hypot(tx, tz)
+        const pitch = Math.atan2(-ty, horiz)
+        m.rotation.x += (pitch - m.rotation.x) * Math.min(1, dt * 8)
+      }
+      m.visible = true
+    }
+    for (const [t, m] of this.turretModels) if (!seen.has(t)) m.visible = false
   }
 
   /** World x/z/top-y of a turret tower. */
@@ -64,15 +208,32 @@ export class Turrets {
     return best
   }
 
+  /** Projectile material tinted to a turret's accent color (cached per color). */
+  projMatFor(ci) {
+    if (!this._projMats) this._projMats = new Map()
+    let m = this._projMats.get(ci)
+    if (!m) {
+      const col = this.city.accentColors[ci]
+      m = new MeshStandardNodeMaterial({
+        color: col.clone(),
+        emissive: col.clone().multiplyScalar(0.5),
+        roughness: 0.3,
+        metalness: 0,
+      })
+      this._projMats.set(ci, m)
+    }
+    return m
+  }
+
   fire(tower) {
     const muzzle = new Vector3()
     this.turretMuzzle(tower, muzzle)
     // Range in cells equals the tower's height in floors.
-    const range = tower.numFloors * this.city.cellUnit
+    const range = (tower.numFloors + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range)
     if (!target) return false
 
-    const mesh = new Mesh(this.projGeo, this.projMat)
+    const mesh = new Mesh(this.projGeo, this.projMatFor(tower.colorIndex))
     mesh.position.copy(muzzle)
     mesh.castShadow = true
     this.scene.add(mesh)
@@ -81,7 +242,53 @@ export class Turrets {
     return true
   }
 
+  /** Laser turret: hitscan the nearest creep for 2 damage + flash a beam. */
+  fireLaser(tower) {
+    const muzzle = this._from
+    this.turretMuzzle(tower, muzzle)
+    const range = (tower.numFloors + 1) * this.city.cellUnit
+    const target = this.nearestCreep(muzzle.x, muzzle.z, range)
+    if (!target) return false
+
+    this._to.copy(target.mesh.position)
+    this.spawnBeam(muzzle, this._to, tower.laserColor || this._white)
+    this.creeps.hit(target, this.laserDamage)
+    Sounds.play('shoot', 0.65, 0.2, 0.5)
+    return true
+  }
+
+  /** Light up a pooled beam cylinder stretched from `from` to `to`. */
+  spawnBeam(from, to, color) {
+    const b = this.beams.find(x => !x.active) || this.beams[0]
+    b.active = true
+    b.life = 0
+    const m = b.mesh
+    m.material.color.copy(color)
+    m.material.opacity = 1
+    m.visible = true
+
+    this._dir.copy(to).sub(from)
+    const len = this._dir.length() || 0.001
+    m.position.copy(from).addScaledVector(this._dir, 0.5)
+    this._dir.divideScalar(len)
+    this._q.setFromUnitVectors(this._up, this._dir)
+    m.quaternion.copy(this._q)
+    m.scale.set(1, len, 1)
+  }
+
   update(dt) {
+    // Fade out / retire active beam flashes.
+    for (const b of this.beams) {
+      if (!b.active) continue
+      b.life += dt
+      if (b.life >= this.beamDuration) {
+        b.active = false
+        b.mesh.visible = false
+      } else {
+        b.mesh.material.opacity = 1 - b.life / this.beamDuration
+      }
+    }
+
     // Advance projectiles, resolve hits.
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i]
@@ -114,14 +321,22 @@ export class Turrets {
       p.mesh.position.z += (dz / dist) * step
     }
 
+    // Keep the turret models seated on their towers (runs even with no creeps).
+    this.updateTurretModels(dt)
+
     if (this.creeps.creeps.length === 0) return
 
     // Fire turrets whose cooldown has elapsed.
     for (const tower of this.city.towers) {
-      if (!tower.visible || tower.typeTop !== Turrets.TURRET_TYPE) continue
+      if (!tower.visible) continue
+      const isPeg = tower.typeTop === Turrets.TURRET_TYPE
+      const isLaser = tower.typeTop === Turrets.LASER_TYPE
+      if (!isPeg && !isLaser) continue
+
       let cd = (this.cooldowns.get(tower) ?? 0) - dt
       if (cd <= 0) {
-        if (this.fire(tower)) cd = this.fireCooldown
+        const fired = isLaser ? this.fireLaser(tower) : this.fire(tower)
+        if (fired) cd = isLaser ? this.laserCooldown : this.fireCooldown
         else cd = 0.15 // nothing in range; re-check soon
       }
       this.cooldowns.set(tower, cd)

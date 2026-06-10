@@ -1,14 +1,18 @@
 import { Sounds } from './lib/Sounds.js'
 
 /**
- * Mana - vertical resource meter shown on the left of the screen.
- * A 1-wide column of cells that fill from the bottom up to show current mana.
+ * Mana - text HUD (top-left) showing two stats:
+ *   energy:     current / max  (max = baseMax + population)
+ *   population: total grey blocks (sum of grey tower heights)
+ * Energy is spent on builds/lot-clicks; grey blocks generate it and raise the
+ * cap. City calls setStats() whenever grey-block totals change.
  */
 export class Mana {
-  constructor(max = 50, initial = 20) {
-    this.max = max
-    this.current = initial
-    this.color = '#1BB3F6' // blue block accent color
+  constructor(baseMax = 50, initial = 50) {
+    this.baseMax = baseMax
+    this.population = 0
+    this.max = baseMax
+    this.current = Math.min(initial, this.max)
     this._build()
     this.render()
   }
@@ -19,40 +23,39 @@ export class Mana {
     Object.assign(el.style, {
       position: 'fixed',
       left: '20px',
-      top: '50%',
-      transform: 'translateY(-50%)',
-      display: 'flex',
-      flexDirection: 'column-reverse',
-      gap: '2px',
+      top: '20px',
       zIndex: '500',
       pointerEvents: 'none',
+      font: '600 16px ui-monospace, Menlo, monospace',
+      color: '#fff',
+      textShadow: '0 1px 3px rgba(0,0,0,0.7)',
+      lineHeight: '1.5',
+      whiteSpace: 'pre',
     })
 
-    this.cells = []
-    for (let i = 0; i < this.max; i++) {
-      const cell = document.createElement('div')
-      Object.assign(cell.style, {
-        width: '20px',
-        height: '10px',
-        border: `1px solid ${this.color}`,
-        borderRadius: '2px',
-        transition: 'background 0.15s',
-      })
-      el.appendChild(cell)
-      this.cells.push(cell)
-    }
+    this.energyEl = document.createElement('div')
+    this.popEl = document.createElement('div')
+    el.appendChild(this.energyEl)
+    el.appendChild(this.popEl)
 
     document.body.appendChild(el)
     this.el = el
   }
 
   render() {
-    for (let i = 0; i < this.max; i++) {
-      this.cells[i].style.background = i < this.current ? this.color : 'transparent'
-    }
+    this.energyEl.textContent = `energy: ${Math.floor(this.current)} /${this.max}`
+    this.popEl.textContent = `population: ${this.population}`
   }
 
-  /** Spend mana. Returns true if there was enough, false otherwise. */
+  /** Update grey-block-derived stats: population sets the energy cap. */
+  setStats(population) {
+    this.population = population
+    this.max = this.baseMax + population
+    if (this.current > this.max) this.current = this.max
+    this.render()
+  }
+
+  /** Spend energy. Returns true if there was enough, false otherwise. */
   spend(amount = 1) {
     if (this.current < amount) return false
     this.current -= amount
@@ -60,7 +63,7 @@ export class Mana {
     return true
   }
 
-  /** Add mana, capped at max. Plays the mana-up sound even when already full. */
+  /** Add energy, capped at max. */
   add(amount = 1) {
     Sounds.play('pluck')
     this.current = Math.min(this.max, this.current + amount)

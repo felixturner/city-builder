@@ -24,6 +24,7 @@ class SoundsManager {
       break: new Howl({ src: ['assets/sfx/break.mp3'] }),
       break2: new Howl({ src: ['assets/sfx/break2.mp3'] }),
       hit: new Howl({ src: ['assets/sfx/hit.mp3'] }),
+      dink: new Howl({ src: ['assets/sfx/dink.mp3'] }),
     }
     // Multiple stone sounds for random selection
     this.stoneSounds = [
