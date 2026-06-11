@@ -5,10 +5,15 @@
  * the next `windowSeconds` (3 minutes) of gameplay, derived from the Creeps
  * wave schedule (graceTime + n*wavePeriod, each lasting waveActive seconds).
  */
+import gsap from 'gsap'
+
 export class CreepTimeline {
   constructor(creeps) {
     this.creeps = creeps
     this.windowSeconds = 60 // show the next 1 minute
+    this.displayNow = 0 // wave-clock time the strip is drawn at (tweened on +30s)
+    this._tween = null
+    this._tweening = false
     this.bars = []
     this._build()
   }
@@ -75,10 +80,26 @@ export class CreepTimeline {
     this.track = track
   }
 
+  /** Smoothly slide the timeline to a new wave-clock time (e.g. the +30s jump).
+   *  `_tweening` is set synchronously so update() won't snap displayNow to the
+   *  (already-jumped) clock before gsap captures its start value. */
+  tweenTo(targetElapsed) {
+    if (this._tween) this._tween.kill()
+    this._tweening = true
+    this._tween = gsap.to(this, {
+      displayNow: targetElapsed,
+      duration: 0.5,
+      ease: 'power2.inOut',
+      onComplete: () => { this._tweening = false },
+    })
+  }
+
   /** Reposition wave bars for the current time. Cheap; safe to call per frame. */
   update() {
     const c = this.creeps
-    const now = c.elapsed
+    // Follow the real wave clock, except while a tween is sliding displayNow.
+    if (!this._tweening) this.displayNow = c.elapsed
+    const now = this.displayNow
     const win = this.windowSeconds
     const grace = c.graceTime
     const period = c.wavePeriod

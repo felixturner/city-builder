@@ -95,7 +95,7 @@ export class LotGrowth {
 
     // Each click costs 1 mana; out of mana - block and signal (consume click).
     if (!city.freeClicks && city.mana && !city.mana.spend(1)) {
-      Sounds.play('incorrect')
+      Sounds.play('incorrect', 1.0, 0.2, 0.5)
       return true
     }
 
@@ -183,7 +183,7 @@ export class LotGrowth {
         const geom = new BufferGeometry()
         geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
         const outline = new LineSegments(geom, this.outlineMats[lot.colorIndex])
-        outline.visible = lot.active
+        outline.visible = false // lot outlines hidden (continuous build surface)
         lot.outline = outline
         city.scene.add(outline)
 

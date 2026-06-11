@@ -4,6 +4,7 @@ import { Sounds } from './lib/Sounds.js'
 
 const loadingEl = document.getElementById('loading')
 const loaderGif = document.getElementById('loader-gif')
+const tuteImg = document.getElementById('tute-img')
 const startBtn = document.getElementById('start-btn')
 const canvas = document.getElementById('canvas')
 
@@ -18,8 +19,9 @@ async function init() {
   demo = new Demo(canvas)
   await demo.init()
 
-  // WebGPU ready - hide loader gif, show start button
+  // WebGPU ready - hide loader gif, show tutorial image + start button
   loaderGif.style.display = 'none'
+  tuteImg.style.display = 'block'
   startBtn.style.display = 'block'
 }
 

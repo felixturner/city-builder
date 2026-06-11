@@ -10,10 +10,13 @@ import {
   Color,
   Group,
   Box3,
+  Raycaster,
 } from 'three/webgpu'
 import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Sounds } from './lib/Sounds.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
+import { roofGeomIndex } from './blockTypes.js'
+import { FX_NO_AO_LAYER } from './PostFX.js'
 
 /**
  * Turrets - two kinds of auto-firing tower:
@@ -26,6 +29,7 @@ import { BlockGeometry } from './lib/BlockGeometry.js'
 export class Turrets {
   static TURRET_TYPE = 3 // Peg_Top
   static LASER_TYPE = 4 // Divot_Top
+  static MORTAR_TYPE = 7 // mortar (AoE)
 
   constructor(scene, city, creeps) {
     this.scene = scene
@@ -58,13 +62,32 @@ export class Turrets {
       const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0, depthWrite: false })
       const mesh = new Mesh(this.beamGeo, mat)
       mesh.visible = false
+      mesh.layers.set(FX_NO_AO_LAYER) // no ambient occlusion on beams
       this.scene.add(mesh)
       this.beams.push({ mesh, life: 0, active: false })
     }
 
-    // Turret models from turrets.glb: Cube.002 = peg (bullet), Cube.006 = laser.
+    // Mortar turret: lobs an arcing shell that explodes in an AoE.
+    this.mortarCooldown = 4.0 // slow fire
+    this.mortarDamage = 8 // heavy
+    this.mortarRadius = 4 // AoE radius
+    this.mortarArc = 8 // peak lob height
+    this.mortarDur = 0.6 // travel time (seconds) - shorter so it lands near moving creeps
+    this.mortarGeo = new SphereGeometry(0.35, 12, 8)
+    this.mortarMat = new MeshStandardNodeMaterial({
+      color: new Color(0x808080), roughness: 0.6, metalness: 0.2,
+    })
+    this._explodeColor = new Color(0xff7a30)
+    // Expanding transparent blast dome (sphere at y=0 -> only the top half shows).
+    this.explosionGeo = new SphereGeometry(1, 16, 12)
+    this.explosionRadius = this.mortarRadius // visual blast matches the AoE
+    this.explosions = []
+
+    // Turret models from turrets.glb: Cube.002 = peg (bullet), Cube.006 = laser,
+    // Cube.008 = mortar.
     this.pegProto = null
     this.laserProto = null
+    this.mortarProto = null
     this.turretModels = new Map() // tower -> placed model clone
 
     this._tc = new Vector2()
@@ -74,6 +97,7 @@ export class Turrets {
     this._to = new Vector3()
     this._dir = new Vector3()
     this._white = new Color(0xffffff)
+    this._losRay = new Raycaster() // line-of-sight raycasts vs the tower mesh
   }
 
   /** Load the turret models and build normalized prototypes to clone per tower. */
@@ -89,6 +113,7 @@ export class Turrets {
     gltf.scene.updateMatrixWorld(true)
     this.pegProto = this.buildProto(gltf, 'Cube002')
     this.laserProto = this.buildProto(gltf, 'Cube006')
+    this.mortarProto = this.buildProto(gltf, 'Cube008')
   }
 
   /**
@@ -127,14 +152,15 @@ export class Turrets {
 
   /** Place / aim a turret model on top of every visible turret tower. */
   updateTurretModels(dt) {
-    if (!this.pegProto && !this.laserProto) return
+    if (!this.pegProto && !this.laserProto && !this.mortarProto) return
     const seen = new Set()
     for (const tower of this.city.towers) {
       if (!tower.visible) continue
       const isLaser = tower.typeTop === Turrets.LASER_TYPE
       const isPeg = tower.typeTop === Turrets.TURRET_TYPE
-      if (!isPeg && !isLaser) continue
-      const proto = isLaser ? this.laserProto : this.pegProto
+      const isMortar = tower.typeTop === Turrets.MORTAR_TYPE
+      if (!isPeg && !isLaser && !isMortar) continue
+      const proto = isMortar ? this.mortarProto : isLaser ? this.laserProto : this.pegProto
       if (!proto) continue
       seen.add(tower)
 
@@ -158,7 +184,7 @@ export class Turrets {
       const wz = this._tc.y + this.city.gridOffsetZ
       // Sit on top of the roof block. While the roof is animating (new-block
       // pop), follow its live center so the turret moves with it.
-      const roofHalf = BlockGeometry.halfHeights[tower.typeTop]
+      const roofHalf = BlockGeometry.halfHeights[roofGeomIndex(tower.typeTop)]
       const roofTop = tower.roofAnimating
         ? tower.roofAnim.y + roofHalf
         : tower.numFloors * this.city.floorHeight + 2 * roofHalf
@@ -195,17 +221,38 @@ export class Turrets {
     return out
   }
 
-  /** Nearest live creep within `range` world-units of (x,z), or null. */
-  nearestCreep(x, z, range) {
+  /** Nearest live creep within `range` world-units of (x,z), or null. When a
+   *  `losMuzzle` (Vector3) is given, ground creeps must have clear line-of-sight
+   *  from it (flying bombers ignore LOS). */
+  nearestCreep(x, z, range, losMuzzle = null) {
     let best = null
     let bestD = range * range
     for (const c of this.creeps.creeps) {
       const dx = c.mesh.position.x - x
       const dz = c.mesh.position.z - z
       const d = dx * dx + dz * dz
-      if (d < bestD) { bestD = d; best = c }
+      if (d >= bestD) continue
+      if (losMuzzle && c.state !== 'fly' && !this.hasLOS(losMuzzle, c.mesh.position)) continue
+      bestD = d
+      best = c
     }
     return best
+  }
+
+  /** True if a clear 3D line runs from `from` to `to` - i.e. no tower mesh is
+   *  between them (raycast against the tower BatchedMesh). */
+  hasLOS(from, to) {
+    const mesh = this.city.towerMesh
+    if (!mesh) return true
+    this._dir.copy(to).sub(from)
+    const dist = this._dir.length()
+    const margin = this.city.cellUnit * 0.7 // skip the firing tower / the target's cell
+    if (dist <= margin * 2) return true
+    this._dir.divideScalar(dist)
+    this._losRay.set(from, this._dir)
+    this._losRay.near = margin
+    this._losRay.far = dist - margin
+    return this._losRay.intersectObject(mesh, false).length === 0
   }
 
   /** Projectile material tinted to a turret's accent color (cached per color). */
@@ -230,12 +277,13 @@ export class Turrets {
     this.turretMuzzle(tower, muzzle)
     // Range in cells equals the tower's height in floors.
     const range = (tower.numFloors + 1) * this.city.cellUnit
-    const target = this.nearestCreep(muzzle.x, muzzle.z, range)
+    const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
 
     const mesh = new Mesh(this.projGeo, this.projMatFor(tower.colorIndex))
     mesh.position.copy(muzzle)
     mesh.castShadow = true
+    mesh.layers.set(FX_NO_AO_LAYER) // no ambient occlusion on projectiles
     this.scene.add(mesh)
     this.projectiles.push({ mesh, target, life: 0 })
     Sounds.play('shoot', 1.0, 0.2, 0.5)
@@ -247,7 +295,7 @@ export class Turrets {
     const muzzle = this._from
     this.turretMuzzle(tower, muzzle)
     const range = (tower.numFloors + 1) * this.city.cellUnit
-    const target = this.nearestCreep(muzzle.x, muzzle.z, range)
+    const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
 
     this._to.copy(target.mesh.position)
@@ -289,9 +337,43 @@ export class Turrets {
       }
     }
 
+    // Blast domes: pop scale to max fast (~0.12s ease-out), fade over ~0.45s.
+    for (let i = this.explosions.length - 1; i >= 0; i--) {
+      const e = this.explosions[i]
+      e.life += dt
+      const dur = 0.45
+      const f = e.life / dur
+      const popF = Math.min(1, e.life / 0.12)
+      const scale = this.explosionRadius * (1 - (1 - popF) * (1 - popF)) // ease-out to max
+      e.mesh.scale.setScalar(Math.max(0.001, scale))
+      e.mat.opacity = Math.max(0, 1 - f) * 0.6
+      if (f >= 1) {
+        this.scene.remove(e.mesh)
+        e.mat.dispose()
+        this.explosions.splice(i, 1)
+      }
+    }
+
     // Advance projectiles, resolve hits.
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i]
+
+      // Mortar shells arc to a fixed point and explode (AoE) on landing.
+      if (p.mortar) {
+        p.t += dt
+        const f = Math.min(1, p.t / p.dur)
+        const x = p.start.x + (p.end.x - p.start.x) * f
+        const z = p.start.z + (p.end.z - p.start.z) * f
+        const baseY = p.start.y + (p.end.y - p.start.y) * f
+        p.mesh.position.set(x, baseY + Math.sin(Math.PI * f) * this.mortarArc, z)
+        if (f >= 1) {
+          this.mortarExplode(p.end.x, p.end.z)
+          this.scene.remove(p.mesh)
+          this.projectiles.splice(i, 1)
+        }
+        continue
+      }
+
       p.life += dt
 
       // Target gone or projectile too old: drop it.
@@ -331,15 +413,59 @@ export class Turrets {
       if (!tower.visible) continue
       const isPeg = tower.typeTop === Turrets.TURRET_TYPE
       const isLaser = tower.typeTop === Turrets.LASER_TYPE
-      if (!isPeg && !isLaser) continue
+      const isMortar = tower.typeTop === Turrets.MORTAR_TYPE
+      if (!isPeg && !isLaser && !isMortar) continue
 
       let cd = (this.cooldowns.get(tower) ?? 0) - dt
       if (cd <= 0) {
-        const fired = isLaser ? this.fireLaser(tower) : this.fire(tower)
-        if (fired) cd = isLaser ? this.laserCooldown : this.fireCooldown
+        const fired = isMortar ? this.fireMortar(tower) : isLaser ? this.fireLaser(tower) : this.fire(tower)
+        if (fired) cd = isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown
         else cd = 0.15 // nothing in range; re-check soon
       }
       this.cooldowns.set(tower, cd)
     }
+  }
+
+  /** Mortar turret: lob an arcing shell at the nearest creep (ignores LOS - it
+   *  arcs over walls); it explodes in an AoE on landing. */
+  fireMortar(tower) {
+    const muzzle = this._from
+    this.turretMuzzle(tower, muzzle)
+    const range = (tower.numFloors + 1) * this.city.cellUnit
+    const target = this.nearestCreep(muzzle.x, muzzle.z, range) // no LOS: arcs over
+    if (!target) return false
+
+    const mesh = new Mesh(this.mortarGeo, this.mortarMat)
+    mesh.position.copy(muzzle)
+    mesh.castShadow = true
+    mesh.layers.set(FX_NO_AO_LAYER) // no ambient occlusion on the shell
+    this.scene.add(mesh)
+    const end = new Vector3(target.mesh.position.x, 0.4, target.mesh.position.z)
+    this.projectiles.push({ mesh, mortar: true, start: muzzle.clone(), end, t: 0, dur: this.mortarDur })
+    Sounds.play('mortar-shoot', 1.0, 0.15, 0.6)
+    return true
+  }
+
+  /** AoE blast: damage every ground creep within `mortarRadius` of (x,z), and
+   *  pop an expanding transparent dome. */
+  mortarExplode(x, z) {
+    const r2 = this.mortarRadius * this.mortarRadius
+    for (const c of this.creeps.creeps) {
+      if (c.state === 'fly') continue // bombers are at altitude
+      const dx = c.mesh.position.x - x, dz = c.mesh.position.z - z
+      if (dx * dx + dz * dz <= r2) this.creeps.hit(c, this.mortarDamage)
+    }
+    // Blast dome: sphere centered at ground (y=0) so only the top half shows;
+    // pops its scale up fast then fades out (animated in update()).
+    const mat = new MeshBasicNodeMaterial({
+      color: this._explodeColor.clone(), transparent: true, opacity: 0.6, depthWrite: false,
+    })
+    const mesh = new Mesh(this.explosionGeo, mat)
+    mesh.position.set(x, 0, z)
+    mesh.scale.setScalar(0.001)
+    mesh.layers.set(FX_NO_AO_LAYER)
+    this.scene.add(mesh)
+    this.explosions.push({ mesh, mat, life: 0 })
+    Sounds.play('mortar-hit', 1.0, 0.15, 0.7)
   }
 }

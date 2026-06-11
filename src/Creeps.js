@@ -72,8 +72,8 @@ export class Creeps {
     this.graceTime = 30 // first wave starts ~30s in (build-up grace period)
     this.spawnTimer = 0
     this.startInterval = 2 // seconds between spawns right after grace
-    this.minInterval = 0.3 // fastest spawn cadence late game
-    this.rampDuration = 240 // seconds to ramp from start -> min
+    this.minInterval = 0.45 // fastest spawn cadence late game (~30% more than before)
+    this.rampDuration = 600 // seconds to ramp from start -> min (longer ramp)
 
     // Waves: spawn for waveActive secs, then wait until the next wavePeriod.
     this.wavePeriod = 40 // 20s spawn + 20s wait
@@ -118,9 +118,10 @@ export class Creeps {
     return this.startInterval + (this.minInterval - this.startInterval) * k
   }
 
-  /** How many creeps to spawn per tick - grows slowly over time (caps at 3). */
+  /** How many creeps to spawn per tick - stays 1 for the first ~5 min, then
+   *  climbs slowly (2 @ 5min, 3 @ 10min) so late-game waves keep escalating. */
   get spawnBurst() {
-    return Math.min(3, 1 + Math.floor(this.elapsed / 150))
+    return Math.min(3, 1 + Math.floor(this.elapsed / 300))
   }
 
   snap(v) {

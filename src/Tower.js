@@ -1,6 +1,8 @@
 import { Box2, Color, Object3D, Vector2, MathUtils } from 'three/webgpu'
 import gsap from 'gsap'
 import { BlockGeometry } from './lib/BlockGeometry.js'
+import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
+import { roofGeomIndex } from './blockTypes.js'
 import { Sounds } from './lib/Sounds.js'
 
 /**
@@ -149,11 +151,13 @@ export class Tower {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
+    const ex = this.tetro ? 1 : size.x // tetromino geometry is already cell-scaled
+    const ez = this.tetro ? 1 : size.y
     const numFloors = this.numFloors
 
     // Half-heights for centered geometries
     const floorHalfHeight = floorHeight / 2
-    const roofHalfHeight = BlockGeometry.halfHeights[this.typeTop]
+    const roofHalfHeight = this.tetro ? TetrominoGeometry.roofHalf : BlockGeometry.halfHeights[roofGeomIndex(this.typeTop)]
 
     // Animate all floor instances
     const anim = { offset: 0 }
@@ -166,7 +170,7 @@ export class Tower {
         for (let f = 0; f < numFloors; f++) {
           const idx = this.floorInstances[f]
           dummy.position.set(center.x, f * floorHeight + floorHalfHeight + anim.offset, center.y)
-          dummy.scale.set(size.x, floorHeight, size.y)
+          dummy.scale.set(ex, floorHeight, ez)
           dummy.rotation.set(0, this.rotation, 0)
           dummy.updateMatrix()
           mesh.setMatrixAt(idx, dummy.matrix)
@@ -174,7 +178,7 @@ export class Tower {
         // Only update roof if not being animated separately
         if (!self.roofAnimating) {
           dummy.position.set(center.x, numFloors * floorHeight + roofHalfHeight + anim.offset, center.y)
-          dummy.scale.set(size.x, 1, size.y)
+          dummy.scale.set(ex, 1, ez)
           dummy.rotation.set(0, this.rotation, 0)
           dummy.updateMatrix()
           mesh.setMatrixAt(this.roofInstance, dummy.matrix)
@@ -191,11 +195,13 @@ export class Tower {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
+    const ex = this.tetro ? 1 : size.x
+    const ez = this.tetro ? 1 : size.y
 
     if (this.floorTween?.isActive()) this.floorTween.kill()
 
     const floorHalfHeight = floorHeight / 2
-    const roofHalfHeight = BlockGeometry.halfHeights[this.typeTop]
+    const roofHalfHeight = this.tetro ? TetrominoGeometry.roofHalf : BlockGeometry.halfHeights[roofGeomIndex(this.typeTop)]
     const newFloorIdx = this.floorInstances[oldNumFloors]
     const newFloorY = oldNumFloors * floorHeight + floorHalfHeight
     const finalRoofY = (oldNumFloors + 1) * floorHeight + roofHalfHeight
@@ -222,7 +228,7 @@ export class Tower {
 
     const updateFloor = () => {
       dummy.position.set(center.x, newFloorY + anim.yOffset, center.y)
-      dummy.scale.set(size.x * anim.scale, floorHeight * anim.scale, size.y * anim.scale)
+      dummy.scale.set(ex * anim.scale, floorHeight * anim.scale, ez * anim.scale)
       dummy.rotation.set(anim.tiltX, this.rotation + anim.tiltY, anim.tiltZ)
       dummy.updateMatrix()
       mesh.setMatrixAt(newFloorIdx, dummy.matrix)
@@ -242,7 +248,7 @@ export class Tower {
       onUpdate: () => {
         for (let f = 0; f < oldNumFloors; f++) {
           dummy.position.set(center.x, f * floorHeight + floorHalfHeight + anim.baseOffset, center.y)
-          dummy.scale.set(size.x, floorHeight, size.y)
+          dummy.scale.set(ex, floorHeight, ez)
           dummy.rotation.set(0, this.rotation, 0)
           dummy.updateMatrix()
           mesh.setMatrixAt(this.floorInstances[f], dummy.matrix)
@@ -281,6 +287,8 @@ export class Tower {
     if (this.roofTween) this.roofTween.kill()
     this.roofAnimating = true
 
+    const ex = this.tetro ? 1 : size.x
+    const ez = this.tetro ? 1 : size.y
     const maxTilt = 0.5
 
     // Pop up above final position (not current position, to prevent stacking on fast clicks)
@@ -292,7 +300,7 @@ export class Tower {
     const self = this
     const render = () => {
       self.roofDummy.position.set(center.x, self.roofAnim.y, center.y)
-      self.roofDummy.scale.set(size.x, 1, size.y)
+      self.roofDummy.scale.set(ex, 1, ez)
       self.roofDummy.rotation.set(self.roofAnim.tiltX, self.rotation + self.roofAnim.tiltY, self.roofAnim.tiltZ)
       self.roofDummy.updateMatrix()
       mesh.setMatrixAt(self.roofInstance, self.roofDummy.matrix)
@@ -335,9 +343,11 @@ export class Tower {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
+    const ex = this.tetro ? 1 : size.x
+    const ez = this.tetro ? 1 : size.y
 
     const floorHalfHeight = floorHeight / 2
-    const roofHalfHeight = BlockGeometry.halfHeights[this.typeTop]
+    const roofHalfHeight = this.tetro ? TetrominoGeometry.roofHalf : BlockGeometry.halfHeights[roofGeomIndex(this.typeTop)]
 
     // Current roof Y position (or calculate from numFloors)
     const currentRoofY = this.roofAnim.y > 0 ? this.roofAnim.y : numFloors * floorHeight + roofHalfHeight
@@ -349,7 +359,7 @@ export class Tower {
     const self = this
     const renderRoof = () => {
       self.roofDummy.position.set(center.x, self.roofAnim.y, center.y)
-      self.roofDummy.scale.set(size.x, 1, size.y)
+      self.roofDummy.scale.set(ex, 1, ez)
       self.roofDummy.rotation.set(self.roofAnim.tiltX, self.rotation + self.roofAnim.tiltY, self.roofAnim.tiltZ)
       self.roofDummy.updateMatrix()
       mesh.setMatrixAt(self.roofInstance, self.roofDummy.matrix)
@@ -398,7 +408,7 @@ export class Tower {
       const pitch = 0.8 + (anim.floorIdx / numFloors) * 1.2
       const updateFloor = () => {
         dummy.position.set(center.x, floorY + anim.yOffset, center.y)
-        dummy.scale.set(size.x * anim.scale, floorHeight * anim.scale, size.y * anim.scale)
+        dummy.scale.set(ex * anim.scale, floorHeight * anim.scale, ez * anim.scale)
         dummy.rotation.set(anim.tiltX, this.rotation + anim.tiltY, anim.tiltZ)
         dummy.updateMatrix()
         mesh.setMatrixAt(instanceIdx, dummy.matrix)

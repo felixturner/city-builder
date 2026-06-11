@@ -1,13 +1,13 @@
 import { Vector2, Vector3, Box3, Mesh, RingGeometry, MeshBasicNodeMaterial } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, towerArea, towerTopY } from '../blockTypes.js'
+import { TopType, isTurret, isGrey, towerArea, towerTopY } from '../blockTypes.js'
 
 /**
- * TowerInteraction - all player input on towers (hover, build, destroy/reroll,
- * empty-slot and dormant-lot clicks) plus the right-click reroll build-wheel.
- * The tower mutations it triggers (rerollTower, regenEmptyTower) live on the
- * TowerRenderer; onTowerChanged is City's coordinator hub.
+ * TowerInteraction - all player input on towers (hover, build, destroy, place,
+ * demolish) plus the center-lot right-click reroll build-wheel. The tower
+ * mutations it triggers (rerollTower) live on the TowerRenderer; onTowerChanged
+ * is City's coordinator hub.
  */
 export class TowerInteraction {
   constructor(city) {
@@ -129,33 +129,33 @@ export class TowerInteraction {
   canBuild(tower) {
     const city = this.city
     if (tower.numFloors >= city.maxFloors) {
-      Sounds.play('incorrect') // already at max height
+      Sounds.play('error', 1.0, 0.2, 0.5) // already at max height
       return false
     }
     if (!city.mana) return true
-    const costly = tower.typeTop === TopType.PATH_GENERATOR || isTurret(tower)
-    const cost = (costly ? 2 : 1) * towerArea(tower, city.cellUnit, city.towerSize)
+    // Walls (grey) cost 1/cell; generators + turrets cost 2/cell (same rule as
+    // placing a tile from the palette).
+    const cost = (isGrey(tower) ? 1 : 2) * towerArea(tower, city.cellUnit, city.towerSize)
     if (!city.freeClicks && !city.mana.spend(cost)) {
-      Sounds.play('incorrect') // out of mana
+      Sounds.play('incorrect', 1.0, 0.2, 0.5) // out of mana
       return false
     }
     return true
   }
 
-  /** Right-click a tower: demolish freely-placed tiles (free their cells); the
-   *  pre-built center lot still rerolls (knock down + timed build-wheel). */
+  /** Right-click a tower to demolish it (any tile, including the pre-built center
+   *  lot): built tiles stagger-delete then free their cell; flat tiles pop. */
   onRightClick(intersection) {
+    const city = this.city
     const tower = this.towerFor(intersection)
     if (!tower || !tower.visible) return
-    if (tower.placed) {
-      this.city.demolishPlaced(tower)
-      return
-    }
     if (tower.numFloors >= 1) {
-      tower.handleRightClick(this.city, this.city.floorHeight, this.city.debris,
-        this.city.towers, () => this.beginReroll(tower))
+      tower.animateDelete(city.towerMesh, city.floorHeight, tower.numFloors, () => city.demolishTower(tower))
     } else {
-      this.beginReroll(tower) // level-0: nothing to animate
+      const c = tower.box.getCenter(city.towerCenter)
+      city.debris.spawn(c.x + city.gridOffsetX, 0.5, c.y + city.gridOffsetZ, 0.8, tower.litColor || tower.baseColor, 10)
+      Sounds.play('break2', 1.0, 0.2)
+      city.demolishTower(tower)
     }
   }
 

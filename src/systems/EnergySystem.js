@@ -1,12 +1,15 @@
 import { Vector2, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import {
-  isPathGenerator, isAdjGenerator, isGrey, towerArea, towerTopY,
+  isPathGenerator, isAdjGenerator, isEnclosureGenerator, isGrey, towerArea, towerTopY,
 } from '../blockTypes.js'
 
 const GEN_INTERVAL = 2 // seconds between generator mana ticks
-const GREY_INTERVAL = 10 // seconds between passive grey-block mana ticks
+const GREY_INTERVAL = 5 // seconds between passive grey-block mana ticks
 const PULSE_DECAY = 0.8 // seconds for a tower's flash to fade back to baseline
+const ENCLOSURE_RATE = 0.2 // mana per (enclosed cell x generator floor)
+const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
+const PROD_FACTOR = 0.3 // global energy-production scale (applied to every source)
 
 /**
  * EnergySystem - all energy generation and the visual/audio feedback for it.
@@ -38,6 +41,10 @@ export class EnergySystem {
     this.adjGenClusters = [] // [{members, energy, cx, cy, cz}]
     this.litAdjGens = new Set() // built hole blocks that pulse-glow
 
+    // Enclosure generators (sealed inside a coloured enclosure)
+    this.enclosureGenMana = 0
+    this.enclosureGens = [] // built enclosure generators producing mana
+
     // Scheduled flashes: {members, t, amt, sound, color, cx, cy, cz}
     this.pulseEvents = []
     this.manaTimer = 0
@@ -54,7 +61,24 @@ export class EnergySystem {
   refresh() {
     this.updatePathGenerators()
     this.updateAdjGenerators()
+    this.updateEnclosureGenerators()
     this.refreshManaStats()
+  }
+
+  /** Enclosure generators: mana = enclosed-region size x floor height x rate.
+   *  Uses tower.enclosureRegionCells set by City.updateEnclosure. */
+  updateEnclosureGenerators() {
+    let mana = 0
+    this.enclosureGens = []
+    for (const t of this.city.towers) {
+      if (!t.visible || !isEnclosureGenerator(t)) continue
+      const cells = t.enclosureRegionCells || 0
+      if (cells <= 0 || t.numFloors < 1) { t.enclosureMana = 0; continue }
+      t.enclosureMana = Math.max(1, Math.round(cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR))
+      mana += t.enclosureMana
+      this.enclosureGens.push(t)
+    }
+    this.enclosureGenMana = mana
   }
 
   /** Push the current grey-block population to the energy/population HUD. */
@@ -79,7 +103,8 @@ export class EnergySystem {
   /**
    * Re-evaluate connectors between path generators. Two same-colour plus blocks
    * connect when the centre distance (in cells) is less than the sum of their
-   * heights. Mana per tick = sum over connectors of both towers' height*area.
+   * heights. Mana per tick = sum over connectors of both towers' height*area
+   * scaled by the trail length, so generators further apart generate more.
    */
   updatePathGenerators() {
     const city = this.city
@@ -96,16 +121,19 @@ export class EnergySystem {
         if (combinedReach <= 0) continue
         a.box.getCenter(this._ca)
         b.box.getCenter(this._cb)
-        if (this._ca.distanceTo(this._cb) / cell < combinedReach) pairs.push([a, b])
+        const dist = this._ca.distanceTo(this._cb) / cell
+        if (dist < combinedReach) pairs.push([a, b, dist])
       }
     }
     this.activeConnectorCount = pairs.length
 
+    // Mana = footprint cells x trail length x factor. Height is NOT a factor -
+    // it's already baked into reach (taller towers connect over longer trails).
     let mana = 0
     const contrib = new Map()
-    for (const [a, b] of pairs) {
-      const pa = a.numFloors * this.area(a)
-      const pb = b.numFloors * this.area(b)
+    for (const [a, b, dist] of pairs) {
+      const pa = Math.max(1, Math.round(this.area(a) * dist * PATH_RATE * PROD_FACTOR))
+      const pb = Math.max(1, Math.round(this.area(b) * dist * PATH_RATE * PROD_FACTOR))
       mana += pa + pb
       contrib.set(a, (contrib.get(a) || 0) + pa)
       contrib.set(b, (contrib.get(b) || 0) + pb)
@@ -133,7 +161,12 @@ export class EnergySystem {
     for (const key of pairKeys) {
       if (!this._connectorKeys || !this._connectorKeys.has(key)) newConnection = true
     }
-    if (newConnection) Sounds.play('energy')
+    let lostConnection = false
+    if (this._connectorKeys) {
+      for (const key of this._connectorKeys) if (!pairKeys.has(key)) lostConnection = true
+    }
+    if (newConnection) Sounds.play('dink')
+    if (lostConnection) Sounds.play('power-down')
     this._connectorKeys = pairKeys
 
     // Restore steady colour on towers that just lost all their connections.
@@ -166,56 +199,63 @@ export class EnergySystem {
     const clusters = []
     const lit = new Set()
     let mana = 0
+    let clusteredCount = 0 // holes that are part of an adjacency group (size >= 2)
 
-    for (const row of city.lots) {
-      for (const lot of row) {
-        if (!lot.active) continue
-        const holes = lot.towers.filter(t => t.visible && isAdjGenerator(t))
-        // Reset every hole to static accent; the per-frame pulse re-brightens
-        // only the generating ones, so one that stops generating doesn't freeze.
-        for (const t of holes) city.setTowerColor(t, city.accentColors[t.colorIndex])
-        if (holes.length < 2) continue
+    // Clustering is global (tiles are placed freely and may straddle lots).
+    const holes = city.towers.filter(t => t.visible && isAdjGenerator(t))
+    // Reset every hole to static accent; the per-frame pulse re-brightens
+    // only the generating ones, so one that stops generating doesn't freeze.
+    for (const t of holes) city.setTowerColor(t, city.accentColors[t.colorIndex])
 
-        const visited = new Set()
-        for (const start of holes) {
-          if (visited.has(start)) continue
-          const stack = [start]
-          visited.add(start)
-          const cluster = []
-          while (stack.length) {
-            const cur = stack.pop()
-            cluster.push(cur)
-            for (const o of holes) {
-              if (!visited.has(o) && this.orthAdjacent(cur, o, tol)) {
-                visited.add(o)
-                stack.push(o)
-              }
+    if (holes.length >= 2) {
+      const visited = new Set()
+      for (const start of holes) {
+        if (visited.has(start)) continue
+        const stack = [start]
+        visited.add(start)
+        const cluster = []
+        while (stack.length) {
+          const cur = stack.pop()
+          cluster.push(cur)
+          for (const o of holes) {
+            if (!visited.has(o) && this.orthAdjacent(cur, o, tol)) {
+              visited.add(o)
+              stack.push(o)
             }
           }
-          if (cluster.length < 2) continue
+        }
+        if (cluster.length < 2) continue
+        clusteredCount += cluster.length
 
-          let energy = 0, sx = 0, sz = 0, topY = 0
-          for (const m of cluster) {
-            if (m.numFloors >= 1) energy++
-            const c = m.box.getCenter(this._c)
-            sx += c.x + city.gridOffsetX
-            sz += c.y + city.gridOffsetZ
-            topY = Math.max(topY, towerTopY(m, city.floorHeight))
-          }
-          if (energy > 0) {
-            mana += energy
-            for (const m of cluster) lit.add(m)
-            clusters.push({
-              members: cluster.slice(), energy,
-              cx: sx / cluster.length, cy: topY + 0.5, cz: sz / cluster.length,
-            })
-          }
+        let blocks = 0, sx = 0, sz = 0, topY = 0
+        for (const m of cluster) {
+          blocks += m.numFloors // combined block count (sum of all levels in the cluster)
+          const c = m.box.getCenter(this._c)
+          sx += c.x + city.gridOffsetX
+          sz += c.y + city.gridOffsetZ
+          topY = Math.max(topY, towerTopY(m, city.floorHeight))
+        }
+        const energy = Math.round(blocks * PROD_FACTOR)
+        if (energy > 0) {
+          mana += energy
+          for (const m of cluster) lit.add(m)
+          clusters.push({
+            members: cluster.slice(), energy,
+            cx: sx / cluster.length, cy: topY + 0.5, cz: sz / cluster.length,
+          })
         }
       }
     }
     this.adjGenMana = mana
     this.adjGenClusters = clusters
     this.litAdjGens = lit
+
+    // New adjacency formed: play energy-2 when more holes become clustered (skip
+    // the first pass so the initial city doesn't trigger it).
+    if (this._adjClusteredCount !== undefined && clusteredCount > this._adjClusteredCount) {
+      Sounds.play('energy-2')
+    }
+    this._adjClusteredCount = clusteredCount
   }
 
   /** Per-frame: advance mana ticks, fire scheduled flashes, decay pulses. */
@@ -224,7 +264,7 @@ export class EnergySystem {
     if (!city.mana) return
 
     // Generator mana tick: schedule each unit's flash at a random offset.
-    const genMana = this.pathGenMana + this.adjGenMana
+    const genMana = this.pathGenMana + this.adjGenMana + this.enclosureGenMana
     if (genMana > 0) {
       this.manaTimer += dt
       while (this.manaTimer >= GEN_INTERVAL) {
@@ -234,7 +274,7 @@ export class EnergySystem {
           if (amt > 0 && tower.visible) {
             const c = tower.box.getCenter(this._c)
             this.pulseEvents.push({
-              members: [tower], t: Math.random(), amt, sound: 'pluck',
+              members: [tower], t: Math.random(), amt, sound: 'dink',
               color: city.accentColors[tower.colorIndex],
               cx: c.x + city.gridOffsetX,
               cy: towerTopY(tower, city.floorHeight) + 0.5,
@@ -247,6 +287,17 @@ export class EnergySystem {
             members: cl.members, t: Math.random(), amt: cl.energy, sound: 'dink',
             color: city.accentColors[cl.members[0].colorIndex],
             cx: cl.cx, cy: cl.cy, cz: cl.cz,
+          })
+        }
+        for (const t of this.enclosureGens) {
+          if (!t.visible || !t.enclosureMana) continue
+          const c = t.box.getCenter(this._c)
+          this.pulseEvents.push({
+            members: [t], t: Math.random(), amt: t.enclosureMana, sound: 'dink',
+            color: city.accentColors[t.colorIndex],
+            cx: c.x + city.gridOffsetX,
+            cy: towerTopY(t, city.floorHeight) + 0.5,
+            cz: c.y + city.gridOffsetZ,
           })
         }
       }
@@ -268,17 +319,23 @@ export class EnergySystem {
     while (this.greyManaTimer >= GREY_INTERVAL) {
       this.greyManaTimer -= GREY_INTERVAL
       const n = this.countGreyBlocks()
-      if (n > 0) city.mana.add(n)
+      if (n > 0) city.mana.add(Math.round(n * PROD_FACTOR))
       for (const t of city.towers) {
         if (!t.visible || t.numFloors < 1 || !isGrey(t)) continue
-        this.spawnTowerText(t, `+${t.numFloors}`, '#dfe6ff', 'pluck', Math.random() * GREY_INTERVAL)
+        this.spawnTowerText(t, `+${t.numFloors}`, '#dfe6ff', 'dink', Math.random() * GREY_INTERVAL)
       }
     }
 
     // Brightness pulse, driven by each tower's own decaying flash envelope.
-    if (this.connectedTowers.size > 0 || this.litAdjGens.size > 0) {
-      for (const tower of this.connectedTowers) this._pulseTower(tower, dt)
-      for (const tower of this.litAdjGens) this._pulseTower(tower, dt)
+    for (const tower of this.connectedTowers) this._pulseTower(tower, dt)
+    for (const tower of this.litAdjGens) this._pulseTower(tower, dt)
+    for (const tower of this.enclosureGens) this._pulseTower(tower, dt)
+
+    // Pulse the enclosure floor with its generators' flash (strongest one wins).
+    if (city.enclosureOpacity) {
+      let encPulse = 0
+      for (const t of this.enclosureGens) encPulse = Math.max(encPulse, t.pulseEnv || 0)
+      city.enclosureOpacity.value = 0.2 + encPulse * 0.3
     }
   }
 
@@ -299,7 +356,7 @@ export class EnergySystem {
   }
 
   /** Float a "+N" caption from the top of a tower. */
-  spawnTowerText(tower, text, color, sound = 'pluck', delay = Math.random()) {
+  spawnTowerText(tower, text, color, sound = 'dink', delay = Math.random()) {
     const city = this.city
     const c = tower.box.getCenter(this._c)
     this.spawnTextAt(

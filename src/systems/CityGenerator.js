@@ -2,7 +2,7 @@ import { MathUtils, Vector2 } from 'three/webgpu'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 import { Tower } from '../Tower.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType } from '../blockTypes.js'
+import { TopType, roofGeomIndex } from '../blockTypes.js'
 
 /**
  * CityGenerator - procedural generation of a lot's towers and their heights.
@@ -50,16 +50,22 @@ export class CityGenerator {
         // Skip towers that extend outside the lot (creates empty areas).
         if (px + sx > width || py + sy > height) { px++; continue }
 
-        // Top type: turrets only on 1x1; holes/decorative on any square. Path
-        // generators (plus) are assigned per lot in assignLotPlus.
+        // Top type (rect tops only, no quart): turrets only on 1x1, holes on any
+        // square. Path generators (plus) are assigned per lot in assignLotPlus.
         const is1x1 = sx === 1 && sy === 1
-        let tt = isSquare ? MathUtils.randInt(0, is1x1 ? 4 : 2) : 0
-        if (tt === TopType.PEG_TURRET || tt === TopType.DIVOT_TURRET) {
-          if (turretCount >= 2) tt = MathUtils.randInt(0, 2) // extra turrets -> plain
-          else turretCount++
+        let tt = TopType.SQUARE
+        if (isSquare) {
+          const pool = is1x1
+            ? [TopType.SQUARE, TopType.ADJ_GENERATOR, TopType.PEG_TURRET, TopType.DIVOT_TURRET]
+            : [TopType.SQUARE, TopType.ADJ_GENERATOR]
+          tt = pool[MathUtils.randInt(0, pool.length - 1)]
+          if (tt === TopType.PEG_TURRET || tt === TopType.DIVOT_TURRET) {
+            if (turretCount >= 2) tt = TopType.SQUARE // extra turrets -> plain
+            else turretCount++
+          }
         }
         tower.typeTop = tt
-        tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
+        tower.typeBottom = BlockGeometry.topToBottom.get(roofGeomIndex(tower.typeTop))
         tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
 
         // Sparse lots: some slots start hidden until the player builds them.

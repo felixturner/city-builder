@@ -1,5 +1,8 @@
 import { Sounds } from './lib/Sounds.js'
 
+// Set false to remove the energy cap (energy is balanced by spend, not a ceiling).
+const CAP_ENABLED = false
+
 /**
  * Mana - text HUD (top-left) showing two stats:
  *   energy:     current / max  (max = baseMax + population)
@@ -8,7 +11,7 @@ import { Sounds } from './lib/Sounds.js'
  * cap. City calls setStats() whenever grey-block totals change.
  */
 export class Mana {
-  constructor(baseMax = 50, initial = 50) {
+  constructor(baseMax = 100, initial = 100) {
     this.baseMax = baseMax
     this.population = 0
     this.max = baseMax
@@ -51,7 +54,7 @@ export class Mana {
   setStats(population) {
     this.population = population
     this.max = this.baseMax + population
-    if (this.current > this.max) this.current = this.max
+    if (CAP_ENABLED && this.current > this.max) this.current = this.max
     this.render()
   }
 
@@ -65,8 +68,7 @@ export class Mana {
 
   /** Add energy, capped at max. */
   add(amount = 1) {
-    Sounds.play('pluck')
-    this.current = Math.min(this.max, this.current + amount)
+    this.current = CAP_ENABLED ? Math.min(this.max, this.current + amount) : this.current + amount
     this.render()
   }
 }

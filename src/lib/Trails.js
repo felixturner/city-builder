@@ -93,10 +93,10 @@ export class Trails {
     this.pathTowers = [] // [towerA, towerB] per path index, for setConnectors
     this.meshes = []
 
-    // Grid layout constants (from City)
+    // Grid layout constants (from City) - lots are adjacent (no road gaps).
     this.lotSize = 10
-    this.roadWidth = 4
-    this.cellSize = this.lotSize + this.roadWidth // 14
+    this.roadWidth = 0
+    this.cellSize = this.lotSize + this.roadWidth // 10
 
     // Path visual settings
     this.pathWidth = 0.4

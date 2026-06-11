@@ -8,12 +8,16 @@ import {
   GridHelper,
   PlaneGeometry,
   Mesh,
+  BufferGeometry,
+  Float32BufferAttribute,
   MeshBasicNodeMaterial,
+  AdditiveBlending,
 } from 'three/webgpu'
 import gsap from 'gsap'
-import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float } from 'three/tsl'
+import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, attribute } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
+import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
 import { Debris } from './lib/Debris.js'
 import { Sounds } from './lib/Sounds.js'
 import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
@@ -23,7 +27,7 @@ import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
 import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { TopType, isGrey, isTurret, towerArea } from './blockTypes.js'
+import { TopType, isTurret, towerArea, roofGeomIndex, isEnclosureGenerator } from './blockTypes.js'
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -131,6 +135,7 @@ export class City {
     await BlockGeometry.init()
     this.initGrid()
     await this.initTowers()
+    this.generateStartCluster() // place the starting tiles (needs the tower pool)
     this.updateMatrices()
     this.renderer.recalculateVisibility()
     this.energy.refreshManaStats()
@@ -141,8 +146,8 @@ export class City {
     this.cellUnit = 2
     // Lot layout (world units): 10-unit lots (5 cells) separated by 4-unit roads (2 cells)
     this.lotSize = 10
-    this.roadWidth = 4
-    this.cellSize = this.lotSize + this.roadWidth // 14 world units per lot pitch
+    this.roadWidth = 0 // lots are adjacent (no road gaps): one continuous grid
+    this.cellSize = this.lotSize + this.roadWidth // 10 world units per lot pitch
 
     // City dimensions from static constant
     this.numLotsX = City.CITY_SIZE_LOTS
@@ -160,43 +165,30 @@ export class City {
     this.gridOffsetX = -(this.centerLotX * this.cellSize + this.lotSize / 2)
     this.gridOffsetZ = -(this.centerLotZ * this.cellSize + this.lotSize / 2)
 
-    // Buildable cells per lot side (5x5 grid of 1-cell slots).
+    // Buildable cells per lot side (5x5 grid of 1-cell slots), and the single
+    // global cell grid spanning the whole city (lots are contiguous, so tiles
+    // can straddle lot boundaries). occupied[gy][gx] tracks taken cells.
     this.lotCells = this.lotSize / this.cellUnit
+    this.gridCellsX = this.numLotsX * this.lotCells
+    this.gridCellsY = this.numLotsY * this.lotCells
+    this.occupied = Array.from({ length: this.gridCellsY }, () => Array(this.gridCellsX).fill(false))
 
     // Only the CENTER lot is pre-generated (the old varied, pre-built model).
     // Every other lot starts as an empty grid the player fills from the tile
     // palette via free placement (see placeTileFree). occupied[][] tracks which
     // cells are taken; the center lot is marked fully occupied (no free-place).
+    // Every lot starts empty + active. The starting cluster of tiles is placed in
+    // generateStartCluster() (after the tower pool exists), as ordinary placed
+    // tiles, so there's no special pre-built center lot anymore.
     this.lots = []
     for (let lotY = 0; lotY < this.numLotsY; lotY++) {
       const row = []
       for (let lotX = 0; lotX < this.numLotsX; lotX++) {
-        const isCenter = lotX === this.centerLotX && lotY === this.centerLotZ
         const lotColorIndex = MathUtils.randInt(0, this.accentColors.length - 1)
-        const occupied = Array.from({ length: this.lotCells }, () => Array(this.lotCells).fill(isCenter))
-
-        let towers = []
-        if (isCenter) {
-          const startX = lotX * this.cellSize
-          const startY = lotY * this.cellSize
-          const firstTower = this.towers.length
-          this.generator.fillLot(startX, startY, startX + this.lotSize, startY + this.lotSize, 0.8)
-          this.generator.assignLotPlus(firstTower)
-          towers = this.towers.slice(firstTower)
-          for (const t of towers) {
-            t.lotX = lotX
-            t.lotY = lotY
-            t.colorIndex = lotColorIndex
-            t.dormant = false
-            t.visible = !t.empty
-          }
-        }
-        row.push({ lotX, lotY, colorIndex: lotColorIndex, towers, active: isCenter, occupied })
+        row.push({ lotX, lotY, colorIndex: lotColorIndex, towers: [], active: true })
       }
       this.lots.push(row)
     }
-
-    this.generator.finalizeGrid()
   }
 
   /**
@@ -214,56 +206,61 @@ export class City {
     }
   }
 
-  /**
-   * Map a world-space ground point to its lot + cell (0..lotCells-1). Returns
-   * null for road gaps or out-of-bounds.
-   */
-  worldToLotCell(worldX, worldZ) {
-    const gx = worldX - this.gridOffsetX
-    const gz = worldZ - this.gridOffsetZ
-    const lotX = Math.floor(gx / this.cellSize)
-    const lotY = Math.floor(gz / this.cellSize)
-    if (lotX < 0 || lotY < 0 || lotX >= this.numLotsX || lotY >= this.numLotsY) return null
-    const inX = gx - lotX * this.cellSize
-    const inZ = gz - lotY * this.cellSize
-    if (inX > this.lotSize || inZ > this.lotSize) return null // road gap
-    return {
-      lot: this.lots[lotY][lotX],
-      cx: Math.min(this.lotCells - 1, Math.floor(inX / this.cellUnit)),
-      cy: Math.min(this.lotCells - 1, Math.floor(inZ / this.cellUnit)),
-    }
+  /** Map a world-space ground point to a global cell (gx,gy), or null if OOB. */
+  worldToCell(worldX, worldZ) {
+    const gx = Math.floor((worldX - this.gridOffsetX) / this.cellUnit)
+    const gy = Math.floor((worldZ - this.gridOffsetZ) / this.cellUnit)
+    if (gx < 0 || gy < 0 || gx >= this.gridCellsX || gy >= this.gridCellsY) return null
+    return { gx, gy }
   }
 
-  /** Whether a w×h footprint anchored at (cx,cy) fits free within a lot. */
-  fits(lot, cx, cy, w, h) {
-    if (cx < 0 || cy < 0 || cx + w > this.lotCells || cy + h > this.lotCells) return false
-    for (let j = 0; j < h; j++) {
-      for (let i = 0; i < w; i++) {
-        if (lot.occupied[cy + j][cx + i]) return false
+  /** The lot that owns a global cell. */
+  cellLot(gx, gy) {
+    return this.lots[Math.floor(gy / this.lotCells)][Math.floor(gx / this.lotCells)]
+  }
+
+  /**
+   * Whether a footprint (list of [dx,dy] cell offsets) anchored at global cell
+   * (gx,gy) is free, in-bounds, and entirely within active lots.
+   */
+  fits(gx, gy, cells, claimColor = -1) {
+    for (const [dx, dy] of cells) {
+      const x = gx + dx, y = gy + dy
+      if (x < 0 || y < 0 || x >= this.gridCellsX || y >= this.gridCellsY) return false
+      if (this.occupied[y][x]) return false
+      if (!this.cellLot(x, y).active) return false
+      // A coloured tile can't enter a region already claimed by another colour.
+      if (claimColor >= 0 && this.cellClaim) {
+        const cc = this.cellClaim[y * this.gridCellsX + x]
+        if (cc >= 0 && cc !== claimColor) return false
       }
     }
     return true
   }
 
   /**
-   * Place a palette tile freely into a lot's empty cells. Grabs a pooled tower,
-   * sizes its footprint to the cells, builds it at level 0. Returns the tower or
-   * null if the pool is exhausted.
+   * Place a palette tile freely into empty cells. `cells` is the footprint
+   * (offsets from gx,gy); `opts` carries render info: { tetro?: {name,rot},
+   * typeTop, colorIndex, topColorIndex }. Grabs a pooled tower, builds it at
+   * level 0. Returns the tower or null if the pool is exhausted.
    */
-  placeTileFree(lot, cx, cy, w, h, typeTop, colorIndex, topColorIndex) {
+  placeTileFree(gx, gy, cells, opts, silent = false) {
     const t = this.towerPool.pop()
     if (!t) return null
 
-    const x0 = lot.lotX * this.cellSize + cx * this.cellUnit
-    const z0 = lot.lotY * this.cellSize + cy * this.cellUnit
+    const w = Math.max(...cells.map((c) => c[0])) + 1
+    const h = Math.max(...cells.map((c) => c[1])) + 1
+    const x0 = gx * this.cellUnit
+    const z0 = gy * this.cellUnit
     t.box.min.set(x0, z0)
     t.box.max.set(x0 + w * this.cellUnit, z0 + h * this.cellUnit)
+    const lot = this.cellLot(gx, gy) // lot membership by anchor cell
     t.lotX = lot.lotX
     t.lotY = lot.lotY
-    t.cellX = cx
-    t.cellY = cy
-    t.cellW = w
-    t.cellH = h
+    t.cellX = gx
+    t.cellY = gy
+    t.cells = cells
+    t.tetro = opts.tetro || null // { name, rot } for tetromino walls, else null
     t.dormant = false
     t.empty = false
     t.emptyTower = false
@@ -272,19 +269,18 @@ export class City {
     t.numFloors = 0
     t.rotation = 0
     t.skipFactor = 2 // always passes visibility
-    t.colorIndex = colorIndex
-    t.typeTop = typeTop
-    t.setTopColorIndex(topColorIndex)
+    t.colorIndex = opts.colorIndex
+    t.typeTop = opts.typeTop
+    t.setTopColorIndex(opts.topColorIndex)
 
-    for (let j = 0; j < h; j++) {
-      for (let i = 0; i < w; i++) lot.occupied[cy + j][cx + i] = true
-    }
+    for (const [dx, dy] of cells) this.occupied[gy + dy][gx + dx] = true
     lot.towers.push(t)
 
-    this.renderer.applyTypeVisuals(t)
+    this.renderer.applyTileVisuals(t)
     this.updateTowerMatrices(t)
-    Sounds.play('pop', 0.8, 0.15)
+    if (!silent) Sounds.play('pop', 0.8, 0.15)
     this.onTowerChanged(t)
+    this.updateEnclosure()
     return t
   }
 
@@ -300,20 +296,152 @@ export class City {
 
   /** Free a placed tower's cells and return it to the pool (no debris/sound). */
   freePlacedTower(tower) {
+    for (const [dx, dy] of tower.cells) this.occupied[tower.cellY + dy][tower.cellX + dx] = false
     const lot = this.lots[tower.lotY][tower.lotX]
-    for (let j = 0; j < tower.cellH; j++) {
-      for (let i = 0; i < tower.cellW; i++) lot.occupied[tower.cellY + j][tower.cellX + i] = false
-    }
     const k = lot.towers.indexOf(tower)
     if (k >= 0) lot.towers.splice(k, 1)
 
     tower.placed = false
     tower.dormant = true
+    tower.tetro = null
     tower.visible = false
     tower.numFloors = 0
     this.updateTowerMatrices(tower)
     this.towerPool.push(tower)
     this.onTowerChanged(tower)
+    this.updateEnclosure()
+  }
+
+  /** Free a tower's cells and remove it (no debris). Placed tiles return to the
+   *  pool; pre-built center-lot towers free their footprint and hide. */
+  demolishTower(tower) {
+    if (tower.placed) { this.freePlacedTower(tower); return }
+    const cu = this.cellUnit
+    const gx0 = Math.round(tower.box.min.x / cu), gy0 = Math.round(tower.box.min.y / cu)
+    const tw = Math.round((tower.box.max.x - tower.box.min.x) / cu)
+    const th = Math.round((tower.box.max.y - tower.box.min.y) / cu)
+    for (let j = 0; j < th; j++) {
+      for (let i = 0; i < tw; i++) {
+        const x = gx0 + i, y = gy0 + j
+        if (x >= 0 && y >= 0 && x < this.gridCellsX && y < this.gridCellsY) this.occupied[y][x] = false
+      }
+    }
+    tower.visible = false
+    tower.numFloors = 0
+    this.onTowerChanged(tower)
+    this.updateEnclosure()
+  }
+
+  // ---- starting cluster -------------------------------------------------------
+
+  /** Roll a random starting tile: { cells, cost, opts }. 66% walls (tetromino,
+   *  cost = cells) / 50% generators-or-turrets (square, cost = cells x 2).
+   *  Excludes the enclosure generator (useless unplaced). */
+  _rollStartTile() {
+    const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
+    if (Math.random() < 0.5) {
+      const name = TetrominoGeometry.names[MathUtils.randInt(0, TetrominoGeometry.names.length - 1)]
+      const states = TetrominoGeometry.states[name]
+      const rot = MathUtils.randInt(0, states.length - 1)
+      const cells = TetrominoGeometry.placeCells(states[rot])
+      return { cells, cost: cells.length, opts: { tetro: { name, rot }, typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex } }
+    }
+    const r = Math.random()
+    const s = r < 0.6 ? 1 : (r < 0.9 ? 2 : 3)
+    const types = s === 1
+      ? [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
+      : [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR]
+    const typeTop = types[MathUtils.randInt(0, types.length - 1)]
+    const cells = []
+    for (let j = 0; j < s; j++) for (let i = 0; i < s; i++) cells.push([i, j])
+    return { cells, cost: cells.length * 2, opts: { typeTop, colorIndex: MathUtils.randInt(0, 2), topColorIndex } }
+  }
+
+  /** Find a spot where `cells` fits within ~2 cells of the cluster, near the
+   *  centre, preferring a gap (not touching existing tiles); falls back to any
+   *  fit so the cluster always fills. */
+  _findClusterSpot(cells, cluster, ccx, ccy) {
+    const W = this.gridCellsX, H = this.gridCellsY
+    const R = 2
+    const cand = []
+    const seen = new Set()
+    for (const key of cluster) {
+      const x = key % W, y = (key - x) / W
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const nx = x + dx, ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
+          const nk = ny * W + nx
+          if (this.occupied[ny][nx] || seen.has(nk)) continue
+          seen.add(nk)
+          cand.push({ x: nx, y: ny, d: (nx - ccx) ** 2 + (ny - ccy) ** 2 + Math.random() * 6 })
+        }
+      }
+    }
+    cand.sort((a, b) => a.d - b.d)
+    const touches = (gx, gy) => cells.some(([dx, dy]) => {
+      const x = gx + dx, y = gy + dy
+      return [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]].some(([ax, ay]) =>
+        ax >= 0 && ay >= 0 && ax < W && ay < H && cluster.has(ay * W + ax))
+    })
+    for (const gappy of [true, false]) {
+      for (const c of cand) {
+        for (const [dx, dy] of cells) {
+          const gx = c.x - dx, gy = c.y - dy
+          if (!this.fits(gx, gy, cells)) continue
+          if (gappy && touches(gx, gy)) continue
+          return { gx, gy }
+        }
+      }
+    }
+    return null
+  }
+
+  /** Place a roughly circular, gappy starting cluster of tiles centred on the
+   *  middle (point budget: walls 1/cell, generators/turrets 2/cell), each given a
+   *  procedural noise height (the old generation method - mostly flat, a few
+   *  tall). The intro builds them up staggered from the centre. */
+  generateStartCluster(budget = 50) {
+    const lc = this.lotCells
+    const ccx = this.centerLotX * lc + Math.floor(lc / 2)
+    const ccy = this.centerLotZ * lc + Math.floor(lc / 2)
+    const W = this.gridCellsX
+    const cluster = new Set()
+    const placed = []
+    const add = (gx, gy, cells) => { for (const [dx, dy] of cells) cluster.add((gy + dy) * W + (gx + dx)) }
+
+    // Seed a tile at the centre.
+    const seed = this._rollStartTile()
+    const sw = Math.max(...seed.cells.map((c) => c[0])) + 1
+    const sh = Math.max(...seed.cells.map((c) => c[1])) + 1
+    const sgx = ccx - Math.floor(sw / 2), sgy = ccy - Math.floor(sh / 2)
+    if (this.fits(sgx, sgy, seed.cells)) {
+      const t = this.placeTileFree(sgx, sgy, seed.cells, seed.opts, true)
+      if (t) { add(sgx, sgy, seed.cells); placed.push(t); budget -= seed.cost }
+    }
+
+    let tries = 0
+    while (budget > 0 && tries < 800) {
+      tries++
+      const tile = this._rollStartTile()
+      if (tile.cost > budget) continue
+      const pos = this._findClusterSpot(tile.cells, cluster, ccx, ccy)
+      if (!pos) continue
+      const t = this.placeTileFree(pos.gx, pos.gy, tile.cells, tile.opts, true)
+      if (!t) continue
+      add(pos.gx, pos.gy, tile.cells)
+      placed.push(t)
+      budget -= tile.cost
+    }
+
+    // Procedural noise heights (mostly flat, a few tall); the intro builds them
+    // up staggered from the centre.
+    for (const t of placed) {
+      const c = t.box.getCenter(this.towerCenter)
+      t.cityNoiseVal = this.cityNoise.scaled2D(c.x, c.y)
+      t.randFactor = Math.random()
+      t.numFloors = this.generator.floorsForTower(t)
+    }
   }
 
   async initTowers() {
@@ -341,12 +469,20 @@ export class City {
       iCounts.push(g.index.count)
     }
 
+    // Procedural tetromino geometries (grey wall tiles) added alongside the GLB
+    // blocks. Each entry has a body (stacked per floor) + a thin roof cap.
+    const tetroList = TetrominoGeometry.build(this.cellUnit)
+
     // Geometry buffer = the unique block geometries (added once, shared by all
     // instances). Instances (center towers + the free-placement pool) reference
     // them by id and add no vertices.
     let totalV = 0
     let totalI = 0
     for (let i = 0; i < geoms.length; i++) { totalV += vCounts[i]; totalI += iCounts[i] }
+    for (const e of tetroList) {
+      totalV += e.body.attributes.position.count + e.roof.attributes.position.count
+      totalI += e.body.index.count + e.roof.index.count
+    }
 
     // Center-lot towers + a pool of generic towers grabbed on free placement.
     this.poolSize = 900
@@ -367,6 +503,17 @@ export class City {
     }
     this.geomIds = geomIds // kept for runtime tile re-rolls on destroy
 
+    // Register tetromino geometries; lookup by `${name}:${rot}`.
+    this.tetroGeom = new Map()
+    for (const e of tetroList) {
+      this.tetroGeom.set(`${e.name}:${e.rot}`, {
+        bodyId: this.towerMesh.addGeometry(e.body),
+        roofId: this.towerMesh.addGeometry(e.roof),
+        cells: e.cells,
+        body: e.body, // standalone geometry, reused for the drag ghost
+      })
+    }
+
     // Create instances for each tower: maxFloors base + 1 roof
     for (let i = 0; i < this.towers.length; i++) {
       const tower = this.towers[i]
@@ -382,7 +529,7 @@ export class City {
       }
 
       // Create roof instance (top geometry)
-      tower.roofInstance = this.towerMesh.addInstance(geomIds[tower.typeTop])
+      tower.roofInstance = this.towerMesh.addInstance(geomIds[roofGeomIndex(tower.typeTop)])
       this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
       this.towerMesh.setVisibleAt(tower.roofInstance, false)
       this.instanceToTower.set(tower.roofInstance, tower)
@@ -509,6 +656,10 @@ export class City {
     // Set initial zoomed-out position
     camera.position.copy(target).addScaledVector(direction, startDist)
 
+    // Disable user input during the zoom tween - gsap and OrbitControls fighting
+    // over the camera leaves the controls in a bad state (pan reads as rotate).
+    controls.enabled = false
+
     // Animate distance only
     const animState = { dist: startDist }
     gsap.to(animState, {
@@ -518,7 +669,8 @@ export class City {
       onUpdate: () => {
         camera.position.copy(target).addScaledVector(direction, animState.dist)
         controls.update()
-      }
+      },
+      onComplete: () => { controls.enabled = true },
     })
   }
 
@@ -538,13 +690,42 @@ export class City {
         continue
       }
 
+      // Tetromino walls: geometry encodes the multi-cell shape at cell scale,
+      // centred on the bounding box. No footprint scaling or rotation.
+      if (tower.tetro) {
+        const c = tower.box.getCenter(this.towerCenter)
+        const ax = c.x, az = c.y
+        const nf = tower.numFloors
+        const fhh = this.floorHeight / 2
+        for (let f = 0; f < this.maxFloors; f++) {
+          const idx = tower.floorInstances[f]
+          if (f < nf) {
+            dummy.position.set(ax, f * this.floorHeight + fhh, az)
+            dummy.scale.set(1, this.floorHeight, 1)
+            dummy.rotation.y = 0
+            dummy.updateMatrix()
+            towerMesh.setMatrixAt(idx, dummy.matrix)
+            towerMesh.setVisibleAt(idx, true)
+          } else {
+            towerMesh.setVisibleAt(idx, false)
+          }
+        }
+        dummy.position.set(ax, nf * this.floorHeight + TetrominoGeometry.roofHalf, az)
+        dummy.scale.set(1, 1, 1)
+        dummy.rotation.y = 0
+        dummy.updateMatrix()
+        towerMesh.setMatrixAt(tower.roofInstance, dummy.matrix)
+        towerMesh.setVisibleAt(tower.roofInstance, true)
+        continue
+      }
+
       const center = tower.box.getCenter(this.towerCenter)
       const size = tower.box.getSize(this.towerSize)
       const numFloors = tower.numFloors
 
       // Half-heights for centered geometries
       const floorHalfHeight = this.floorHeight / 2 // Base geom is 1 unit, scaled to floorHeight
-      const roofHalfHeight = BlockGeometry.halfHeights[tower.typeTop]
+      const roofHalfHeight = BlockGeometry.halfHeights[roofGeomIndex(tower.typeTop)]
 
       // Position and show floor instances (geometry centered, so add halfHeight)
       for (let f = 0; f < this.maxFloors; f++) {
@@ -674,13 +855,42 @@ export class City {
       return
     }
 
+    // Tetromino walls: geometry at cell scale, centred on the bounding box.
+    if (tower.tetro) {
+      const c = tower.box.getCenter(this.towerCenter)
+      const ax = c.x, az = c.y
+      const nf = tower.numFloors
+      const fhh = this.floorHeight / 2
+      for (let f = 0; f < this.maxFloors; f++) {
+        const idx = tower.floorInstances[f]
+        if (f < nf) {
+          dummy.position.set(ax, f * this.floorHeight + fhh, az)
+          dummy.scale.set(1, this.floorHeight, 1)
+          dummy.rotation.y = 0
+          dummy.updateMatrix()
+          towerMesh.setMatrixAt(idx, dummy.matrix)
+          towerMesh.setVisibleAt(idx, true)
+        } else {
+          towerMesh.setVisibleAt(idx, false)
+        }
+      }
+      towerMesh.setVisibleAt(tower.roofInstance, true)
+      if (tower.roofAnimating) return
+      dummy.position.set(ax, nf * this.floorHeight + TetrominoGeometry.roofHalf, az)
+      dummy.scale.set(1, 1, 1)
+      dummy.rotation.y = 0
+      dummy.updateMatrix()
+      towerMesh.setMatrixAt(tower.roofInstance, dummy.matrix)
+      return
+    }
+
     const center = tower.box.getCenter(this.towerCenter)
     const size = tower.box.getSize(this.towerSize)
     const numFloors = tower.numFloors
 
     // Half-heights for centered geometries
     const floorHalfHeight = this.floorHeight / 2
-    const roofHalfHeight = BlockGeometry.halfHeights[tower.typeTop]
+    const roofHalfHeight = BlockGeometry.halfHeights[roofGeomIndex(tower.typeTop)]
 
     for (let f = 0; f < this.maxFloors; f++) {
       const idx = tower.floorInstances[f]
@@ -758,6 +968,175 @@ export class City {
     this.lotGrid = lotGrid
 
     this.lotGrowth.createLotOutlines()
+    this.createEnclosureLayer()
+  }
+
+  /** A low-opacity glow per enclosed cell (white = unclaimed, accent = claimed by
+   *  an enclosure generator), one merged ground mesh with per-vertex colours. */
+  createEnclosureLayer() {
+    this.enclosureMaxVerts = this.gridCellsX * this.gridCellsY * 6 // 2 tris/cell
+    this._encPos = new Float32Array(this.enclosureMaxVerts * 3)
+    const normals = new Float32Array(this.enclosureMaxVerts * 3)
+    for (let i = 0; i < this.enclosureMaxVerts; i++) normals[i * 3 + 1] = 1 // all up
+    const geom = new BufferGeometry()
+    this._encPosAttr = new Float32BufferAttribute(this._encPos, 3)
+    this._encPos = this._encPosAttr.array // Float32BufferAttribute copies; write the real buffer
+    this._encColAttr = new Float32BufferAttribute(new Float32Array(this.enclosureMaxVerts * 3), 3)
+    this._encCol = this._encColAttr.array
+    geom.setAttribute('position', this._encPosAttr)
+    geom.setAttribute('normal', new Float32BufferAttribute(normals, 3))
+    geom.setAttribute('color', this._encColAttr)
+    geom.setDrawRange(0, 0)
+    this._encGeom = geom
+    const mat = new MeshBasicNodeMaterial({
+      transparent: true,
+      depthTest: false,
+      blending: AdditiveBlending,
+      side: 2,
+    })
+    mat.colorNode = attribute('color') // per-cell white / accent
+    // Opacity driven by a uniform so the floor can pulse with its generator.
+    this.enclosureOpacity = uniform(0.2)
+    mat.opacityNode = this.enclosureOpacity
+    this.enclosureMesh = new Mesh(geom, mat)
+    this.enclosureMesh.frustumCulled = false
+    this.enclosureMesh.renderOrder = 3 // over the ground, under the drag ghost (5)
+    this.scene.add(this.enclosureMesh)
+    this.updateEnclosure()
+  }
+
+  /** Mark the footprint cells of a tower into a Uint8 mask. */
+  _markTowerCells(t, mask, W, H) {
+    const set = (x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) mask[y * W + x] = 1 }
+    if (t.cells) {
+      for (const [dx, dy] of t.cells) set(t.cellX + dx, t.cellY + dy)
+    } else {
+      const gx0 = Math.round(t.box.min.x / this.cellUnit)
+      const gy0 = Math.round(t.box.min.y / this.cellUnit)
+      const tw = Math.round((t.box.max.x - t.box.min.x) / this.cellUnit)
+      const th = Math.round((t.box.max.y - t.box.min.y) / this.cellUnit)
+      for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) set(gx0 + i, gy0 + j)
+    }
+  }
+
+  /**
+   * Recompute enclosures: flood-fill the grid; cells walled off from the boundary
+   * are enclosed. Walls = any visible tower EXCEPT enclosure generators (those are
+   * the "contents" sealed inside). Enclosed cells are grouped into connected
+   * regions; a region is claimed (coloured) by an enclosure generator inside it.
+   * Drives the floor glow, per-cell claim colour (placement), and generator mana.
+   */
+  updateEnclosure() {
+    if (!this.enclosureMesh) return
+    const W = this.gridCellsX, H = this.gridCellsY
+
+    // 1. Wall mask = visible towers except enclosure generators.
+    const wall = new Uint8Array(W * H)
+    for (const t of this.towers) {
+      if (!t.visible || isEnclosureGenerator(t)) continue
+      this._markTowerCells(t, wall, W, H)
+    }
+
+    // 2. Flood-fill "outside" from the boundary through non-wall cells.
+    const outside = new Uint8Array(W * H)
+    const stack = []
+    const seed = (x, y) => {
+      const idx = y * W + x
+      if (!wall[idx] && !outside[idx]) { outside[idx] = 1; stack.push(idx) }
+    }
+    for (let x = 0; x < W; x++) { seed(x, 0); seed(x, H - 1) }
+    for (let y = 0; y < H; y++) { seed(0, y); seed(W - 1, y) }
+    while (stack.length) {
+      const idx = stack.pop()
+      const x = idx % W, y = (idx - x) / W
+      if (x > 0) seed(x - 1, y)
+      if (x < W - 1) seed(x + 1, y)
+      if (y > 0) seed(x, y - 1)
+      if (y < H - 1) seed(x, y + 1)
+    }
+
+    // 3. Group enclosed cells (non-wall && unreachable) into connected regions.
+    const region = new Int32Array(W * H).fill(-1)
+    const regions = [] // { count, color }
+    const rstack = []
+    for (let i = 0; i < W * H; i++) {
+      if (wall[i] || outside[i] || region[i] !== -1) continue
+      const rid = regions.length
+      regions.push({ count: 0, color: -1 })
+      region[i] = rid
+      rstack.push(i)
+      while (rstack.length) {
+        const idx = rstack.pop()
+        regions[rid].count++
+        const x = idx % W, y = (idx - x) / W
+        const nb = (nx, ny) => {
+          const ni = ny * W + nx
+          if (nx >= 0 && ny >= 0 && nx < W && ny < H && !wall[ni] && !outside[ni] && region[ni] === -1) {
+            region[ni] = rid
+            rstack.push(ni)
+          }
+        }
+        nb(x - 1, y); nb(x + 1, y); nb(x, y - 1); nb(x, y + 1)
+      }
+    }
+
+    // 4. Claim colour from enclosure generators inside a region; set mana size.
+    for (const t of this.towers) {
+      if (!isEnclosureGenerator(t)) continue
+      t.enclosureRegionCells = 0
+      if (!t.visible) continue
+      const rid = region[t.cellY * W + t.cellX]
+      if (rid >= 0) {
+        regions[rid].color = t.colorIndex
+        t.enclosureRegionCells = regions[rid].count
+      }
+    }
+
+    // Region count change: energy.mp3 on a new enclosure, power-down on a lost one
+    // (skip the first computation so the initial city doesn't trigger it).
+    if (this._enclosureCount !== undefined) {
+      if (regions.length > this._enclosureCount) Sounds.play('energy')
+      else if (regions.length < this._enclosureCount) Sounds.play('power-down')
+    }
+    this._enclosureCount = regions.length
+
+    // 5. Per-cell claim colour for placement checks (-1 = unclaimed / not enclosed).
+    if (!this.cellClaim) this.cellClaim = new Int8Array(W * H)
+    this.cellClaim.fill(-1)
+    for (let i = 0; i < W * H; i++) {
+      const rid = region[i]
+      if (rid >= 0) this.cellClaim[i] = regions[rid].color
+    }
+
+    // 6. Render: a glow quad per enclosed cell (white unclaimed, accent claimed).
+    const pos = this._encPos, col = this._encCol
+    const cu = this.cellUnit, yp = 0.06
+    let v = 0
+    for (let y = 0; y < H && v + 6 <= this.enclosureMaxVerts; y++) {
+      for (let x = 0; x < W; x++) {
+        const rid = region[y * W + x]
+        if (rid < 0) continue
+        let cr = 1, cg = 1, cb = 1 // unclaimed = white
+        const c = regions[rid].color
+        if (c >= 0) { const ac = this.accentColors[c]; cr = ac.r; cg = ac.g; cb = ac.b }
+        const x0 = x * cu + this.gridOffsetX, z0 = y * cu + this.gridOffsetZ
+        const x1 = x0 + cu, z1 = z0 + cu
+        const q = [x0, z0, x1, z0, x1, z1, x0, z0, x1, z1, x0, z1]
+        for (let k = 0; k < 6; k++) {
+          pos[v * 3] = q[k * 2]; pos[v * 3 + 1] = yp; pos[v * 3 + 2] = q[k * 2 + 1]
+          col[v * 3] = cr; col[v * 3 + 1] = cg; col[v * 3 + 2] = cb
+          v++
+        }
+        if (v + 6 > this.enclosureMaxVerts) break
+      }
+    }
+    this._encPosAttr.needsUpdate = true
+    this._encColAttr.needsUpdate = true
+    this._encGeom.setDrawRange(0, v)
+    this.enclosureMesh.visible = v > 0
+
+    // Region sizes just changed -> recompute enclosure-generator mana.
+    this.energy.updateEnclosureGenerators()
   }
 
 }

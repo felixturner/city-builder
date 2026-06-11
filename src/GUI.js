@@ -78,9 +78,6 @@ export class GUIManager {
 
     // Gameplay folder (open at start)
     const gameplayFolder = gui.addFolder('Gameplay')
-    gameplayFolder.add(allParams.gameplay, 'spawnThreshold', 5, 200, 1).name('Lot Spawn Points').onChange((v) => {
-      demo.city.lotGrowth.spawnThreshold = v
-    })
     gameplayFolder.add(allParams.gameplay, 'spawnCreeps').name('Creeps').onChange((v) => {
       if (demo.creeps) demo.creeps.spawnEnabled = v
     })

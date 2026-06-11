@@ -100,7 +100,7 @@ export class Demo {
     this.city.interaction.pointer = this.pointerHandler
 
     // Energy/population HUD - grey blocks generate energy and raise its cap
-    this.mana = new Mana(50, 50)
+    this.mana = new Mana(100, 100)
     this.city.mana = this.mana
 
     await this.lighting.init()
@@ -383,8 +383,9 @@ export class Demo {
       backdropFilter: 'blur(4px)',
     })
     btn.addEventListener('click', () => {
-      // Jump the creep wave schedule forward 30s (no time simulation).
+      // Jump the creep wave schedule forward 30s, sliding the timeline over.
       this.creeps.skipAhead(30)
+      this.creepTimeline.tweenTo(this.creeps.elapsed)
     })
     document.body.appendChild(btn)
     this.fastForwardButton = btn

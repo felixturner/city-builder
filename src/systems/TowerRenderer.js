@@ -1,22 +1,19 @@
-import { MathUtils, Color, LineSegments, LineBasicNodeMaterial, BufferGeometry, Float32BufferAttribute } from 'three/webgpu'
+import { MathUtils, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, roofGeomIndex } from '../blockTypes.js'
 
 /**
  * TowerRenderer - runtime tower visual state on the shared BatchedMesh: accent
  * coloring of special towers, distance-based visibility, in-place reroll of a
- * tower's type/colors, and the destroy -> empty-tower (grey outline) lifecycle.
- * Operates on the mesh/state held by City; one-time mesh construction stays in
- * City.initTowers().
+ * tower's type/colors, and the destroy lifecycle. Operates on the mesh/state
+ * held by City; one-time mesh construction stays in City.initTowers().
  */
 export class TowerRenderer {
   constructor(city) {
     this.city = city
     this.turretColor = new Color(0xbbbbbb) // grey shade for turret tower blocks
-    this.emptyTowerOutlines = new Map() // tower -> grey floor-outline mesh
-    this.emptyTowerMat = null
   }
 
   /**
@@ -79,39 +76,42 @@ export class TowerRenderer {
    * points the instances at the new geometries.
    */
   rerollTower(tower) {
-    tower.typeTop = MathUtils.randInt(0, 5)
+    // Rectangular tops only (no quart). Pick from the rect set, then demote
+    // footprint-constraint violators to a plain grey rect.
+    const pool = [TopType.SQUARE, TopType.ADJ_GENERATOR, TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.PATH_GENERATOR]
+    tower.typeTop = pool[MathUtils.randInt(0, pool.length - 1)]
     const size = tower.box.getSize(this.city.towerSize)
     const w = Math.round(size.x / this.city.cellUnit)
     const h = Math.round(size.y / this.city.cellUnit)
-    // Footprint constraints: generators only on squares, turrets only on 1x1
-    // (capped 2/lot), holes only on squares; demote violators to plain.
-    if (tower.typeTop === TopType.PATH_GENERATOR && w !== h) tower.typeTop = MathUtils.randInt(0, 2)
+    // Generators only on squares, turrets only on 1x1 (capped 2/lot).
+    if (tower.typeTop === TopType.PATH_GENERATOR && w !== h) tower.typeTop = TopType.SQUARE
     if (isTurret(tower) && (!(w === 1 && h === 1) || this.countLotTurrets(tower) >= 2)) {
-      tower.typeTop = MathUtils.randInt(0, 2)
+      tower.typeTop = TopType.SQUARE
     }
-    if (tower.typeTop === TopType.ADJ_GENERATOR && w !== h) tower.typeTop = MathUtils.randInt(0, 1)
+    if (tower.typeTop === TopType.ADJ_GENERATOR && w !== h) tower.typeTop = TopType.SQUARE
     tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
     this.applyTypeVisuals(tower)
   }
 
   /**
-   * Place a specific tile (from the palette) into an empty slot: set its type +
-   * colour, reveal it as a level-0 block, and notify. The slot footprint must
-   * already match the tile (checked by the palette).
+   * Apply visuals for a placed tile. Tetromino walls point their instances at
+   * the merged tetromino body/roof geometry and colour grey; everything else
+   * falls through to the rectangular type path.
    */
-  placeTile(tower, typeTop, colorIndex, topColorIndex) {
+  applyTileVisuals(tower) {
+    if (!tower.tetro) { this.applyTypeVisuals(tower); return }
     const city = this.city
-    tower.emptyTower = false
-    tower.visible = true
-    tower.numFloors = 0
-    tower.typeTop = typeTop
-    tower.colorIndex = colorIndex
-    tower.setTopColorIndex(topColorIndex)
-    this.applyTypeVisuals(tower)
-    this.clearEmptyTowerOutline(tower)
-    city.updateTowerMatrices(tower)
-    Sounds.play('pop', 0.8, 0.15)
-    city.onTowerChanged(tower)
+    const mesh = city.towerMesh
+    const ids = city.tetroGeom.get(`${tower.tetro.name}:${tower.tetro.rot}`)
+    for (const idx of tower.floorInstances) mesh.setGeometryIdAt(idx, ids.bodyId)
+    mesh.setGeometryIdAt(tower.roofInstance, ids.roofId)
+    tower.isLit = false
+    tower.litColor = null
+    tower.laserColor = null
+    tower.topColor = Tower.COLORS[tower.topColorIndex]
+    tower.baseColor = tower.topColor // under-blocks match the top
+    for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.baseColor)
+    mesh.setColorAt(tower.roofInstance, tower.topColor)
   }
 
   /**
@@ -122,14 +122,15 @@ export class TowerRenderer {
   applyTypeVisuals(tower) {
     const city = this.city
     const mesh = city.towerMesh
-    tower.typeBottom = BlockGeometry.topToBottom.get(tower.typeTop)
+    const g = roofGeomIndex(tower.typeTop) // rendered top geometry (role != geom)
+    tower.typeBottom = BlockGeometry.topToBottom.get(g)
 
     for (const idx of tower.floorInstances) mesh.setGeometryIdAt(idx, city.geomIds[tower.typeBottom])
-    mesh.setGeometryIdAt(tower.roofInstance, city.geomIds[tower.typeTop])
+    mesh.setGeometryIdAt(tower.roofInstance, city.geomIds[g])
 
     tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
-    if (tower.isLit || tower.typeTop === TopType.ADJ_GENERATOR) {
-      // Path + adjacency generators: whole tower the lot accent (litColor glows).
+    if (isGenerator(tower)) {
+      // Generators (path / adj / enclosure): whole tower the accent (litColor glows).
       const accent = city.accentColors[tower.colorIndex]
       tower.litColor = accent.clone()
       tower.baseColor = accent.clone()
@@ -151,12 +152,12 @@ export class TowerRenderer {
   }
 
   /**
-   * Knock a tower down one floor, or destroy a level-0 tower into an empty
-   * (grey-outline) slot. Returns the new floor count.
+   * Knock a tower down one floor, or destroy a level-0 tower. Returns the new
+   * floor count. Destroyed tiles free their cell and vanish (no empty slots).
    */
   damageTower(tower) {
     const city = this.city
-    if (!tower || !tower.visible || tower.emptyTower) return 0
+    if (!tower || !tower.visible) return 0
 
     const center = tower.box.getCenter(city.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * city.floorHeight
@@ -169,70 +170,9 @@ export class TowerRenderer {
       city.onTowerChanged(tower)
       return tower.numFloors
     }
-    // Destroyed: freely-placed tiles free their cell (debris already spawned
-    // above); pre-built center-lot towers become a grey-outline empty slot.
-    if (tower.placed) {
-      city.freePlacedTower(tower)
-      return 0
-    }
-    this.setEmptyTower(tower)
-    city.onTowerChanged(tower)
+    // Destroyed at level 0: free its cell(s) and remove it (debris already spawned).
+    city.demolishTower(tower)
     return 0
-  }
-
-  /** Convert a tower into an empty tower: all blocks gone, grey floor outline. */
-  setEmptyTower(tower) {
-    tower.emptyTower = true
-    tower.numFloors = 0
-    tower.visible = false
-    this.city.updateTowerMatrices(tower) // hides every instance
-    this.showEmptyTowerOutline(tower)
-  }
-
-  /** Regenerate a fresh random level-0 tile where an empty tower was. */
-  regenEmptyTower(tower) {
-    const city = this.city
-    tower.emptyTower = false
-    tower.visible = true
-    tower.numFloors = 0
-    this.rerollTower(tower)
-    this.clearEmptyTowerOutline(tower)
-    city.updateTowerMatrices(tower)
-    Sounds.play('pop', 0.8, 0.15)
-    city.onTowerChanged(tower)
-  }
-
-  /** Show (lazily building) the grey floor outline for an empty tower. */
-  showEmptyTowerOutline(tower) {
-    const city = this.city
-    let o = this.emptyTowerOutlines.get(tower)
-    if (!o) {
-      if (!this.emptyTowerMat) {
-        this.emptyTowerMat = new LineBasicNodeMaterial({ color: 0xffffff, depthTest: false })
-      }
-      const x0 = tower.box.min.x + city.gridOffsetX
-      const z0 = tower.box.min.y + city.gridOffsetZ
-      const x1 = tower.box.max.x + city.gridOffsetX
-      const z1 = tower.box.max.y + city.gridOffsetZ
-      const y = 0.08
-      const geom = new BufferGeometry()
-      geom.setAttribute('position', new Float32BufferAttribute([
-        x0, y, z0, x1, y, z0,
-        x1, y, z0, x1, y, z1,
-        x1, y, z1, x0, y, z1,
-        x0, y, z1, x0, y, z0,
-      ], 3))
-      o = new LineSegments(geom, this.emptyTowerMat)
-      o.renderOrder = 3
-      city.scene.add(o)
-      this.emptyTowerOutlines.set(tower, o)
-    }
-    o.visible = true
-  }
-
-  clearEmptyTowerOutline(tower) {
-    const o = this.emptyTowerOutlines.get(tower)
-    if (o) o.visible = false
   }
 
   /** Count turret towers in a tower's lot, excluding itself. */

@@ -104,6 +104,37 @@ The three strategies, mapped to Carcassonne features:
 * Dot/monastery scoring — count *adjacent filled neighbors* (the 8-surround rule), or *proximity to other dot blocks specifically*?
 * Grey-wall "matching" — edges literally lining up to enclose an area, or just same-type walls being adjacent?
 
+## 13. Economy — current implementation (to balance)
+
+### Energy (mana) — `Mana.js`
+- **Cap** = `baseMax (50)` + **population**, where population = Σ floors over all visible **grey** towers. Start = 50/50.
+- Spent on builds + lot clicks; capped on gain (overflow is lost).
+
+### Costs — `TowerInteraction.canBuild`, `LotGrowth`
+| Action | Cost |
+| :--- | :--- |
+| Build a floor — grey / adjacency / enclosure | **1 × footprint cells** |
+| Build a floor — path generator / turret | **2 × footprint cells** |
+| Click a lot (growth) | **1** |
+| Place a palette tile | **free** — TODO: add a cost |
+| Reroll / discard a palette tile | **free** — TODO: add a cost |
+| Build at max height | blocked (`error.mp3`) |
+
+### Income — `EnergySystem` (tick = `GEN_INTERVAL` 2s, grey = `GREY_INTERVAL` 10s)
+| Source | Interval | Mana per tick |
+| :--- | :--- | :--- |
+| **Grey tower** (passive) | 10s | `+floors` per grey tower (also raises the cap) |
+| **Path generator** (cross/plus) | 2s | per connected pair, each tower: `round(floors × area × dist)`. Pairs connect when centre distance (cells) < sum of their heights. `dist` = trail length in cells |
+| **Adjacency generator** (hole) | 2s | `+1` per **built** member of a ≥2 orthogonally-adjacent cluster |
+| **Enclosure generator** (peg) | 2s | `round(enclosedCells × floors × 0.5)` when sealed in an enclosure |
+
+### Known imbalance (the thing to fix)
+- **Path gen is OP**: scales `height × area × distance` → super-linear; two tall, far-apart plus-blocks max the cap almost instantly.
+- **Adjacency is weak**: flat `+1`/member, ignores height.
+- **Enclosure is medium–strong**: `cells × height × 0.5`, big sealed areas pay a lot.
+- **Early game is brutal**: the 50 starting energy drains to builds/lot-clicks before any generator pays off → broke; then a couple of generators overshoot the cap → maxed. Curve has no middle.
+- **Goals**: smooth the early→mid curve, make the 3 generator types roughly comparable for comparable effort, and add placement + reroll costs as additional sinks.
+
 ## Ref games:
 - [Carcassonne](https://en.wikipedia.org/wiki/Carcassonne_(board_game)) (roads/cloisters/cities = 3 spatial scoring strategies)
 - [Townscaper](https://oskarstalberg.com/Townscaper/)

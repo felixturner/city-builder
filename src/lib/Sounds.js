@@ -14,8 +14,11 @@ class SoundsManager {
       good: new Howl({ src: ['assets/sfx/good.mp3'] }),
       intro: new Howl({ src: ['assets/sfx/intro.mp3'] }),
       incorrect: new Howl({ src: ['assets/sfx/incorrect.mp3'] }),
+      error: new Howl({ src: ['assets/sfx/error.mp3'] }),
       pluck: new Howl({ src: ['assets/sfx/pluck.mp3'] }),
       energy: new Howl({ src: ['assets/sfx/energy.mp3'] }),
+      'energy-2': new Howl({ src: ['assets/sfx/energy-2.mp3'] }),
+      'power-down': new Howl({ src: ['assets/sfx/power-down.mp3'] }),
       spawn: new Howl({ src: ['assets/sfx/spawn.mp3'] }),
       step1: new Howl({ src: ['assets/sfx/step1.mp3'] }),
       step2: new Howl({ src: ['assets/sfx/step2.mp3'] }),
@@ -25,6 +28,8 @@ class SoundsManager {
       break2: new Howl({ src: ['assets/sfx/break2.mp3'] }),
       hit: new Howl({ src: ['assets/sfx/hit.mp3'] }),
       dink: new Howl({ src: ['assets/sfx/dink.mp3'] }),
+      'mortar-shoot': new Howl({ src: ['assets/sfx/mortar-shoot.mp3'] }),
+      'mortar-hit': new Howl({ src: ['assets/sfx/mortar-hit.mp3'] }),
     }
     // Multiple stone sounds for random selection
     this.stoneSounds = [

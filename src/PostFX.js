@@ -26,6 +26,11 @@ import {
 import { ao } from 'three/addons/tsl/display/GTAONode.js'
 import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js'
 
+// Objects on this camera layer (laser beams, projectiles) skip the main scene
+// pass entirely and are drawn as a plain overlay after AO/effects, so they don't
+// receive ambient occlusion.
+export const FX_NO_AO_LAYER = 1
+
 export class PostFX {
   constructor(renderer, scene, camera) {
     this.renderer = renderer
@@ -84,6 +89,12 @@ export class PostFX {
     const h = Math.ceil((window.innerHeight * dpr) / 4)
     this.maskTarget = new RenderTarget(w, h, { samples: 1 })
     this.maskTarget.texture.format = RGBAFormat
+
+    // Full-res target for the no-AO overlay layer (beams/projectiles). Rendered
+    // each frame in render(), then composited over the AO'd image in the pipeline.
+    const fw = window.innerWidth * dpr, fh = window.innerHeight * dpr
+    this.overlayTarget = new RenderTarget(fw, fh, { samples: 1 })
+    this.overlayTarget.texture.format = RGBAFormat
   }
 
   _growMaskPool(n) {
@@ -118,7 +129,9 @@ export class PostFX {
   _buildPipeline() {
     const { scene, camera } = this
 
-    // Scene pass with MRT for normal output
+    // Scene pass with MRT for normal output. No-AO objects (beams/projectiles)
+    // live on FX_NO_AO_LAYER, which the camera's default layer-0 mask skips; they
+    // are drawn as an overlay in render() instead.
     const scenePass = pass(scene, camera)
     scenePass.setMRT(
       mrt({
@@ -151,12 +164,17 @@ export class PostFX {
     const blendedAO = mix(float(1), softenedAO, this.aoIntensity)
     const withAO = mix(scenePassColor, scenePassColor.mul(blendedAO), this.aoEnabled)
 
+    // No-AO overlay (beams/projectiles): rendered to overlayTarget in render(),
+    // composited over the AO'd image (premultiplied-alpha over).
+    const overlayTex = texture(this.overlayTarget.texture)
+    const withOverlay = withAO.mul(float(1).sub(overlayTex.a)).add(overlayTex.rgb)
+
     // Vignette: darken edges toward black
     const vignetteFactor = float(1).sub(
       clamp(viewportUV.sub(0.5).length().mul(1.4), 0.0, 1.0).pow(1.5)
     )
     const vignetteMultiplier = mix(float(1), vignetteFactor, this.vignetteEnabled)
-    const withVignette = mix(vec3(0, 0, 0), withAO, vignetteMultiplier)
+    const withVignette = mix(vec3(0, 0, 0), withOverlay, vignetteMultiplier)
 
     // Turret coverage glow: sample the union-of-circles mask (rendered to its
     // own RT in render()), blur it, and take (hard - blurred). That isolates a
@@ -211,24 +229,40 @@ export class PostFX {
     const w = Math.ceil((window.innerWidth * dpr) / 4)
     const h = Math.ceil((window.innerHeight * dpr) / 4)
     this.maskTarget.setSize(w, h)
+    this.overlayTarget.setSize(window.innerWidth * dpr, window.innerHeight * dpr)
   }
 
   render() {
-    const { renderer } = this
-    // Manual pass: render the turret discs into the low-res mask target, then
-    // run the main pipeline (which samples that mask for the coverage glow).
+    const { renderer, scene, camera } = this
     const savedRT = renderer.getRenderTarget()
     const savedClear = renderer.getClearColor(new Color())
     const savedAlpha = renderer.getClearAlpha()
 
+    // Manual pass: render the turret discs into the low-res mask target.
     renderer.setRenderTarget(this.maskTarget)
     renderer.setClearColor(0x000000, 1)
     renderer.clear()
     renderer.render(this.maskScene, this.camera)
 
+    // No-AO overlay pass: render only the FX_NO_AO_LAYER objects (beams,
+    // projectiles) to overlayTarget over a transparent clear (no background, so
+    // it's a clean RGBA sprite the pipeline composites over the AO'd image).
+    const savedBg = scene.background
+    const savedMask = camera.layers.mask
+    scene.background = null
+    camera.layers.set(FX_NO_AO_LAYER)
+    renderer.setRenderTarget(this.overlayTarget)
+    renderer.setClearColor(0x000000, 0)
+    renderer.clear()
+    renderer.render(scene, camera)
+    camera.layers.mask = savedMask
+    scene.background = savedBg
+
     renderer.setRenderTarget(savedRT)
     renderer.setClearColor(savedClear, savedAlpha)
 
+    // Main pipeline (camera is back on layer 0, so it skips the overlay layer;
+    // the pipeline samples overlayTarget for the composite).
     this.postProcessing.render()
   }
 }
