@@ -165,7 +165,7 @@ export class EnergySystem {
     if (this._connectorKeys) {
       for (const key of this._connectorKeys) if (!pairKeys.has(key)) lostConnection = true
     }
-    if (newConnection) Sounds.play('dink')
+    if (newConnection) Sounds.play('energy') // distinct from the per-tick pulse 'dink'
     if (lostConnection) Sounds.play('power-down')
     this._connectorKeys = pairKeys
 

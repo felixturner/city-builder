@@ -24,6 +24,16 @@ export const TopType = {
 const ROOF_GEOM = [0, 1, 2, 4, 4, 5, 3, 4]
 export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 
+// Each generator type has ONE fixed accent colour (index into City.accentColors:
+// 0 pink, 1 yellow, 2 blue). Path = blue, adjacency = pink, enclosure = yellow.
+const GEN_COLOR = {
+  [TopType.PATH_GENERATOR]: 2,
+  [TopType.ADJ_GENERATOR]: 0,
+  [TopType.ENCLOSURE_GENERATOR]: 1,
+}
+/** Fixed accent index for a generator type, or undefined for non-generators. */
+export const genColorIndex = (typeTop) => GEN_COLOR[typeTop]
+
 export const isPathGenerator = (t) => t.typeTop === TopType.PATH_GENERATOR
 export const isAdjGenerator = (t) => t.typeTop === TopType.ADJ_GENERATOR
 export const isEnclosureGenerator = (t) => t.typeTop === TopType.ENCLOSURE_GENERATOR
@@ -38,8 +48,8 @@ export const isGenerator = (t) =>
   t.typeTop === TopType.ADJ_GENERATOR ||
   t.typeTop === TopType.ENCLOSURE_GENERATOR
 
-/** A plain "grey" tower: not a generator or turret. */
-export const isGrey = (t) => !isGenerator(t) && !isTurret(t)
+/** A plain "grey" tower: not a generator, turret, or the king. */
+export const isGrey = (t) => !isGenerator(t) && !isTurret(t) && !t.king
 
 /** World-space Y of the very top of a tower (roof block top), given floorHeight. */
 export const towerTopY = (tower, floorHeight) =>

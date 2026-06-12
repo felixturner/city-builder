@@ -12,4 +12,5 @@
 - add big bosees like the king is watching
 - add big guns like heavy crossbows thta go thru multiple enemeys high damage
 - add more high powered creeps
+- make things morre expensive later? add more things to buy?
 

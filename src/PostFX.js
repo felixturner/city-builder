@@ -245,8 +245,7 @@ export class PostFX {
     renderer.render(this.maskScene, this.camera)
 
     // No-AO overlay pass: render only the FX_NO_AO_LAYER objects (beams,
-    // projectiles) to overlayTarget over a transparent clear (no background, so
-    // it's a clean RGBA sprite the pipeline composites over the AO'd image).
+    // projectiles) to overlayTarget over a transparent clear.
     const savedBg = scene.background
     const savedMask = camera.layers.mask
     scene.background = null

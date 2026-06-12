@@ -14,7 +14,7 @@ import {
   AdditiveBlending,
 } from 'three/webgpu'
 import gsap from 'gsap'
-import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, attribute } from 'three/tsl'
+import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, attribute, output } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
@@ -27,7 +27,7 @@ import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
 import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { TopType, isTurret, towerArea, roofGeomIndex, isEnclosureGenerator } from './blockTypes.js'
+import { TopType, isTurret, towerArea, roofGeomIndex, isEnclosureGenerator, genColorIndex } from './blockTypes.js'
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -39,6 +39,8 @@ const rotateY = (v, angle) => {
     v.z.mul(c).sub(v.x.mul(s))
   )
 }
+
+const KING_HEALTH = 6 // floors the central king starts with (creep hits to kill)
 
 export class City {
   // City size in lots (7x7 = 49 lots). Change this to resize the city.
@@ -135,6 +137,7 @@ export class City {
     await BlockGeometry.init()
     this.initGrid()
     await this.initTowers()
+    this.placeKing() // central king piece (must exist before the cluster seeds around it)
     this.generateStartCluster() // place the starting tiles (needs the tower pool)
     this.updateMatrices()
     this.renderer.recalculateVisibility()
@@ -261,6 +264,7 @@ export class City {
     t.cellY = gy
     t.cells = cells
     t.tetro = opts.tetro || null // { name, rot } for tetromino walls, else null
+    t.king = opts.king || false // the central king piece (lose it = game over)
     t.dormant = false
     t.empty = false
     t.emptyTower = false
@@ -354,7 +358,8 @@ export class City {
     const typeTop = types[MathUtils.randInt(0, types.length - 1)]
     const cells = []
     for (let j = 0; j < s; j++) for (let i = 0; i < s; i++) cells.push([i, j])
-    return { cells, cost: cells.length * 2, opts: { typeTop, colorIndex: MathUtils.randInt(0, 2), topColorIndex } }
+    const colorIndex = genColorIndex(typeTop) ?? MathUtils.randInt(0, 2)
+    return { cells, cost: cells.length * 2, opts: { typeTop, colorIndex, topColorIndex } }
   }
 
   /** Find a spot where `cells` fits within ~2 cells of the cluster, near the
@@ -410,15 +415,8 @@ export class City {
     const placed = []
     const add = (gx, gy, cells) => { for (const [dx, dy] of cells) cluster.add((gy + dy) * W + (gx + dx)) }
 
-    // Seed a tile at the centre.
-    const seed = this._rollStartTile()
-    const sw = Math.max(...seed.cells.map((c) => c[0])) + 1
-    const sh = Math.max(...seed.cells.map((c) => c[1])) + 1
-    const sgx = ccx - Math.floor(sw / 2), sgy = ccy - Math.floor(sh / 2)
-    if (this.fits(sgx, sgy, seed.cells)) {
-      const t = this.placeTileFree(sgx, sgy, seed.cells, seed.opts, true)
-      if (t) { add(sgx, sgy, seed.cells); placed.push(t); budget -= seed.cost }
-    }
+    // The king (placed first, at the centre) is the seed - the city grows around it.
+    cluster.add(ccy * W + ccx)
 
     let tries = 0
     while (budget > 0 && tries < 800) {
@@ -442,6 +440,29 @@ export class City {
       t.randFactor = Math.random()
       t.numFloors = this.generator.floorsForTower(t)
     }
+  }
+
+  /** Place the king: a 1x1 bright-orange tower at the exact centre. Losing it
+   *  (creeps knock it to 0 floors) ends the game. */
+  placeKing() {
+    const lc = this.lotCells
+    const ccx = this.centerLotX * lc + Math.floor(lc / 2)
+    const ccy = this.centerLotZ * lc + Math.floor(lc / 2)
+    const t = this.placeTileFree(ccx, ccy, [[0, 0]], {
+      typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex: 0, king: true,
+    }, true)
+    if (!t) return
+    t.numFloors = KING_HEALTH
+    this.updateTowerMatrices(t)
+    this.king = t
+    this.kingAlive = true
+  }
+
+  /** Fire the game-over hook once (the king died). */
+  triggerGameOver() {
+    if (!this.kingAlive) return
+    this.kingAlive = false
+    this.onGameOver?.()
   }
 
   async initTowers() {
@@ -990,11 +1011,16 @@ export class City {
     this._encGeom = geom
     const mat = new MeshBasicNodeMaterial({
       transparent: true,
-      depthTest: false,
+      depthTest: true, // occluded by blocks in front (depthWrite off: don't self-occlude)
+      depthWrite: false,
       blending: AdditiveBlending,
       side: 2,
     })
     mat.colorNode = attribute('color') // per-cell white / accent
+    // Write a fake "up" normal to the MRT so GTAO treats the floor as flat and
+    // barely darkens it (same trick the path trails use). Stays in the main scene
+    // so it depth-sorts against blocks for free.
+    mat.mrtNode = mrt({ output: output, normal: vec3(0, 1, 0) })
     // Opacity driven by a uniform so the floor can pulse with its generator.
     this.enclosureOpacity = uniform(0.2)
     mat.opacityNode = this.enclosureOpacity

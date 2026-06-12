@@ -2,7 +2,9 @@ import { MathUtils, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
+
+const KING_COLOR = new Color(0xff7000) // bright orange central king piece
 
 /**
  * TowerRenderer - runtime tower visual state on the shared BatchedMesh: accent
@@ -24,6 +26,7 @@ export class TowerRenderer {
     const city = this.city
     for (const tower of city.towers) {
       tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
+      if (isGenerator(tower)) tower.colorIndex = genColorIndex(tower.typeTop) // fixed per type
       if (tower.isLit) {
         const accent = city.accentColors[tower.colorIndex]
         tower.litColor = accent.clone()
@@ -128,8 +131,19 @@ export class TowerRenderer {
     for (const idx of tower.floorInstances) mesh.setGeometryIdAt(idx, city.geomIds[tower.typeBottom])
     mesh.setGeometryIdAt(tower.roofInstance, city.geomIds[g])
 
+    if (tower.king) {
+      tower.isLit = false
+      tower.litColor = null
+      tower.baseColor = KING_COLOR.clone()
+      tower.topColor = KING_COLOR.clone()
+      for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.baseColor)
+      mesh.setColorAt(tower.roofInstance, tower.topColor)
+      return
+    }
+
     tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
     if (isGenerator(tower)) {
+      tower.colorIndex = genColorIndex(tower.typeTop) // fixed colour per generator type
       // Generators (path / adj / enclosure): whole tower the accent (litColor glows).
       const accent = city.accentColors[tower.colorIndex]
       tower.litColor = accent.clone()
@@ -168,8 +182,11 @@ export class TowerRenderer {
     if (tower.numFloors >= 1) {
       tower.numFloors -= 1
       city.onTowerChanged(tower)
+      if (tower.king && tower.numFloors === 0) city.triggerGameOver()
       return tower.numFloors
     }
+    // The king is never demolished - knocking its last floor ends the game.
+    if (tower.king) { city.triggerGameOver(); return 0 }
     // Destroyed at level 0: free its cell(s) and remove it (debris already spawned).
     city.demolishTower(tower)
     return 0

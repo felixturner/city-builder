@@ -88,7 +88,7 @@ export class FloatingText {
       it.el.style.left = `${sx}px`
       it.el.style.top = `${sy}px`
       it.el.style.transform = `translate(-50%, -50%) scale(${it.scale.s})`
-      it.el.style.opacity = String((1 - p) * (1 - p)) // quick ease-in fade
+      it.el.style.opacity = String(Math.min(1, (1 - p) * 2.5)) // hold opaque, fade only at the end
     }
   }
 }

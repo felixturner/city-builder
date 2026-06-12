@@ -16,7 +16,12 @@ import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Sounds } from './lib/Sounds.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { roofGeomIndex } from './blockTypes.js'
-import { FX_NO_AO_LAYER } from './PostFX.js'
+import { mrt, output, vec3 } from 'three/tsl'
+
+// Write a fake "up" normal to the MRT so GTAO treats the FX as flat and barely
+// darkens them - keeps beams/projectiles/explosions AO-free while staying in the
+// main scene (so they depth-sort against blocks). Same trick the trails/floor use.
+const NO_AO = () => mrt({ output: output, normal: vec3(0, 1, 0) })
 
 /**
  * Turrets - two kinds of auto-firing tower:
@@ -43,6 +48,7 @@ export class Turrets {
       roughness: 0.3,
       metalness: 0,
     })
+    this.projMat.mrtNode = NO_AO()
 
     this.projectiles = []
     this.cooldowns = new Map() // tower -> seconds until next shot
@@ -60,9 +66,9 @@ export class Turrets {
     this.beams = []
     for (let i = 0; i < 8; i++) {
       const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0, depthWrite: false })
+      mat.mrtNode = NO_AO()
       const mesh = new Mesh(this.beamGeo, mat)
       mesh.visible = false
-      mesh.layers.set(FX_NO_AO_LAYER) // no ambient occlusion on beams
       this.scene.add(mesh)
       this.beams.push({ mesh, life: 0, active: false })
     }
@@ -77,6 +83,7 @@ export class Turrets {
     this.mortarMat = new MeshStandardNodeMaterial({
       color: new Color(0x808080), roughness: 0.6, metalness: 0.2,
     })
+    this.mortarMat.mrtNode = NO_AO()
     this._explodeColor = new Color(0xff7a30)
     // Expanding transparent blast dome (sphere at y=0 -> only the top half shows).
     this.explosionGeo = new SphereGeometry(1, 16, 12)
@@ -267,6 +274,7 @@ export class Turrets {
         roughness: 0.3,
         metalness: 0,
       })
+      m.mrtNode = NO_AO()
       this._projMats.set(ci, m)
     }
     return m
@@ -283,7 +291,6 @@ export class Turrets {
     const mesh = new Mesh(this.projGeo, this.projMatFor(tower.colorIndex))
     mesh.position.copy(muzzle)
     mesh.castShadow = true
-    mesh.layers.set(FX_NO_AO_LAYER) // no ambient occlusion on projectiles
     this.scene.add(mesh)
     this.projectiles.push({ mesh, target, life: 0 })
     Sounds.play('shoot', 1.0, 0.2, 0.5)
@@ -438,7 +445,6 @@ export class Turrets {
     const mesh = new Mesh(this.mortarGeo, this.mortarMat)
     mesh.position.copy(muzzle)
     mesh.castShadow = true
-    mesh.layers.set(FX_NO_AO_LAYER) // no ambient occlusion on the shell
     this.scene.add(mesh)
     const end = new Vector3(target.mesh.position.x, 0.4, target.mesh.position.z)
     this.projectiles.push({ mesh, mortar: true, start: muzzle.clone(), end, t: 0, dur: this.mortarDur })
@@ -460,10 +466,10 @@ export class Turrets {
     const mat = new MeshBasicNodeMaterial({
       color: this._explodeColor.clone(), transparent: true, opacity: 0.6, depthWrite: false,
     })
+    mat.mrtNode = NO_AO()
     const mesh = new Mesh(this.explosionGeo, mat)
     mesh.position.set(x, 0, z)
     mesh.scale.setScalar(0.001)
-    mesh.layers.set(FX_NO_AO_LAYER)
     this.scene.add(mesh)
     this.explosions.push({ mesh, mat, life: 0 })
     Sounds.play('mortar-hit', 1.0, 0.15, 0.7)

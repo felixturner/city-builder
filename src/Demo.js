@@ -15,6 +15,7 @@ import { OrbitControls } from 'three/examples/jsm/Addons.js'
 import Stats from 'three/addons/libs/stats.module.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
 import { Pointer } from './lib/Pointer.js'
+import { Sounds } from './lib/Sounds.js'
 import { GUIManager } from './GUI.js'
 import { City } from './City.js'
 import { Lighting } from './Lighting.js'
@@ -96,6 +97,7 @@ export class Demo {
     // Initialize modules
     this.lighting = new Lighting(this.scene, this.renderer, this.params)
     this.city = new City(this.scene, this.params)
+    this.city.onGameOver = () => this.gameOver()
     // Let interaction read the ground-plane pointer for empty-slot building
     this.city.interaction.pointer = this.pointerHandler
 
@@ -310,7 +312,7 @@ export class Demo {
 
     // Game systems freeze before Start and while paused; camera + rendering
     // keep going so the scene is visible/orbitable on the start screen.
-    if (this.started && !this.paused) {
+    if (this.started && !this.paused && !this.isGameOver) {
       this.stepGame(dt)
     }
 
@@ -361,6 +363,37 @@ export class Demo {
     })
     document.body.appendChild(btn)
     this.pauseButton = btn
+  }
+
+  /** The king died: freeze the game, play a stinger, and show the overlay. */
+  gameOver() {
+    if (this.isGameOver) return
+    this.isGameOver = true
+    Sounds.play('power-down', 1.0, 0.05, 0.9)
+
+    const el = document.createElement('div')
+    el.id = 'game-over'
+    Object.assign(el.style, {
+      position: 'fixed', inset: '0', zIndex: '2000',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: '28px', background: 'rgba(10,8,6,0.82)', backdropFilter: 'blur(5px)',
+    })
+    const title = document.createElement('div')
+    title.textContent = 'GAME OVER'
+    Object.assign(title.style, {
+      color: '#ff7000', font: '800 72px ui-monospace, Menlo, monospace',
+      letterSpacing: '2px', textShadow: '0 3px 18px rgba(0,0,0,0.8)',
+    })
+    const btn = document.createElement('button')
+    btn.textContent = 'Restart'
+    Object.assign(btn.style, {
+      padding: '12px 36px', font: '600 18px ui-monospace, monospace', color: '#fff',
+      background: 'transparent', border: '2px solid #fff', borderRadius: '24px', cursor: 'pointer',
+    })
+    btn.addEventListener('click', () => location.reload())
+    el.appendChild(title)
+    el.appendChild(btn)
+    document.body.appendChild(el)
   }
 
   /** Fast-forward button (right of the creep timeline): advance the wave clock 30s. */

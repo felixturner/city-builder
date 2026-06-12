@@ -148,7 +148,7 @@ export class TowerInteraction {
   onRightClick(intersection) {
     const city = this.city
     const tower = this.towerFor(intersection)
-    if (!tower || !tower.visible) return
+    if (!tower || !tower.visible || tower.king) return // the king can't be demolished
     if (tower.numFloors >= 1) {
       tower.animateDelete(city.towerMesh, city.floorHeight, tower.numFloors, () => city.demolishTower(tower))
     } else {

@@ -571,7 +571,7 @@ export class Trails {
     material.transparent = true
     material.side = DoubleSide
     material.depthWrite = false
-    material.depthTest = false // draw over blocks
+    material.depthTest = true // occluded by blocks in front (don't draw through them)
     material.blending = AdditiveBlending
 
     // UV.y is actual distance along path in world units

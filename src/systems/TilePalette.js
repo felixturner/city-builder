@@ -3,7 +3,7 @@ import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
 
 const SLOTS = 6
 const REFILL_TIME = 2.5 // seconds for a used/discarded palette slot to refill
@@ -65,7 +65,9 @@ export class TilePalette {
       ? [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR, TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
       : [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
     const typeTop = types[MathUtils.randInt(0, types.length - 1)]
-    return { w: s, h: s, typeTop, colorIndex: MathUtils.randInt(0, 2), topColorIndex }
+    // Generators use their fixed type colour; turrets keep a random accent.
+    const colorIndex = genColorIndex(typeTop) ?? MathUtils.randInt(0, 2)
+    return { w: s, h: s, typeTop, colorIndex, topColorIndex }
   }
 
   /** Cell offsets for a tile at a given rotation (tetromino state / transposed rect). */
@@ -221,9 +223,14 @@ export class TilePalette {
         ctx.beginPath(); ctx.arc(cx, cy - r * 0.9, m * 0.1, 0, Math.PI * 2); ctx.fill()
       }
     } else if (tile.typeTop === TopType.ENCLOSURE_GENERATOR) {
-      // Raised peg disc.
-      ctx.fillStyle = raised
+      // Peg disc reads purely via its drop shadow (same colour as the tile).
+      ctx.save()
+      ctx.shadowColor = 'rgba(0,0,0,0.8)'
+      ctx.shadowBlur = m * 0.16
+      ctx.shadowOffsetY = m * 0.07
+      ctx.fillStyle = this.tileColor(tile)
       ctx.beginPath(); ctx.arc(cx, cy, m * 0.24, 0, Math.PI * 2); ctx.fill()
+      ctx.restore()
     }
 
     if ((tile.w > 1 || tile.h > 1) && tile.typeTop !== TopType.PATH_GENERATOR) {
@@ -398,14 +405,37 @@ export class TilePalette {
     const gy = c.gy - Math.floor(h / 2)
     // Coloured generators are subject to the enclosure colour-claim rule.
     const claimColor = !tile.wall && isGenerator(tile) ? tile.colorIndex : -1
-    return { gx, gy, cells, w, h, valid: city.fits(gx, gy, cells, claimColor) }
+    let valid = city.fits(gx, gy, cells, claimColor)
+    // One enclosure generator per enclosure: block placing into an already-claimed area.
+    if (valid && tile.typeTop === TopType.ENCLOSURE_GENERATOR && city.cellClaim) {
+      for (const [dx, dy] of cells) {
+        if (city.cellClaim[(gy + dy) * city.gridCellsX + (gx + dx)] >= 0) { valid = false; break }
+      }
+    }
+    return { gx, gy, cells, w, h, valid }
+  }
+
+  /** True if a screen point is over the palette bar (drag back here to cancel). */
+  _overPalette(x, y) {
+    if (x == null) return false
+    const r = this.el.getBoundingClientRect()
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
   }
 
   _dragMove(e) {
     this.drag.lastX = e.clientX
     this.drag.lastY = e.clientY
-    const { tile, ghost, mat } = this.drag
+    const { tile, ghost, mat, slot } = this.drag
     const city = this.city
+    // Over the palette: show the tile back in its slot + hide the ghost (release
+    // here puts it back). Re-hide the slot icon when moving back onto the grid.
+    const overPal = this._overPalette(e.clientX, e.clientY)
+    if (overPal !== this.drag.overPal) {
+      this.drag.overPal = overPal
+      if (overPal) this._drawTile(this.slots[slot])
+      else this._clearCanvas(this.slots[slot])
+    }
+    if (overPal) { ghost.visible = false; this.drag.target = null; return }
     const t = this._pickTarget(e.clientX, e.clientY)
     this.drag.target = t
     if (!t) { ghost.visible = false; return }
@@ -438,6 +468,8 @@ export class TilePalette {
     city.scene.remove(ghost)
     if (this.demo.controls) this.demo.controls.enabled = true
     const restore = () => { this.slots[slot].el.style.cursor = 'grab'; this._drawTile(this.slots[slot]) }
+    // Released over the palette: drop it back in its slot (no place, no error).
+    if (this._overPalette(this.drag.lastX, this.drag.lastY)) { restore(); this.drag = null; return }
     if (target && target.valid) {
       // Placement cost: walls 1/cell, generators/turrets 2/cell. Always affordable
       // here - the slot is locked when unaffordable, and energy only rises mid-drag.
@@ -452,7 +484,8 @@ export class TilePalette {
       if (placed) { city.mana?.spend(cost); this._consume(slot) }
       else restore() // pool exhausted: restore icon, no charge
     } else {
-      restore() // drag cancelled: restore icon
+      if (target) Sounds.play('error', 1.0, 0.2, 0.5) // dropped on an invalid cell
+      restore() // invalid / cancelled: restore icon
     }
     this.drag = null
   }
