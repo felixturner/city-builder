@@ -1,6 +1,7 @@
 import {
   MathUtils,
   Vector2,
+  Vector3,
   Object3D,
   BatchedMesh,
   MeshPhysicalNodeMaterial,
@@ -12,6 +13,9 @@ import {
   Float32BufferAttribute,
   MeshBasicNodeMaterial,
   AdditiveBlending,
+  ArrowHelper,
+  CircleGeometry,
+  Group,
 } from 'three/webgpu'
 import gsap from 'gsap'
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, attribute, output } from 'three/tsl'
@@ -27,7 +31,10 @@ import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
 import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { TopType, isTurret, towerArea, roofGeomIndex, isEnclosureGenerator, genColorIndex } from './blockTypes.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey } from './blockTypes.js'
+
+const GEN_LIFESPAN = 30 // energy spawns (pulses) a generator fires before it expires
+const MAX_GENS = 30 // hard cap on simultaneously placed generators
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -265,6 +272,7 @@ export class City {
     t.cells = cells
     t.tetro = opts.tetro || null // { name, rot } for tetromino walls, else null
     t.king = opts.king || false // the central king piece (lose it = game over)
+    t.startCluster = false // player tiles count toward escalating cost; start cluster doesn't
     t.dormant = false
     t.empty = false
     t.emptyTower = false
@@ -300,6 +308,8 @@ export class City {
 
   /** Free a placed tower's cells and return it to the pool (no debris/sound). */
   freePlacedTower(tower) {
+    tower.genLife = undefined // clear lifespan + pie so a reused pool tower starts fresh
+    this._removeGenPie(tower)
     for (const [dx, dy] of tower.cells) this.occupied[tower.cellY + dy][tower.cellX + dx] = false
     const lot = this.lots[tower.lotY][tower.lotX]
     const k = lot.towers.indexOf(tower)
@@ -338,28 +348,47 @@ export class City {
 
   // ---- starting cluster -------------------------------------------------------
 
-  /** Roll a random starting tile: { cells, cost, opts }. 66% walls (tetromino,
-   *  cost = cells) / 50% generators-or-turrets (square, cost = cells x 2).
-   *  Excludes the enclosure generator (useless unplaced). */
+  /** Build a starting tile ({ cells, cost, opts }) from a bag spec. Walls cost
+   *  = cells, generators/turrets cost = cells x 2. */
   _rollStartTile() {
+    const spec = this.drawTileSpec()
     const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
-    if (Math.random() < 0.5) {
-      const name = TetrominoGeometry.names[MathUtils.randInt(0, TetrominoGeometry.names.length - 1)]
-      const states = TetrominoGeometry.states[name]
+    if (spec.wall) {
+      const states = TetrominoGeometry.states[spec.shapeName]
       const rot = MathUtils.randInt(0, states.length - 1)
       const cells = TetrominoGeometry.placeCells(states[rot])
-      return { cells, cost: cells.length, opts: { tetro: { name, rot }, typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex } }
+      return { cells, cost: cells.length, opts: { tetro: { name: spec.shapeName, rot }, typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex } }
     }
-    const r = Math.random()
-    const s = r < 0.6 ? 1 : (r < 0.9 ? 2 : 3)
-    const types = s === 1
-      ? [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
-      : [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR]
-    const typeTop = types[MathUtils.randInt(0, types.length - 1)]
     const cells = []
-    for (let j = 0; j < s; j++) for (let i = 0; i < s; i++) cells.push([i, j])
-    const colorIndex = genColorIndex(typeTop) ?? MathUtils.randInt(0, 2)
-    return { cells, cost: cells.length * 2, opts: { typeTop, colorIndex, topColorIndex } }
+    for (let j = 0; j < spec.s; j++) for (let i = 0; i < spec.s; i++) cells.push([i, j])
+    const colorIndex = MathUtils.randInt(0, 2) // 3 colours per gen (matching is the challenge)
+    return { cells, cost: cells.length * 2, opts: { typeTop: spec.typeTop, colorIndex, topColorIndex } }
+  }
+
+  /** Draw the next tile spec from the ONE shared shuffled bag - used by both the
+   *  start cluster and the palette - refilling + reshuffling when empty. */
+  drawTileSpec() {
+    if (!this._tileBag || this._tileBag.length === 0) this._fillTileBag()
+    return this._tileBag.pop()
+  }
+
+  /** Fill + shuffle the 66-tile bag: walls 6 each (6 shapes = 36, ~55%), 1x1
+   *  gens/turrets 3 each (6), 2x2 gens 3 each (3), 3x3 1 each (3). */
+  _fillTileBag() {
+    const bag = []
+    const add = (n, spec) => { for (let i = 0; i < n; i++) bag.push(spec) }
+    for (const shapeName of TetrominoGeometry.names) add(7, { wall: true, shapeName })
+    const g1 = [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR,
+      TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
+    const gN = [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
+    for (const typeTop of g1) add(3, { s: 1, typeTop })
+    for (const typeTop of gN) add(3, { s: 2, typeTop })
+    for (const typeTop of gN) add(1, { s: 3, typeTop })
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = MathUtils.randInt(0, i)
+      ;[bag[i], bag[j]] = [bag[j], bag[i]]
+    }
+    this._tileBag = bag
   }
 
   /** Find a spot where `cells` fits within ~2 cells of the cluster, near the
@@ -427,6 +456,7 @@ export class City {
       if (!pos) continue
       const t = this.placeTileFree(pos.gx, pos.gy, tile.cells, tile.opts, true)
       if (!t) continue
+      t.startCluster = true // pre-existing: excluded from the per-type cost count
       add(pos.gx, pos.gy, tile.cells)
       placed.push(t)
       budget -= tile.cost
@@ -829,6 +859,166 @@ export class City {
     this.updateTowerMatrices(tower)
     this.lotGrowth.trySpawnLots()
     this.updateTowerVisuals()
+    this.flowDirty = true // creep pathing depends on walls/goals
+  }
+
+  /**
+   * Build a creep flow field (multi-source BFS) over the cell grid. Goals are the
+   * king (tier 1) then generators/turrets (tier 2, only filling cells the king
+   * can't reach); built grey walls (>=1 floor) are impassable. Each reachable cell
+   * stores a step (flowDX, flowDZ) toward the nearest goal; flowDist < 0 = no path.
+   */
+  computeFlowField() {
+    const W = this.gridCellsX, H = this.gridCellsY, N = W * H
+    if (!this.flowDX) {
+      this.flowDX = new Int8Array(N)
+      this.flowDZ = new Int8Array(N)
+      this.flowDist = new Int32Array(N)
+      this.flowToKing = new Uint8Array(N) // 1 = this cell's flow leads to the king, 0 = to a gen
+      // Big creeps need a 2-wide corridor: their own field treats 1-cell gaps as walls.
+      this.flowDXBig = new Int8Array(N)
+      this.flowDZBig = new Int8Array(N)
+      this.flowDistBig = new Int32Array(N)
+      this.flowToKingBig = new Uint8Array(N)
+      this._flowWall = new Uint8Array(N)
+      this._flowBlock = new Uint8Array(N) // obstacle mask for the current pass
+      this._flowBase = new Uint8Array(N) // pre-pinch snapshot of that mask
+      this._flowQueue = new Int32Array(N)
+    }
+    const wall = this._flowWall; wall.fill(0)
+    const kingGoals = [], genGoals = []
+    for (const t of this.towers) {
+      if (!t.visible || !t.cells) continue
+      for (const [dx, dy] of t.cells) {
+        const x = t.cellX + dx, y = t.cellY + dy
+        if (x < 0 || y < 0 || x >= W || y >= H) continue
+        const i = y * W + x
+        if (t.king) kingGoals.push(i) // primary goal
+        else if (isGrey(t)) wall[i] = 1 // walls block; creeps route around / smash through gaps
+        else genGoals.push(i) // gens/turrets: second-priority goals
+      }
+    }
+    const DDX = [1, -1, 0, 0], DDZ = [0, 0, 1, -1]
+    const q = this._flowQueue
+    const block = this._flowBlock, base = this._flowBase
+
+    // Fill `block` with a pass's obstacle mask: walls (+ gens for the king pass),
+    // plus — for big creeps — any free cell pinched between obstacles on opposite
+    // sides, so a 2-wide body can't slip through a 1-cell gap (off-grid = open).
+    const buildMask = (blockGens, big) => {
+      base.set(wall)
+      if (blockGens) for (const gi of genGoals) base[gi] = 1
+      if (!big) { block.set(base); return }
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = y * W + x
+        if (base[i]) { block[i] = 1; continue }
+        const L = x > 0 && base[i - 1], R = x < W - 1 && base[i + 1]
+        const U = y > 0 && base[i - W], D = y < H - 1 && base[i + W]
+        block[i] = ((L && R) || (U && D)) ? 1 : 0
+      }
+    }
+
+    // Multi-source BFS over `block`, writing step vectors into the output arrays.
+    const bfs = (sources, toKing, dist, fdx, fdz, ftk) => {
+      let head = 0, tail = 0
+      for (const i of sources) {
+        if (dist[i] >= 0 || block[i]) continue
+        dist[i] = 0; ftk[i] = toKing; q[tail++] = i
+      }
+      while (head < tail) {
+        const i = q[head++]
+        const x = i % W, y = (i - x) / W
+        for (let d = 0; d < 4; d++) {
+          const nx = x + DDX[d], ny = y + DDZ[d]
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
+          const ni = ny * W + nx
+          if (block[ni] || dist[ni] >= 0) continue
+          dist[ni] = dist[i] + 1; ftk[ni] = toKing
+          fdx[ni] = -DDX[d]; fdz[ni] = -DDZ[d] // step from ni back toward i (nearer the goal)
+          q[tail++] = ni
+        }
+      }
+    }
+
+    // King pass (gens/turrets seal the king like walls), then gen pass (gens
+    // passable) — once for the normal field, once for the big-creep field.
+    this.flowDist.fill(-1)
+    buildMask(true, false); bfs(kingGoals, 1, this.flowDist, this.flowDX, this.flowDZ, this.flowToKing)
+    buildMask(false, false); bfs(genGoals, 0, this.flowDist, this.flowDX, this.flowDZ, this.flowToKing)
+
+    this.flowDistBig.fill(-1)
+    buildMask(true, true); bfs(kingGoals, 1, this.flowDistBig, this.flowDXBig, this.flowDZBig, this.flowToKingBig)
+    buildMask(false, true); bfs(genGoals, 0, this.flowDistBig, this.flowDXBig, this.flowDZBig, this.flowToKingBig)
+
+    this.flowDirty = false
+    this.updateFlowDebug()
+  }
+
+  /** Debug overlay (toggle flowDebugEnabled, key F): a pooled red ArrowHelper per
+   *  reachable cell pointing along the flow toward the nearest goal. Unreachable
+   *  cells (walls / no path) get no arrow. */
+  updateFlowDebug() {
+    const enabled = !!this.flowDebugEnabled
+    if (!enabled && !this._flowArrowGroup) return
+    if (!this._flowArrowGroup) {
+      this._flowArrowGroup = new Group()
+      this.scene.add(this._flowArrowGroup)
+      this._flowArrows = []
+      this._flowGoalArrows = []
+      this._arrDir = new Vector3()
+      this._upDir = new Vector3(0, 1, 0)
+    }
+    this._flowArrowGroup.visible = enabled
+    if (!enabled || !this.flowDist) {
+      for (const ar of this._flowArrows) ar.visible = false
+      for (const ar of this._flowGoalArrows) ar.visible = false
+      return
+    }
+    const W = this.gridCellsX, H = this.gridCellsY, cu = this.cellUnit
+    // Draw debug arrows over everything (goal arrows sit inside their towers).
+    const noDepth = (ar) => {
+      ar.line.material.depthTest = false; ar.cone.material.depthTest = false
+      ar.line.renderOrder = 11; ar.cone.renderOrder = 11
+    }
+    let a = 0, m = 0
+    for (let gy = 0; gy < H; gy++) for (let gx = 0; gx < W; gx++) {
+      const idx = gy * W + gx
+      const d = this.flowDist[idx]
+      if (d < 0) continue // unreachable / wall
+      const cx = gx * cu + cu / 2 + this.gridOffsetX
+      const cz = gy * cu + cu / 2 + this.gridOffsetZ
+      // Colour by flow target: red = leads to the king, green = leads to a gen/turret.
+      const col = this.flowToKing[idx] ? 0xff2020 : 0x22ff22
+      if (d === 0) { // goal cell: tall up-arrow (where the flow converges)
+        let g = this._flowGoalArrows[m]
+        if (!g) {
+          g = new ArrowHelper(this._upDir, new Vector3(cx, 0.1, cz), cu * 1.6, col, cu * 0.5, cu * 0.4)
+          noDepth(g)
+          this._flowGoalArrows.push(g)
+          this._flowArrowGroup.add(g)
+        } else { g.position.set(cx, 0.1, cz); g.visible = true }
+        g.setColor(col)
+        m++
+        continue
+      }
+      // flow arrow toward the nearest goal
+      this._arrDir.set(this.flowDX[idx], 0, this.flowDZ[idx])
+      let arrow = this._flowArrows[a]
+      if (!arrow) {
+        arrow = new ArrowHelper(this._arrDir, new Vector3(cx, 0.35, cz), cu * 0.49, col, cu * 0.22, cu * 0.15)
+        noDepth(arrow)
+        this._flowArrows.push(arrow)
+        this._flowArrowGroup.add(arrow)
+      } else {
+        arrow.position.set(cx, 0.35, cz)
+        arrow.setDirection(this._arrDir)
+        arrow.visible = true
+      }
+      arrow.setColor(col)
+      a++
+    }
+    for (let k = a; k < this._flowArrows.length; k++) this._flowArrows[k].visible = false
+    for (let k = m; k < this._flowGoalArrows.length; k++) this._flowGoalArrows[k].visible = false
   }
 
   /**
@@ -859,6 +1049,117 @@ export class City {
     this.debris.update(dt)
     this.interaction.update(dt)
     this.energy.update(dt)
+    this.updateGenLifespans(dt)
+  }
+
+  /** Count currently-placed generators (for the MAX_GENS cap). */
+  countGens() {
+    let n = 0
+    for (const t of this.towers) if (t.visible && isGenerator(t)) n++
+    return n
+  }
+
+  /** Whether another generator may be placed (under the cap). */
+  canPlaceGen() {
+    return this.countGens() < MAX_GENS
+  }
+
+  /** Cumulative count of how many of a cost-bucket key the PLAYER has placed over
+   *  the whole game (only ever rises - expiry/demolish don't lower it), so the
+   *  escalating price keeps climbing even though gens expire. */
+  recordPlacement(key) {
+    if (!this._placedCounts) this._placedCounts = new Map()
+    this._placedCounts.set(key, (this._placedCounts.get(key) || 0) + 1)
+  }
+
+  placedCount(key) {
+    return this._placedCounts ? (this._placedCounts.get(key) || 0) : 0
+  }
+
+  /**
+   * Generators have a limited lifespan: each ticks down a countdown shown as a
+   * little pie wheel (in its accent colour) on top of it, then expires and is
+   * removed. This keeps the energy economy from running away — gens must be
+   * continually replaced rather than accumulating forever.
+   */
+  updateGenLifespans(dt) {
+    if (!this._genPies) this._genPies = new Map() // tower -> { mesh, step }
+    const seen = this._genPies
+    const cu = this.cellUnit
+    for (const t of this.towers) {
+      if (!t.visible || !isGenerator(t)) continue
+      if (t.genLife === undefined) { t.genLife = GEN_LIFESPAN; t.genLifeMax = GEN_LIFESPAN }
+      // genLife is decremented one tick per energy spawn (EnergySystem). Expire when
+      // spent; otherwise only show the pie while the gen is actively producing —
+      // idle gens (0-floor, unconnected paths, etc.) hold their life and hide it.
+      if (t.genLife <= 0) { this._removeGenPie(t); this.expireGen(t); continue }
+      if (!this.genIsProducing(t)) {
+        const idle = seen.get(t)
+        if (idle) idle.mesh.visible = false
+        continue
+      }
+
+      const frac = t.genLife / t.genLifeMax
+      let pie = seen.get(t)
+      if (pie) pie.mesh.visible = true
+      if (!pie) {
+        const mat = new MeshBasicNodeMaterial({ color: this.accentColors[t.colorIndex].clone(), depthWrite: false })
+        mat.mrtNode = mrt({ output: output, normal: vec3(0, 1, 0) }) // flat up-normal -> skip AO
+        const mesh = new Mesh(this._genPieGeo(frac), mat)
+        mesh.rotation.x = -Math.PI / 2 // lie flat, facing up
+        mesh.renderOrder = 6
+        this.scene.add(mesh)
+        pie = { mesh, step: -1 }
+        seen.set(t, pie)
+      }
+      // Re-tessellate the wedge only when the quantised fraction changes (cheap).
+      const stepN = Math.round(frac * 32)
+      if (stepN !== pie.step) {
+        pie.step = stepN
+        pie.mesh.geometry.dispose()
+        pie.mesh.geometry = this._genPieGeo(frac)
+      }
+      // Small wedge tucked into the tower's bottom-right (+x/+z) top corner.
+      const c = t.box.getCenter(this._pieCenter || (this._pieCenter = new Vector2()))
+      const r = cu * 0.22 // pie radius
+      const hx = (t.box.max.x - t.box.min.x) / 2, hz = (t.box.max.y - t.box.min.y) / 2
+      pie.mesh.position.set(
+        c.x + this.gridOffsetX + (hx - r),
+        towerTopY(t, this.floorHeight) + 0.25,
+        c.y + this.gridOffsetZ + (hz - r)
+      )
+      pie.mesh.scale.setScalar(r)
+    }
+    // Drop pies for gens that vanished without expiring (demolished by the player).
+    for (const [t, pie] of seen) {
+      if (!t.visible || !isGenerator(t)) { this.scene.remove(pie.mesh); pie.mesh.geometry.dispose(); seen.delete(t); t.genLife = undefined }
+    }
+  }
+
+  /** True if a generator is actively producing mana right now (so its lifespan
+   *  should tick): needs height and to be in one of the energy system's active
+   *  sets — connected path, lit adjacency cluster, or a claimed enclosure. */
+  genIsProducing(t) {
+    if (t.numFloors < 1) return false
+    const e = this.energy
+    return e.connectedTowers.has(t) || e.litAdjGens.has(t) || e.enclosureGens.includes(t)
+  }
+
+  /** A CircleGeometry wedge covering `frac` of a full turn, starting at 12 o'clock. */
+  _genPieGeo(frac) {
+    return new CircleGeometry(1, Math.max(3, Math.ceil(32 * frac)), Math.PI / 2, Math.PI * 2 * Math.max(0, frac))
+  }
+
+  _removeGenPie(t) {
+    const pie = this._genPies?.get(t)
+    if (pie) { this.scene.remove(pie.mesh); pie.mesh.geometry.dispose(); this._genPies.delete(t) }
+  }
+
+  /** A generator reached the end of its lifespan: remove it (debris-free). */
+  expireGen(tower) {
+    tower.genLife = undefined
+    Sounds.play('power-down', 1.0, 0.1, 0.5)
+    this.demolishTower(tower)
   }
 
   /**
@@ -1079,6 +1380,23 @@ export class City {
       if (x < W - 1) seed(x + 1, y)
       if (y > 0) seed(x, y - 1)
       if (y < H - 1) seed(x, y + 1)
+    }
+
+    // King seal: the king is "enclosed" while no neighbouring cell is reachable
+    // from the boundary. success on a fresh seal, warning1 when it gets breached.
+    if (this.king && this.king.visible) {
+      const kx = this.king.cellX, ky = this.king.cellY
+      let kingExposed = false
+      const nb = [[kx - 1, ky], [kx + 1, ky], [kx, ky - 1], [kx, ky + 1]]
+      for (const [nx, ny] of nb) {
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H || outside[ny * W + nx]) { kingExposed = true; break }
+      }
+      const enclosed = !kingExposed
+      if (this._kingEnclosed !== undefined) {
+        if (this._kingEnclosed && !enclosed) Sounds.play('warning1') // enclosure breached
+        else if (!this._kingEnclosed && enclosed) Sounds.play('success') // king newly sealed
+      }
+      this._kingEnclosed = enclosed
     }
 
     // 3. Group enclosed cells (non-wall && unreachable) into connected regions.

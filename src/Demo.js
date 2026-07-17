@@ -79,6 +79,13 @@ export class Demo {
     this.renderer.shadowMap.type = PCFSoftShadowMap
 
     window.addEventListener('resize', this.onResize.bind(this))
+    // Press F to toggle the creep flow-field debug overlay.
+    window.addEventListener('keydown', (e) => {
+      if ((e.key === 'f' || e.key === 'F') && this.city) {
+        this.city.flowDebugEnabled = !this.city.flowDebugEnabled
+        this.city.computeFlowField()
+      }
+    })
 
     // Initialize params from defaults before creating modules
     this.params = JSON.parse(JSON.stringify(GUIManager.defaultParams))
@@ -137,6 +144,7 @@ export class Demo {
 
     // Enemy creeps marching in from the map edges
     this.creeps = new Creeps(this.scene, this.city)
+    this.city.creeps = this.creeps // let placement checks query creep positions
 
     // Incoming-wave timeline strip across the top of the screen
     this.creepTimeline = new CreepTimeline(this.creeps)
@@ -331,6 +339,7 @@ export class Demo {
 
   /** Advance all game systems by `dt` seconds. */
   stepGame(dt) {
+    this.mana.tick(dt) // survival-time score
     this.city.update(dt)
     this.trails.update(dt)
     this.creeps.update(dt)
@@ -384,6 +393,29 @@ export class Demo {
       color: '#ff7000', font: '800 72px ui-monospace, Menlo, monospace',
       letterSpacing: '2px', textShadow: '0 3px 18px rgba(0,0,0,0.8)',
     })
+
+    // Final score + persisted high score (localStorage).
+    const final = Math.floor(this.mana?.elapsed || 0)
+    let best = 0
+    try { best = parseInt(localStorage.getItem('cityBuilderHighScore') || '0', 10) || 0 } catch (e) { /* storage blocked */ }
+    const isBest = final > best
+    if (isBest) { best = final; try { localStorage.setItem('cityBuilderHighScore', String(best)) } catch (e) { /* storage blocked */ } }
+
+    const stats = document.createElement('div')
+    Object.assign(stats.style, {
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
+    })
+    const scoreEl = document.createElement('div')
+    scoreEl.textContent = `score: ${final}`
+    Object.assign(scoreEl.style, { color: '#fff', font: '700 30px ui-monospace, Menlo, monospace' })
+    const bestEl = document.createElement('div')
+    bestEl.textContent = isBest ? `★ new best ★` : `best: ${best}`
+    Object.assign(bestEl.style, {
+      color: isBest ? '#ffd23f' : '#bbb', font: '600 20px ui-monospace, Menlo, monospace',
+    })
+    stats.appendChild(scoreEl)
+    stats.appendChild(bestEl)
+
     const btn = document.createElement('button')
     btn.textContent = 'Restart'
     Object.assign(btn.style, {
@@ -392,15 +424,16 @@ export class Demo {
     })
     btn.addEventListener('click', () => location.reload())
     el.appendChild(title)
+    el.appendChild(stats)
     el.appendChild(btn)
     document.body.appendChild(el)
   }
 
-  /** Fast-forward button (right of the creep timeline): advance the wave clock 30s. */
+  /** Fast-forward button (right of the creep timeline): advance the wave clock 20s. */
   _buildFastForwardButton() {
     const btn = document.createElement('button')
     btn.id = 'fast-forward'
-    btn.textContent = '⏩ +30s'
+    btn.textContent = '⏩ +20s'
     Object.assign(btn.style, {
       position: 'fixed',
       top: '9px',
@@ -416,9 +449,13 @@ export class Demo {
       backdropFilter: 'blur(4px)',
     })
     btn.addEventListener('click', () => {
-      // Jump the creep wave schedule forward 30s, sliding the timeline over.
-      this.creeps.skipAhead(30)
+      // Jump the creep wave schedule forward 20s, sliding the timeline over, and
+      // credit the skipped time to the survival-score clock.
+      const SKIP = 20
+      this.creeps.skipAhead(SKIP)
       this.creepTimeline.tweenTo(this.creeps.elapsed)
+      this.mana.elapsed += SKIP
+      this.mana.render()
     })
     document.body.appendChild(btn)
     this.fastForwardButton = btn

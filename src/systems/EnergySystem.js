@@ -10,6 +10,7 @@ const PULSE_DECAY = 0.8 // seconds for a tower's flash to fade back to baseline
 const ENCLOSURE_RATE = 0.2 // mana per (enclosed cell x generator floor)
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
 const PROD_FACTOR = 0.3 // global energy-production scale (applied to every source)
+const KING_INCOME = 8 // baseline mana the king trickles every GREY_INTERVAL (safety net)
 
 /**
  * EnergySystem - all energy generation and the visual/audio feedback for it.
@@ -265,6 +266,9 @@ export class EnergySystem {
 
     // Generator mana tick: schedule each unit's flash at a random offset.
     const genMana = this.pathGenMana + this.adjGenMana + this.enclosureGenMana
+    // Cache live income/sec (gens + grey trickle + king) for price scaling.
+    this.incomePerSecValue = genMana / GEN_INTERVAL
+      + (this.countGreyBlocks() * PROD_FACTOR + (city.king && city.king.visible ? KING_INCOME : 0)) / GREY_INTERVAL
     if (genMana > 0) {
       this.manaTimer += dt
       while (this.manaTimer >= GEN_INTERVAL) {
@@ -308,7 +312,11 @@ export class EnergySystem {
       const e = this.pulseEvents[i]
       e.t -= dt
       if (e.t <= 0) {
-        for (const m of e.members) if (m.visible) m.pulseEnv = 1
+        for (const m of e.members) {
+          if (!m.visible) continue
+          m.pulseEnv = 1
+          if (m.genLife !== undefined) m.genLife -= 1 // one lifespan tick per energy spawn
+        }
         this.spawnTextAt(e.cx, e.cy, e.cz, `+${e.amt}`, e.color, e.sound)
         this.pulseEvents.splice(i, 1)
       }
@@ -323,6 +331,12 @@ export class EnergySystem {
       for (const t of city.towers) {
         if (!t.visible || t.numFloors < 1 || !isGrey(t)) continue
         this.spawnTowerText(t, `+${t.numFloors}`, '#dfe6ff', 'dink', Math.random() * GREY_INTERVAL)
+      }
+      // The king itself trickles a baseline income, so you can always recover even
+      // with no generators standing.
+      if (city.king && city.king.visible) {
+        city.mana.add(KING_INCOME)
+        this.spawnTowerText(city.king, `+${KING_INCOME}`, '#ff8a3c', 'dink', Math.random() * GREY_INTERVAL)
       }
     }
 
@@ -346,6 +360,9 @@ export class EnergySystem {
     this._pulseColor.copy(tower.litColor).multiplyScalar(brightness)
     this.city.setTowerColor(tower, this._pulseColor)
   }
+
+  /** Live income per second (cached each update), for price scaling. */
+  incomePerSec() { return this.incomePerSecValue || 0 }
 
   /** Float a "+N" caption at a world position. */
   spawnTextAt(x, y, z, text, color, sound, delay = 0) {

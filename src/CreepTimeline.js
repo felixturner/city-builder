@@ -109,6 +109,7 @@ export class CreepTimeline {
     let n = Math.max(0, Math.floor((now - grace) / period))
     let used = 0
     while (used < this.bars.length) {
+      const waveIdx = n
       const start = grace + n * period
       if (start >= now + win) break // beyond the visible window
       const end = start + active
@@ -124,6 +125,9 @@ export class CreepTimeline {
       const bar = this.bars[used++]
       bar.style.left = `${left}%`
       bar.style.width = `${Math.max(0.5, width)}%`
+      // Boss waves (every 5th) read red; normal waves white.
+      const boss = c.isBossWave && c.isBossWave(waveIdx)
+      bar.style.background = boss ? 'rgba(255,55,55,0.95)' : 'rgba(255,255,255,0.85)'
       bar.style.display = 'block'
     }
     for (let i = used; i < this.bars.length; i++) this.bars[i].style.display = 'none'

@@ -5,8 +5,8 @@ const CAP_ENABLED = false
 
 /**
  * Mana - text HUD (top-left) showing two stats:
- *   energy:     current / max  (max = baseMax + population)
- *   population: total grey blocks (sum of grey tower heights)
+ *   energy: current / max  (max = baseMax + population)
+ *   score:  whole seconds survived (ticks up during play, freezes on game over)
  * Energy is spent on builds/lot-clicks; grey blocks generate it and raise the
  * cap. City calls setStats() whenever grey-block totals change.
  */
@@ -16,6 +16,7 @@ export class Mana {
     this.population = 0
     this.max = baseMax
     this.current = Math.min(initial, this.max)
+    this.elapsed = 0 // survival time = score
     this._build()
     this.render()
   }
@@ -37,9 +38,9 @@ export class Mana {
     })
 
     this.energyEl = document.createElement('div')
-    this.popEl = document.createElement('div')
+    this.scoreEl = document.createElement('div')
     el.appendChild(this.energyEl)
-    el.appendChild(this.popEl)
+    el.appendChild(this.scoreEl)
 
     document.body.appendChild(el)
     this.el = el
@@ -47,7 +48,13 @@ export class Mana {
 
   render() {
     this.energyEl.textContent = `energy: ${Math.floor(this.current)} /${this.max}`
-    this.popEl.textContent = `population: ${this.population}`
+    this.scoreEl.textContent = `score: ${Math.floor(this.elapsed)}`
+  }
+
+  /** Advance the survival-time score. Called each frame while the game runs. */
+  tick(dt) {
+    this.elapsed += dt
+    this.render()
   }
 
   /** Update grey-block-derived stats: population sets the energy cap. */

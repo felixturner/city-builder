@@ -98,6 +98,7 @@ export class LotGrowth {
       Sounds.play('incorrect', 1.0, 0.2, 0.5)
       return true
     }
+    if (!city.freeClicks && city.floatingText) city.floatingText.spawn(worldX, 1.5, worldZ, '-1', '#ff6a6a', 0, null)
 
     lot.clickPoints = (lot.clickPoints || 0) + this.clickValue
     Sounds.play('clink', 1.0, 0.1, 0.7)

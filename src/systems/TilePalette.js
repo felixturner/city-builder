@@ -3,7 +3,7 @@ import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, roofGeomIndex } from '../blockTypes.js'
 
 const SLOTS = 6
 const REFILL_TIME = 2.5 // seconds for a used/discarded palette slot to refill
@@ -11,8 +11,11 @@ const ICON = 72 // palette icon canvas size (px)
 const CELL = 20 // px per footprint cell (rects); tetrominoes shrink to fit
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
-const WALL_CHANCE = 0.5 // share of tiles that are grey tetromino walls
 const REROLL_COST = 5 // mana to discard/reroll a palette tile
+const COST_GROWTH = 1.2 // gens/turrets: each placed tower of a bucket makes the next 20% pricier
+const WALL_COST_GROWTH = 1.01 // walls are one bucket drawn ~58% of the time (fills ~18x faster
+// than a gen bucket), so they need a tiny ~1% ramp to climb at a comparable pace
+const INCOME_PRICE_FACTOR = 0.02 // every +1 income/sec raises all prices by 2% (global surplus brake)
 
 /**
  * TilePalette - a bottom-center hand of random tiles drawn top-down. 66% are grey
@@ -51,23 +54,15 @@ export class TilePalette {
 
   // ---- random tiles -----------------------------------------------------------
 
+  /** Draw the next tile from the ONE shared shuffled bag (owned by City, also
+   *  used by the start cluster) so variety is enforced - no long runs. */
   randomTile() {
+    const spec = this.city.drawTileSpec()
     const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
-    if (Math.random() < WALL_CHANCE) {
-      // Grey tetromino wall.
-      const shapeName = TetrominoGeometry.names[MathUtils.randInt(0, TetrominoGeometry.names.length - 1)]
-      return { wall: true, shapeName, topColorIndex }
-    }
-    // Generator / turret on a square footprint (turrets only on 1x1).
-    const r = Math.random()
-    const s = r < 0.6 ? 1 : (r < 0.9 ? 2 : 3)
-    const types = s === 1
-      ? [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR, TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
-      : [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
-    const typeTop = types[MathUtils.randInt(0, types.length - 1)]
+    if (spec.wall) return { wall: true, shapeName: spec.shapeName, topColorIndex }
     // Generators use their fixed type colour; turrets keep a random accent.
-    const colorIndex = genColorIndex(typeTop) ?? MathUtils.randInt(0, 2)
-    return { w: s, h: s, typeTop, colorIndex, topColorIndex }
+    const colorIndex = MathUtils.randInt(0, 2) // 3 colours per gen: matching is the challenge
+    return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex, topColorIndex }
   }
 
   /** Cell offsets for a tile at a given rotation (tetromino state / transposed rect). */
@@ -102,9 +97,28 @@ export class TilePalette {
     return out
   }
 
-  /** Energy cost to place this tile: cells x (wall ? 1 : 2). */
+  /** Cost-bucket key for a tile (keys the cumulative placement count that drives
+   *  escalating price). Walls share one bucket; gens bucket by type + COLOUR (so
+   *  same-colour same-type gens count together, regardless of footprint size);
+   *  turrets bucket by type only. */
+  _typeKey(tile) {
+    if (tile.wall) return 'wall'
+    if (isGenerator(tile)) return `gen${tile.typeTop}:${tile.colorIndex}`
+    return `turret${tile.typeTop}`
+  }
+
+  /** Energy cost to place this tile: base (cells x wall?1:2) x COST_GROWTH^(cumulative
+   *  count of that bucket the player has placed). Everything escalates now, so
+   *  prices keep climbing even as gens expire and you replace them. */
   _tileCost(tile) {
-    return this._cells(tile, 0).length * (tile.wall ? 1 : 2)
+    const base = this._cells(tile, 0).length * (tile.wall ? 1 : 2)
+    const count = this.city.placedCount(this._typeKey(tile))
+    const growth = tile.wall ? WALL_COST_GROWTH : COST_GROWTH
+    // Global income factor on top of per-bucket escalation: the stronger your
+    // economy, the pricier everything (fights the runaway energy surplus).
+    const income = this.city.energy ? this.city.energy.incomePerSec() : 0
+    const incomeFactor = 1 + income * INCOME_PRICE_FACTOR
+    return Math.round(base * Math.pow(growth, count) * incomeFactor)
   }
 
   /** Can the player currently afford to place this tile? */
@@ -134,6 +148,7 @@ export class TilePalette {
     for (let i = 0; i < SLOTS; i++) {
       const el = document.createElement('div')
       Object.assign(el.style, {
+        position: 'relative',
         width: `${ICON}px`, height: `${ICON}px`,
         cursor: 'grab', touchAction: 'none',
       })
@@ -141,14 +156,46 @@ export class TilePalette {
       canvas.width = ICON
       canvas.height = ICON
       el.appendChild(canvas)
+      // Live energy-cost readout in the bottom corner of each slot.
+      const costEl = document.createElement('div')
+      Object.assign(costEl.style, {
+        position: 'absolute', bottom: '1px', left: '0', width: '100%', textAlign: 'center',
+        font: '700 12px ui-monospace, Menlo, monospace', color: '#fff',
+        textShadow: '0 1px 2px rgba(0,0,0,0.95)', pointerEvents: 'none',
+      })
+      el.appendChild(costEl)
       const idx = i
       el.addEventListener('pointerdown', (e) => this._pointerDown(e, idx))
       el.addEventListener('contextmenu', (e) => { e.preventDefault(); this._discard(idx) })
       wrap.appendChild(el)
-      this.slots.push({ tile: null, refill: 0, el, canvas })
+      this.slots.push({ tile: null, refill: 0, el, canvas, costEl })
     }
+    // Little reroll-all button in the top-right corner of the tray.
+    const reroll = document.createElement('button')
+    reroll.textContent = '×'
+    reroll.title = `Reroll all tiles (${REROLL_COST})`
+    Object.assign(reroll.style, {
+      position: 'absolute', top: '-9px', right: '-9px',
+      width: '22px', height: '22px', borderRadius: '50%', padding: '0',
+      background: 'rgba(40,40,52,0.95)', color: '#fff', border: '1px solid rgba(255,255,255,0.45)',
+      font: '700 15px ui-monospace, monospace', lineHeight: '1', cursor: 'pointer',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '1',
+    })
+    reroll.addEventListener('click', () => this._rerollAll())
+    wrap.appendChild(reroll)
     document.body.appendChild(wrap)
     this.el = wrap
+  }
+
+  /** Reroll every slot at once (costs REROLL_COST): clear each tile and run its
+   *  refill-ring timer, same as discarding them all. */
+  _rerollAll() {
+    if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
+      Sounds.play('error', 1.0, 0.2, 0.5)
+      return
+    }
+    Sounds.play('roll', 1.0, 0.15)
+    for (let i = 0; i < SLOTS; i++) this._consume(i)
   }
 
   _setTile(i, tile) {
@@ -158,6 +205,15 @@ export class TilePalette {
     slot.pending = null
     slot.el.style.cursor = 'grab'
     this._drawTile(slot)
+    this._updateCostLabel(slot)
+  }
+
+  /** Refresh a slot's cost readout (text = energy cost, red when unaffordable). */
+  _updateCostLabel(slot) {
+    if (!slot.costEl) return
+    if (!slot.tile) { slot.costEl.textContent = ''; return }
+    slot.costEl.textContent = `${this._tileCost(slot.tile)}`
+    slot.costEl.style.color = this._affordable(slot.tile) ? '#fff' : '#ff6a6a'
   }
 
   // ---- icon drawing -----------------------------------------------------------
@@ -271,26 +327,19 @@ export class TilePalette {
   update(dt) {
     for (let i = 0; i < SLOTS; i++) {
       const slot = this.slots[i]
-      if (slot.tile) continue
-      // A rolled tile waits (empty slot) until the player can afford it.
-      if (slot.pending) {
-        if (this._affordable(slot.pending)) this._setTile(i, slot.pending)
-        continue
-      }
+      if (slot.tile) { this._updateCostLabel(slot); continue }
       if (slot.refill <= 0) continue
       slot.refill -= dt
-      if (slot.refill <= 0) {
-        const tile = this.randomTile()
-        if (this._affordable(tile)) this._setTile(i, tile)
-        else { slot.pending = tile; this._clearCanvas(slot) } // hold until affordable
-      } else {
-        this._drawRing(slot, 1 - slot.refill / REFILL_TIME)
-      }
+      // Always show the refilled tile; if it's unaffordable its cost reads red and
+      // it can't be dragged (no more holding slots empty until affordable).
+      if (slot.refill <= 0) this._setTile(i, this.randomTile())
+      else this._drawRing(slot, 1 - slot.refill / REFILL_TIME)
     }
   }
 
   _clearCanvas(slot) {
     slot.canvas.getContext('2d').clearRect(0, 0, ICON, ICON)
+    if (slot.costEl) slot.costEl.textContent = ''
   }
 
   _consume(i) {
@@ -300,6 +349,7 @@ export class TilePalette {
     slot.refill = REFILL_TIME
     slot.el.style.cursor = 'default'
     this._drawRing(slot, 0)
+    if (slot.costEl) slot.costEl.textContent = ''
   }
 
   // ---- press / long-press / drag ---------------------------------------------
@@ -337,6 +387,13 @@ export class TilePalette {
     if (!this.pending || this.pending.done) return
     if (Math.hypot(e.clientX - this.pending.x, e.clientY - this.pending.y) > DRAG_THRESH) {
       clearTimeout(this.pending.lpTimer)
+      const tile = this.slots[this.pending.i].tile
+      if (tile && !this._affordable(tile)) {
+        // Too expensive to even pick up — blip and cancel the gesture.
+        Sounds.play('error', 1.0, 0.2, 0.5)
+        this.pending.done = true
+        return
+      }
       this._beginDrag(this.pending.i)
       this._dragMove(e)
     }
@@ -412,6 +469,16 @@ export class TilePalette {
         if (city.cellClaim[(gy + dy) * city.gridCellsX + (gx + dx)] >= 0) { valid = false; break }
       }
     }
+    // Can't drop a block onto a cell a creep is standing in.
+    if (valid && city.creeps) {
+      for (const [dx, dy] of cells) {
+        if (city.creeps.creepInCell(gx + dx, gy + dy)) { valid = false; break }
+      }
+    }
+    // Generator cap: no more than MAX_GENS placed at once.
+    if (valid && isGenerator(tile) && !city.canPlaceGen()) valid = false
+    // Can't afford the (escalating) cost.
+    if (valid && !this._affordable(tile)) valid = false
     return { gx, gy, cells, w, h, valid }
   }
 
@@ -471,9 +538,9 @@ export class TilePalette {
     // Released over the palette: drop it back in its slot (no place, no error).
     if (this._overPalette(this.drag.lastX, this.drag.lastY)) { restore(); this.drag = null; return }
     if (target && target.valid) {
-      // Placement cost: walls 1/cell, generators/turrets 2/cell. Always affordable
-      // here - the slot is locked when unaffordable, and energy only rises mid-drag.
-      const cost = target.cells.length * (tile.wall ? 1 : 2)
+      // Escalating placement cost (per-type standing count); validity already
+      // confirmed it's affordable.
+      const cost = this._tileCost(tile)
       const opts = tile.wall
         ? {
           tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
@@ -481,8 +548,16 @@ export class TilePalette {
         }
         : { typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex }
       const placed = city.placeTileFree(target.gx, target.gy, target.cells, opts)
-      if (placed) { city.mana?.spend(cost); this._consume(slot) }
-      else restore() // pool exhausted: restore icon, no charge
+      if (placed) {
+        city.mana?.spend(cost)
+        city.recordPlacement(this._typeKey(tile)) // bump the cumulative per-type price
+        this._consume(slot)
+        // Floating "-cost" caption rising from the drop spot (like the gen "+N").
+        const cu = city.cellUnit
+        const wx = (target.gx + target.w / 2) * cu + city.gridOffsetX
+        const wz = (target.gy + target.h / 2) * cu + city.gridOffsetZ
+        this.demo.floatingText?.spawn(wx, 2, wz, `-${cost}`, '#ff6a6a', 0, null)
+      } else restore() // pool exhausted: restore icon, no charge
     } else {
       if (target) Sounds.play('error', 1.0, 0.2, 0.5) // dropped on an invalid cell
       restore() // invalid / cancelled: restore icon

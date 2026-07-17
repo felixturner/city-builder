@@ -2,7 +2,7 @@ import { MathUtils, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, roofGeomIndex } from '../blockTypes.js'
 
 const KING_COLOR = new Color(0xff7000) // bright orange central king piece
 
@@ -26,7 +26,6 @@ export class TowerRenderer {
     const city = this.city
     for (const tower of city.towers) {
       tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
-      if (isGenerator(tower)) tower.colorIndex = genColorIndex(tower.typeTop) // fixed per type
       if (tower.isLit) {
         const accent = city.accentColors[tower.colorIndex]
         tower.litColor = accent.clone()
@@ -143,7 +142,6 @@ export class TowerRenderer {
 
     tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
     if (isGenerator(tower)) {
-      tower.colorIndex = genColorIndex(tower.typeTop) // fixed colour per generator type
       // Generators (path / adj / enclosure): whole tower the accent (litColor glows).
       const accent = city.accentColors[tower.colorIndex]
       tower.litColor = accent.clone()

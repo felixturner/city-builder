@@ -1,8 +1,7 @@
 import { BoxGeometry, BufferGeometry, Float32BufferAttribute } from 'three/webgpu'
 
-// Base cell layouts (grid offsets) for the 7 tetrominoes.
+// Base cell layouts (grid offsets) for the tetrominoes (O removed - too plain).
 const BASE = {
-  O: [[0, 0], [1, 0], [0, 1], [1, 1]],
   I: [[0, 0], [1, 0], [2, 0], [3, 0]],
   S: [[1, 0], [2, 0], [0, 1], [1, 1]],
   Z: [[0, 0], [1, 0], [1, 1], [2, 1]],
@@ -49,7 +48,7 @@ function rotationStates(base) {
  * swapping the box for an extruded outline (or in Blender).
  */
 export class TetrominoGeometry {
-  static names = Object.keys(BASE) // ['O','I','S','Z','L','J','T']
+  static names = Object.keys(BASE) // ['I','S','Z','L','J','T']
   static states = {} // name -> [ cells[], ... ] per rotation (icon orientation)
   static roofHalf = 0.15
 

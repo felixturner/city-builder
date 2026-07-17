@@ -140,6 +140,12 @@ export class TowerInteraction {
       Sounds.play('incorrect', 1.0, 0.2, 0.5) // out of mana
       return false
     }
+    // Floating "-cost" caption rising off the tower (like a placement / gen pulse).
+    if (!city.freeClicks && city.floatingText) {
+      const c = tower.box.getCenter(city.towerCenter)
+      city.floatingText.spawn(c.x + city.gridOffsetX, towerTopY(tower, city.floorHeight) + 0.5,
+        c.y + city.gridOffsetZ, `-${cost}`, '#ff6a6a', 0, null)
+    }
     return true
   }
 

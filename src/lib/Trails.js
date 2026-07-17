@@ -99,7 +99,7 @@ export class Trails {
     this.cellSize = this.lotSize + this.roadWidth // 10
 
     // Path visual settings
-    this.pathWidth = 0.4
+    this.pathWidth = 0.68 // 70% thicker than the original 0.4
     this.pathHeight = 0.05 // Slightly above ground
 
     // Time uniform for animation

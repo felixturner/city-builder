@@ -30,6 +30,9 @@ class SoundsManager {
       dink: new Howl({ src: ['assets/sfx/dink.mp3'] }),
       'mortar-shoot': new Howl({ src: ['assets/sfx/mortar-shoot.mp3'] }),
       'mortar-hit': new Howl({ src: ['assets/sfx/mortar-hit.mp3'] }),
+      warning1: new Howl({ src: ['assets/sfx/warning1.mp3'] }),
+      warning2: new Howl({ src: ['assets/sfx/warning2.mp3'] }),
+      success: new Howl({ src: ['assets/sfx/success.mp3'] }),
     }
     // Multiple stone sounds for random selection
     this.stoneSounds = [
