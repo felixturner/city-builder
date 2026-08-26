@@ -1,6 +1,13 @@
 # TODO
 
 - remove cloisters (too easy boring)
+- make completing wall rings more important. buff walls that are completed x2 def.
+- add wildcards bonuses buffs etc.
+- remove 3rd party blender file. start new clean repo?
+- add rest periods between waves to select power ups.
+
+- add more unit types like 9 kings (adjancy boosters)
+
 - make creeps low poly spider mecha (bugs)
 - add more turret types
 - make connected path generetors pulse at same time

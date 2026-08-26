@@ -31,7 +31,7 @@ import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
 import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey } from './blockTypes.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, genColorIndex } from './blockTypes.js'
 
 const GEN_LIFESPAN = 30 // energy spawns (pulses) a generator fires before it expires
 const MAX_GENS = 30 // hard cap on simultaneously placed generators
@@ -47,7 +47,7 @@ const rotateY = (v, angle) => {
   )
 }
 
-const KING_HEALTH = 6 // floors the central king starts with (creep hits to kill)
+const KING_HEALTH = 5 // floors the central king starts with (creep hits to kill)
 
 export class City {
   // City size in lots (7x7 = 49 lots). Change this to resize the city.
@@ -98,7 +98,7 @@ export class City {
     this.instanceToTower = new Map() // Maps instance ID to tower
 
     // Floor stacking config
-    this.maxFloors = 10
+    this.maxFloors = 5
     this.floorHeight = 2
 
     // Debris system
@@ -145,7 +145,7 @@ export class City {
     this.initGrid()
     await this.initTowers()
     this.placeKing() // central king piece (must exist before the cluster seeds around it)
-    this.generateStartCluster() // place the starting tiles (needs the tower pool)
+    // no starting cluster — player builds from scratch around the king
     this.updateMatrices()
     this.renderer.recalculateVisibility()
     this.energy.refreshManaStats()
@@ -361,7 +361,7 @@ export class City {
     }
     const cells = []
     for (let j = 0; j < spec.s; j++) for (let i = 0; i < spec.s; i++) cells.push([i, j])
-    const colorIndex = MathUtils.randInt(0, 2) // 3 colours per gen (matching is the challenge)
+    const colorIndex = genColorIndex(spec.typeTop) ?? 0
     return { cells, cost: cells.length * 2, opts: { typeTop: spec.typeTop, colorIndex, topColorIndex } }
   }
 
@@ -378,9 +378,9 @@ export class City {
     const bag = []
     const add = (n, spec) => { for (let i = 0; i < n; i++) bag.push(spec) }
     for (const shapeName of TetrominoGeometry.names) add(7, { wall: true, shapeName })
-    const g1 = [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR,
+    const g1 = [TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR,
       TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
-    const gN = [TopType.ADJ_GENERATOR, TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
+    const gN = [TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
     for (const typeTop of g1) add(3, { s: 1, typeTop })
     for (const typeTop of gN) add(3, { s: 2, typeTop })
     for (const typeTop of gN) add(1, { s: 3, typeTop })
@@ -1138,11 +1138,11 @@ export class City {
 
   /** True if a generator is actively producing mana right now (so its lifespan
    *  should tick): needs height and to be in one of the energy system's active
-   *  sets — connected path, lit adjacency cluster, or a claimed enclosure. */
+   *  sets — connected path or a claimed enclosure. */
   genIsProducing(t) {
     if (t.numFloors < 1) return false
     const e = this.energy
-    return e.connectedTowers.has(t) || e.litAdjGens.has(t) || e.enclosureGens.includes(t)
+    return e.connectedTowers.has(t) || e.enclosureGens.includes(t)
   }
 
   /** A CircleGeometry wedge covering `frac` of a full turn, starting at 12 o'clock. */

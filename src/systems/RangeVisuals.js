@@ -68,7 +68,7 @@ export class RangeVisuals {
     this.range = new RingLayer(
       city.scene,
       () => new MeshBasicNodeMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false }),
-      (n) => (n + 1) * city.cellUnit,
+      (n) => (n * 2 + 1) * city.cellUnit,
       { thickness: 0.12, y: 0.07 }
     )
   }
@@ -117,7 +117,7 @@ export class RangeVisuals {
       out.push({
         x: this._zc.x + city.gridOffsetX,
         z: this._zc.y + city.gridOffsetZ,
-        r: (t.numFloors + 1) * city.cellUnit,
+        r: (t.numFloors * 2 + 1) * city.cellUnit,
       })
     }
     return out

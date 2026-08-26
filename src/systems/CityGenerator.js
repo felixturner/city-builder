@@ -56,8 +56,8 @@ export class CityGenerator {
         let tt = TopType.SQUARE
         if (isSquare) {
           const pool = is1x1
-            ? [TopType.SQUARE, TopType.ADJ_GENERATOR, TopType.PEG_TURRET, TopType.DIVOT_TURRET]
-            : [TopType.SQUARE, TopType.ADJ_GENERATOR]
+            ? [TopType.SQUARE, TopType.PEG_TURRET, TopType.DIVOT_TURRET]
+            : [TopType.SQUARE]
           tt = pool[MathUtils.randInt(0, pool.length - 1)]
           if (tt === TopType.PEG_TURRET || tt === TopType.DIVOT_TURRET) {
             if (turretCount >= 2) tt = TopType.SQUARE // extra turrets -> plain

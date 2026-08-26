@@ -284,7 +284,7 @@ export class Turrets {
     const muzzle = new Vector3()
     this.turretMuzzle(tower, muzzle)
     // Range in cells equals the tower's height in floors.
-    const range = (tower.numFloors + 1) * this.city.cellUnit
+    const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
 
@@ -301,7 +301,7 @@ export class Turrets {
   fireLaser(tower) {
     const muzzle = this._from
     this.turretMuzzle(tower, muzzle)
-    const range = (tower.numFloors + 1) * this.city.cellUnit
+    const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
 
@@ -427,7 +427,7 @@ export class Turrets {
       if (cd <= 0) {
         const fired = isMortar ? this.fireMortar(tower) : isLaser ? this.fireLaser(tower) : this.fire(tower)
         if (fired) cd = isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown
-        else cd = 0.15 // nothing in range; re-check soon
+        else cd = 0.15 // nothing in range or out of energy; re-check soon
       }
       this.cooldowns.set(tower, cd)
     }
@@ -438,7 +438,7 @@ export class Turrets {
   fireMortar(tower) {
     const muzzle = this._from
     this.turretMuzzle(tower, muzzle)
-    const range = (tower.numFloors + 1) * this.city.cellUnit
+    const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range) // no LOS: arcs over
     if (!target) return false
 

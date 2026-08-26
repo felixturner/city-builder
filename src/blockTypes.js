@@ -11,7 +11,7 @@ import { BlockGeometry } from './lib/BlockGeometry.js'
 export const TopType = {
   SQUARE: 0,
   QUART: 1,
-  ADJ_GENERATOR: 2, // Hole_Top - generates when orthogonally adjacent to others
+  HOLE: 2, // Hole_Top - unused gameplay slot, kept for geometry index alignment
   PEG_TURRET: 3, // bullet turret
   DIVOT_TURRET: 4, // laser turret
   PATH_GENERATOR: 5, // Cross_Top "plus" block - connects to others via trails
@@ -25,27 +25,24 @@ const ROOF_GEOM = [0, 1, 2, 4, 4, 5, 3, 4]
 export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 
 // Each generator type has ONE fixed accent colour (index into City.accentColors:
-// 0 pink, 1 yellow, 2 blue). Path = blue, adjacency = pink, enclosure = yellow.
+// 0 pink, 1 yellow, 2 blue). Path = blue, enclosure = yellow.
 const GEN_COLOR = {
-  [TopType.PATH_GENERATOR]: 2,
-  [TopType.ADJ_GENERATOR]: 0,
-  [TopType.ENCLOSURE_GENERATOR]: 1,
+  [TopType.PATH_GENERATOR]: 2,    // blue
+  [TopType.ENCLOSURE_GENERATOR]: 0, // pink
 }
 /** Fixed accent index for a generator type, or undefined for non-generators. */
 export const genColorIndex = (typeTop) => GEN_COLOR[typeTop]
 
 export const isPathGenerator = (t) => t.typeTop === TopType.PATH_GENERATOR
-export const isAdjGenerator = (t) => t.typeTop === TopType.ADJ_GENERATOR
 export const isEnclosureGenerator = (t) => t.typeTop === TopType.ENCLOSURE_GENERATOR
 export const isTurret = (t) =>
   t.typeTop === TopType.PEG_TURRET || t.typeTop === TopType.DIVOT_TURRET || t.typeTop === TopType.MORTAR_TURRET
 export const isPegTurret = (t) => t.typeTop === TopType.PEG_TURRET
 export const isDivotTurret = (t) => t.typeTop === TopType.DIVOT_TURRET
 
-/** Any accent-coloured generator (path / adjacency / enclosure). */
+/** Any accent-coloured generator (path / enclosure). */
 export const isGenerator = (t) =>
   t.typeTop === TopType.PATH_GENERATOR ||
-  t.typeTop === TopType.ADJ_GENERATOR ||
   t.typeTop === TopType.ENCLOSURE_GENERATOR
 
 /** A plain "grey" tower: not a generator, turret, or the king. */

@@ -142,4 +142,5 @@ The three strategies, mapped to Carcassonne features:
 - Plants versus Zombies 
 - Ball x Pit
 - Tower defense (what is attacking?) asteroids? birds?
+- 9 Kings
 

@@ -3,7 +3,7 @@ import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
 
 const SLOTS = 6
 const REFILL_TIME = 2.5 // seconds for a used/discarded palette slot to refill
@@ -61,7 +61,7 @@ export class TilePalette {
     const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
     if (spec.wall) return { wall: true, shapeName: spec.shapeName, topColorIndex }
     // Generators use their fixed type colour; turrets keep a random accent.
-    const colorIndex = MathUtils.randInt(0, 2) // 3 colours per gen: matching is the challenge
+    const colorIndex = genColorIndex(spec.typeTop) ?? 0
     return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex, topColorIndex }
   }
 
@@ -111,7 +111,7 @@ export class TilePalette {
    *  count of that bucket the player has placed). Everything escalates now, so
    *  prices keep climbing even as gens expire and you replace them. */
   _tileCost(tile) {
-    const base = this._cells(tile, 0).length * (tile.wall ? 1 : 2)
+    const base = this._cells(tile, 0).length * (tile.wall ? 4 / 3 : 8 / 3)
     const count = this.city.placedCount(this._typeKey(tile))
     const growth = tile.wall ? WALL_COST_GROWTH : COST_GROWTH
     // Global income factor on top of per-bucket escalation: the stronger your
@@ -259,11 +259,6 @@ export class TilePalette {
       ctx.fillStyle = recess
       ctx.fillRect(cx - pe, cy - pt, pe * 2, pt * 2)
       ctx.fillRect(cx - pt, cy - pe, pt * 2, pe * 2)
-    } else if (tile.typeTop === TopType.ADJ_GENERATOR) {
-      ctx.save()
-      ctx.globalCompositeOperation = 'destination-out'
-      ctx.beginPath(); ctx.arc(cx, cy, m * 0.26, 0, Math.PI * 2); ctx.fill()
-      ctx.restore()
     } else if (tile.typeTop === TopType.PEG_TURRET || tile.typeTop === TopType.DIVOT_TURRET || tile.typeTop === TopType.MORTAR_TURRET) {
       const r = m * 0.26
       ctx.fillStyle = tile.typeTop === TopType.PEG_TURRET ? raised : recess

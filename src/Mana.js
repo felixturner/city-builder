@@ -1,7 +1,7 @@
 import { Sounds } from './lib/Sounds.js'
 
 // Set false to remove the energy cap (energy is balanced by spend, not a ceiling).
-const CAP_ENABLED = false
+const CAP_ENABLED = true
 
 /**
  * Mana - text HUD (top-left) showing two stats:

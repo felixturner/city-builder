@@ -4,7 +4,6 @@ import { Sounds } from './lib/Sounds.js'
 
 const loadingEl = document.getElementById('loading')
 const loaderGif = document.getElementById('loader-gif')
-const tuteImg = document.getElementById('tute-img')
 const startBtn = document.getElementById('start-btn')
 const canvas = document.getElementById('canvas')
 
@@ -19,11 +18,10 @@ async function init() {
   demo = new Demo(canvas)
   await demo.init()
 
-  // WebGPU ready - hide loader gif, show first tutorial image + Next button
+  // WebGPU ready - hide loader gif, show Start button
   loaderGif.style.display = 'none'
-  tuteImg.style.display = 'block'
   startBtn.style.display = 'block'
-  new Image().src = 'assets/tute2.png' // preload so the Next swap is instant
+  startBtn.textContent = 'Start'
 }
 
 function start() {
@@ -46,16 +44,5 @@ function start() {
   demo.creeps.start()
 }
 
-// First click advances tute1 -> tute2 (Next); the second click starts the game.
-let tuteStep = 1
-function nextOrStart() {
-  if (tuteStep === 1) {
-    tuteStep = 2
-    tuteImg.src = 'assets/tute2.png'
-    startBtn.textContent = 'Start'
-  } else {
-    start()
-  }
-}
-startBtn.addEventListener('click', nextOrStart)
+startBtn.addEventListener('click', start)
 init()

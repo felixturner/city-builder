@@ -1,7 +1,7 @@
 import { Vector2, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import {
-  isPathGenerator, isAdjGenerator, isEnclosureGenerator, isGrey, towerArea, towerTopY,
+  isPathGenerator, isEnclosureGenerator, isGrey, towerArea, towerTopY,
 } from '../blockTypes.js'
 
 const GEN_INTERVAL = 2 // seconds between generator mana ticks
@@ -9,7 +9,7 @@ const GREY_INTERVAL = 5 // seconds between passive grey-block mana ticks
 const PULSE_DECAY = 0.8 // seconds for a tower's flash to fade back to baseline
 const ENCLOSURE_RATE = 0.2 // mana per (enclosed cell x generator floor)
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
-const PROD_FACTOR = 0.3 // global energy-production scale (applied to every source)
+const PROD_FACTOR = 0.2 // global energy-production scale (applied to every source)
 const KING_INCOME = 8 // baseline mana the king trickles every GREY_INTERVAL (safety net)
 
 /**
@@ -37,11 +37,6 @@ export class EnergySystem {
     this._connectorSig = null
     this._connectorKeys = null
 
-    // Adjacency generators (hole-block clusters)
-    this.adjGenMana = 0
-    this.adjGenClusters = [] // [{members, energy, cx, cy, cz}]
-    this.litAdjGens = new Set() // built hole blocks that pulse-glow
-
     // Enclosure generators (sealed inside a coloured enclosure)
     this.enclosureGenMana = 0
     this.enclosureGens = [] // built enclosure generators producing mana
@@ -58,10 +53,9 @@ export class EnergySystem {
     this._c = new Vector2()
   }
 
-  /** Recompute both generator networks (called when a tower changes). */
+  /** Recompute generator networks (called when a tower changes). */
   refresh() {
     this.updatePathGenerators()
-    this.updateAdjGenerators()
     this.updateEnclosureGenerators()
     this.refreshManaStats()
   }
@@ -118,7 +112,7 @@ export class EnergySystem {
       for (let j = i + 1; j < plus.length; j++) {
         const a = plus[i], b = plus[j]
         if (a.colorIndex !== b.colorIndex) continue
-        const combinedReach = a.numFloors + b.numFloors
+        const combinedReach = (a.numFloors + b.numFloors) * 2
         if (combinedReach <= 0) continue
         a.box.getCenter(this._ca)
         b.box.getCenter(this._cb)
@@ -179,93 +173,13 @@ export class EnergySystem {
     this.connectedTowers = connected
   }
 
-  /** Orthogonal (edge-sharing) adjacency - excludes diagonal corner touches. */
-  orthAdjacent(a, b, tol) {
-    const ba = a.box, bb = b.box
-    const sepX = Math.max(bb.min.x - ba.max.x, ba.min.x - bb.max.x)
-    const sepZ = Math.max(bb.min.y - ba.max.y, ba.min.y - bb.max.y)
-    const closeX = sepX <= tol, closeZ = sepZ <= tol
-    const overlapX = sepX < -tol, overlapZ = sepZ < -tol
-    return (overlapX && closeZ) || (overlapZ && closeX)
-  }
-
-  /**
-   * Adjacency generators: hole blocks generate only in clusters. A connected
-   * group of orthogonally-adjacent holes is one unit that generates 1 mana per
-   * built member, pops a single centred "+N", and pulse-glows together.
-   */
-  updateAdjGenerators() {
-    const city = this.city
-    const tol = city.cellUnit * 0.5
-    const clusters = []
-    const lit = new Set()
-    let mana = 0
-    let clusteredCount = 0 // holes that are part of an adjacency group (size >= 2)
-
-    // Clustering is global (tiles are placed freely and may straddle lots).
-    const holes = city.towers.filter(t => t.visible && isAdjGenerator(t))
-    // Reset every hole to static accent; the per-frame pulse re-brightens
-    // only the generating ones, so one that stops generating doesn't freeze.
-    for (const t of holes) city.setTowerColor(t, city.accentColors[t.colorIndex])
-
-    if (holes.length >= 2) {
-      const visited = new Set()
-      for (const start of holes) {
-        if (visited.has(start)) continue
-        const stack = [start]
-        visited.add(start)
-        const cluster = []
-        while (stack.length) {
-          const cur = stack.pop()
-          cluster.push(cur)
-          for (const o of holes) {
-            if (!visited.has(o) && this.orthAdjacent(cur, o, tol)) {
-              visited.add(o)
-              stack.push(o)
-            }
-          }
-        }
-        if (cluster.length < 2) continue
-        clusteredCount += cluster.length
-
-        let blocks = 0, sx = 0, sz = 0, topY = 0
-        for (const m of cluster) {
-          blocks += m.numFloors // combined block count (sum of all levels in the cluster)
-          const c = m.box.getCenter(this._c)
-          sx += c.x + city.gridOffsetX
-          sz += c.y + city.gridOffsetZ
-          topY = Math.max(topY, towerTopY(m, city.floorHeight))
-        }
-        const energy = Math.round(blocks * PROD_FACTOR)
-        if (energy > 0) {
-          mana += energy
-          for (const m of cluster) lit.add(m)
-          clusters.push({
-            members: cluster.slice(), energy,
-            cx: sx / cluster.length, cy: topY + 0.5, cz: sz / cluster.length,
-          })
-        }
-      }
-    }
-    this.adjGenMana = mana
-    this.adjGenClusters = clusters
-    this.litAdjGens = lit
-
-    // New adjacency formed: play energy-2 when more holes become clustered (skip
-    // the first pass so the initial city doesn't trigger it).
-    if (this._adjClusteredCount !== undefined && clusteredCount > this._adjClusteredCount) {
-      Sounds.play('energy-2')
-    }
-    this._adjClusteredCount = clusteredCount
-  }
-
   /** Per-frame: advance mana ticks, fire scheduled flashes, decay pulses. */
   update(dt) {
     const city = this.city
     if (!city.mana) return
 
     // Generator mana tick: schedule each unit's flash at a random offset.
-    const genMana = this.pathGenMana + this.adjGenMana + this.enclosureGenMana
+    const genMana = this.pathGenMana + this.enclosureGenMana
     // Cache live income/sec (gens + grey trickle + king) for price scaling.
     this.incomePerSecValue = genMana / GEN_INTERVAL
       + (this.countGreyBlocks() * PROD_FACTOR + (city.king && city.king.visible ? KING_INCOME : 0)) / GREY_INTERVAL
@@ -286,13 +200,7 @@ export class EnergySystem {
             })
           }
         }
-        for (const cl of this.adjGenClusters) {
-          this.pulseEvents.push({
-            members: cl.members, t: Math.random(), amt: cl.energy, sound: 'dink',
-            color: city.accentColors[cl.members[0].colorIndex],
-            cx: cl.cx, cy: cl.cy, cz: cl.cz,
-          })
-        }
+
         for (const t of this.enclosureGens) {
           if (!t.visible || !t.enclosureMana) continue
           const c = t.box.getCenter(this._c)
@@ -342,7 +250,6 @@ export class EnergySystem {
 
     // Brightness pulse, driven by each tower's own decaying flash envelope.
     for (const tower of this.connectedTowers) this._pulseTower(tower, dt)
-    for (const tower of this.litAdjGens) this._pulseTower(tower, dt)
     for (const tower of this.enclosureGens) this._pulseTower(tower, dt)
 
     // Pulse the enclosure floor with its generators' flash (strongest one wins).
