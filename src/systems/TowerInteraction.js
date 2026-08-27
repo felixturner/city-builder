@@ -1,7 +1,8 @@
 import { Vector2, Vector3, Box3, Mesh, RingGeometry, MeshBasicNodeMaterial } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
+import { ENERGY_COLOR } from '../palette.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGrey, towerArea, towerTopY } from '../blockTypes.js'
+import { TopType, isTurret, isGrey, isGenerator, towerArea, towerTopY, GEN_LEVEL_BUDGET } from '../blockTypes.js'
 
 /**
  * TowerInteraction - all player input on towers (hover, build, destroy, place,
@@ -111,6 +112,7 @@ export class TowerInteraction {
   buildFloor(tower) {
     const city = this.city
     if (!this.canBuild(tower)) return
+    if (isGenerator(tower)) tower.genLevelsAdded = (tower.genLevelsAdded || 0) + 1
     tower.handleClick(city, city.floorHeight, city.maxFloors, city.debris,
       city.towers, () => city.onTowerChanged(tower), () => city.updateTowerVisuals())
   }
@@ -132,19 +134,26 @@ export class TowerInteraction {
       Sounds.play('error', 1.0, 0.2, 0.5) // already at max height
       return false
     }
+    // Generators only ever accept GEN_LEVEL_BUDGET floors across their whole
+    // life, however many times you rebuild them. Once that's spent it's a dead
+    // husk - stop taking the player's energy for a floor that won't stick.
+    if (isGenerator(tower) && (tower.genLevelsAdded || 0) >= GEN_LEVEL_BUDGET) {
+      Sounds.play('error', 1.0, 0.2, 0.5)
+      return false
+    }
     if (!city.mana) return true
     // Walls (grey) cost 1/cell; generators + turrets cost 2/cell (same rule as
     // placing a tile from the palette).
     const cost = (isGrey(tower) ? 1 : 2) * towerArea(tower, city.cellUnit, city.towerSize)
     if (!city.freeClicks && !city.mana.spend(cost)) {
-      Sounds.play('incorrect', 1.0, 0.2, 0.5) // out of mana
+      Sounds.play('no-money', 1.0, 0.06, 0.55) // can't afford this build
       return false
     }
     // Floating "-cost" caption rising off the tower (like a placement / gen pulse).
     if (!city.freeClicks && city.floatingText) {
       const c = tower.box.getCenter(city.towerCenter)
       city.floatingText.spawn(c.x + city.gridOffsetX, towerTopY(tower, city.floorHeight) + 0.5,
-        c.y + city.gridOffsetZ, `-${cost}`, '#ff6a6a', 0, null)
+        c.y + city.gridOffsetZ, `-${cost}`, ENERGY_COLOR, 0, null)
     }
     return true
   }
@@ -210,7 +219,7 @@ export class TowerInteraction {
     tower.numFloors = 0
     city.renderer.rerollTower(tower)
     city.updateTowerMatrices(tower)
-    Sounds.play('pop', 0.8, 0.15)
+    Sounds.play('pop', 0.8, 0.15, 0.7)
     city.onTowerChanged(tower)
   }
 

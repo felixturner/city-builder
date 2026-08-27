@@ -31,9 +31,14 @@ import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
 import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, genColorIndex } from './blockTypes.js'
+import { ACCENT_COLORS } from './palette.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, genColorIndex, GEN_LEVEL_BUDGET, KING_HEALTH } from './blockTypes.js'
 
-const GEN_LIFESPAN = 30 // energy spawns (pulses) a generator fires before it expires
+// Energy pulses a generator fires per floor before that floor crumbles away.
+// A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
+// a 1-storey one, so building tall is an investment in uptime rather than just
+// output. It visibly shrinks as it burns down, and dies when the last floor goes.
+const GEN_PULSES_PER_FLOOR = 8
 const MAX_GENS = 30 // hard cap on simultaneously placed generators
 
 // Rotate a vec3 around Y axis by angle (in radians)
@@ -47,7 +52,6 @@ const rotateY = (v, angle) => {
   )
 }
 
-const KING_HEALTH = 5 // floors the central king starts with (creep hits to kill)
 
 export class City {
   // City size in lots (7x7 = 49 lots). Change this to resize the city.
@@ -84,17 +88,8 @@ export class City {
     this.actualGridHeight = 0
 
     // Accent colors for lit towers, trails, and new floors
-    const baseAccentColors = [
-      new Color('#FC238D'),
-      new Color('#D2E253'),
-      new Color('#1BB3F6'),
-    ]
-    // Transform colors: boost saturation slightly, increase lightness
-    this.accentColors = baseAccentColors.map(c => {
-      const hsl = {}
-      c.getHSL(hsl)
-      return new Color().setHSL(hsl.h, Math.min(1, hsl.s * 1.1), Math.min(1, hsl.l + 0.2))
-    })
+    // The lighten pass lives in palette.js so the DOM hexes are the same values.
+    this.accentColors = ACCENT_COLORS.map(c => c.clone())
     this.instanceToTower = new Map() // Maps instance ID to tower
 
     // Floor stacking config
@@ -290,7 +285,7 @@ export class City {
 
     this.renderer.applyTileVisuals(t)
     this.updateTowerMatrices(t)
-    if (!silent) Sounds.play('pop', 0.8, 0.15)
+    if (!silent) Sounds.play('pop', 0.8, 0.15, 0.7)
     this.onTowerChanged(t)
     this.updateEnclosure()
     return t
@@ -309,6 +304,9 @@ export class City {
   /** Free a placed tower's cells and return it to the pool (no debris/sound). */
   freePlacedTower(tower) {
     tower.genLife = undefined // clear lifespan + pie so a reused pool tower starts fresh
+    tower.genWarned = false
+    tower.genOnline = false
+    tower.genLevelsAdded = 0
     this._removeGenPie(tower)
     for (const [dx, dy] of tower.cells) this.occupied[tower.cellY + dy][tower.cellX + dx] = false
     const lot = this.lots[tower.lotY][tower.lotX]
@@ -378,12 +376,18 @@ export class City {
     const bag = []
     const add = (n, spec) => { for (let i = 0; i < n; i++) bag.push(spec) }
     for (const shapeName of TetrominoGeometry.names) add(7, { wall: true, shapeName })
-    const g1 = [TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR,
-      TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
-    const gN = [TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
-    for (const typeTop of g1) add(3, { s: 1, typeTop })
-    for (const typeTop of gN) add(3, { s: 2, typeTop })
-    for (const typeTop of gN) add(1, { s: 3, typeTop })
+    // Everything that isn't a wall is a single cell. Generators used to also come
+    // in 2x2 and 3x3 - they were the only multi-cell blocks in the game besides
+    // the tetromino walls - which made footprint a second, inconsistent axis of
+    // variation on top of height.
+    //
+    // Counts keep the old mix: 14 generator tiles to 9 turret tiles, and 23
+    // non-wall tiles overall, the same as when the big ones were in the bag. Drop
+    // those numbers and walls would go from ~68% of draws to ~77%.
+    const gens = [TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
+    const turrets = [TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
+    for (const typeTop of gens) add(7, { s: 1, typeTop })
+    for (const typeTop of turrets) add(3, { s: 1, typeTop })
     for (let i = bag.length - 1; i > 0; i--) {
       const j = MathUtils.randInt(0, i)
       ;[bag[i], bag[j]] = [bag[j], bag[i]]
@@ -472,14 +476,20 @@ export class City {
     }
   }
 
-  /** Place the king: a 1x1 bright-orange tower at the exact centre. Losing it
+  /** Place the king: a 1x1 tower at the exact centre with the hole roof, in a
+   *  random light accent colour. Losing it
    *  (creeps knock it to 0 floors) ends the game. */
   placeKing() {
     const lc = this.lotCells
     const ccx = this.centerLotX * lc + Math.floor(lc / 2)
     const ccy = this.centerLotZ * lc + Math.floor(lc / 2)
+    // One of the three light city accents, drawn per game, so the piece you're
+    // defending isn't the same colour every run.
+    const kingColor = MathUtils.randInt(0, this.accentColors.length - 1)
+    // HOLE is an otherwise-unused top type, so the king gets a distinct roof
+    // without being picked up by isGenerator/isTurret anywhere.
     const t = this.placeTileFree(ccx, ccy, [[0, 0]], {
-      typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex: 0, king: true,
+      typeTop: TopType.HOLE, colorIndex: kingColor, topColorIndex: kingColor, king: true,
     }, true)
     if (!t) return
     t.numFloors = KING_HEALTH
@@ -668,7 +678,7 @@ export class City {
       const newFloorColor = Tower.lightenColor(baseColor)
       // Volume fades based on distance (0 at 3 lots away)
       const maxSoundDist = this.cellSize * 3 // 3 lots
-      const volume = Math.max(0, 1 - dist / maxSoundDist) * 0.5
+      const volume = Math.max(0, 1 - dist / maxSoundDist) * 0.35
       for (let f = 0; f < targetFloors; f++) {
         const delay = staggerDelay + f * floorDelay
         maxDelay = Math.max(maxDelay, delay)
@@ -857,6 +867,9 @@ export class City {
    */
   onTowerChanged(tower) {
     this.updateTowerMatrices(tower)
+    // The roof takes the shade of the floor it sits on, so the stack gradient
+    // has to be redrawn whenever the height changes.
+    if (isGrey(tower)) this.renderer.shadeStack(tower)
     this.lotGrowth.trySpawnLots()
     this.updateTowerVisuals()
     this.flowDirty = true // creep pathing depends on walls/goals
@@ -1088,15 +1101,46 @@ export class City {
     const cu = this.cellUnit
     for (const t of this.towers) {
       if (!t.visible || !isGenerator(t)) continue
-      if (t.genLife === undefined) { t.genLife = GEN_LIFESPAN; t.genLifeMax = GEN_LIFESPAN }
-      // genLife is decremented one tick per energy spawn (EnergySystem). Expire when
-      // spent; otherwise only show the pie while the gen is actively producing —
-      // idle gens (0-floor, unconnected paths, etc.) hold their life and hide it.
-      if (t.genLife <= 0) { this._removeGenPie(t); this.expireGen(t); continue }
+      if (t.genLife === undefined) {
+        t.genLife = GEN_PULSES_PER_FLOOR; t.genLifeMax = GEN_PULSES_PER_FLOOR
+        t.genWarned = false; t.genOnline = false
+      }
+      // genLife counts down one tick per energy spawn (EnergySystem) and measures
+      // the CURRENT floor only. Spend it and the gen drops a storey; run out of
+      // storeys and it's gone. The pie therefore reads as progress through the
+      // floor you're burning, and the tower itself shows how many are left.
+      if (t.genLife <= 0) {
+        t.genLife = GEN_PULSES_PER_FLOOR
+        // Out of floors: the gen only truly dies once its level budget is spent.
+        // With budget left it collapses to a stub you can build back up, which
+        // is what makes GEN_LEVEL_BUDGET a second life rather than a hard timer.
+        if (t.numFloors <= 1 && (t.genLevelsAdded || 0) >= GEN_LEVEL_BUDGET) {
+          this._removeGenPie(t); this.expireGen(t); continue
+        }
+        if (t.numFloors <= 0) { this._removeGenPie(t); continue }
+        // Burning down is the generator spending itself, not taking damage, so
+        // no debris: the block just goes. Debris here read as "something hit
+        // this", which is the wrong story for a gen running out of fuel.
+        t.numFloors -= 1
+        this.onTowerChanged(t)
+        Sounds.play('alert1', 1.0, 0.1, 0.4)
+        // Down to its last floor: this is the "replace me" moment.
+        if (t.numFloors === 1 && !t.genWarned && this.genIsProducing(t)) {
+          t.genWarned = true
+          Sounds.play('gen-warn', 1.0, 0.1, 0.45)
+        }
+      }
       if (!this.genIsProducing(t)) {
         const idle = seen.get(t)
         if (idle) idle.mesh.visible = false
         continue
+      }
+      // First time this gen actually produces: a short charge-up, so hooking a
+      // generator into a network has an audible "it's alive" moment to answer
+      // the power-down when it later dies.
+      if (!t.genOnline) {
+        t.genOnline = true
+        Sounds.play('gen-online', 1.0, 0.08, 0.4)
       }
 
       const frac = t.genLife / t.genLifeMax
@@ -1132,7 +1176,7 @@ export class City {
     }
     // Drop pies for gens that vanished without expiring (demolished by the player).
     for (const [t, pie] of seen) {
-      if (!t.visible || !isGenerator(t)) { this.scene.remove(pie.mesh); pie.mesh.geometry.dispose(); seen.delete(t); t.genLife = undefined }
+      if (!t.visible || !isGenerator(t)) { this.scene.remove(pie.mesh); pie.mesh.geometry.dispose(); seen.delete(t); t.genLife = undefined; t.genWarned = false; t.genOnline = false }
     }
   }
 
@@ -1158,7 +1202,10 @@ export class City {
   /** A generator reached the end of its lifespan: remove it (debris-free). */
   expireGen(tower) {
     tower.genLife = undefined
-    Sounds.play('power-down', 1.0, 0.1, 0.5)
+    tower.genWarned = false
+    tower.genOnline = false
+    tower.genLevelsAdded = 0
+    Sounds.play('break2', 1.15, 0.15, 0.45)
     this.demolishTower(tower)
   }
 

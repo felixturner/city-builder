@@ -36,6 +36,24 @@ export class Turrets {
   static LASER_TYPE = 4 // Divot_Top
   static MORTAR_TYPE = 7 // mortar (AoE)
 
+  /**
+   * Ammo each shot costs. Turrets fire from the ammo pool, not the energy pool -
+   * energy builds the city, ammo defends it, and they refill from completely
+   * different places.
+   *
+   * Balanced against the drop rate: a dying creep leaves an ammo box 20% of the
+   * time worth 5, so kills pay for themselves at ~1.0 ammo each on average. A
+   * normal creep has 4 HP, so the costs below make a clean kill cost about 1.0
+   * whichever gun does it:
+   *   peg     1 dmg x 4 shots x 0.25 = 1.0
+   *   laser   2 dmg x 2 shots x 0.5  = 1.0
+   *   mortar  8 dmg, one shot        = 1.0, and better than break-even whenever
+   *                                    the blast catches more than one creep
+   * Big creeps (2x HP) and giants (10x) cost proportionally more than they drop,
+   * so the pressure builds exactly where it should.
+   */
+  static SHOT_COST = { peg: 0.25, laser: 0.5, mortar: 1.0 }
+
   constructor(scene, city, creeps) {
     this.scene = scene
     this.city = city
@@ -280,6 +298,24 @@ export class Turrets {
     return m
   }
 
+  /** Try to pay a shot's ammo. Returns false when the magazine is empty. */
+  payForShot(kind) {
+    const city = this.city
+    if (city.freeClicks || !city.mana) return true
+    if (city.mana.spendAmmo(Turrets.SHOT_COST[kind])) return true
+    this.dryFire()
+    return false
+  }
+
+  /** Turrets going quiet because you're out of ammo is otherwise invisible -
+   *  give it a dry click, throttled so a field of dry turrets doesn't rattle. */
+  dryFire() {
+    const now = performance.now() / 1000
+    if (this._lastDry !== undefined && now - this._lastDry < 1.5) return
+    this._lastDry = now
+    Sounds.play('dink', 0.5, 0.05, 0.35)
+  }
+
   fire(tower) {
     const muzzle = new Vector3()
     this.turretMuzzle(tower, muzzle)
@@ -287,13 +323,14 @@ export class Turrets {
     const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
+    if (!this.payForShot('peg')) return false
 
     const mesh = new Mesh(this.projGeo, this.projMatFor(tower.colorIndex))
     mesh.position.copy(muzzle)
     mesh.castShadow = true
     this.scene.add(mesh)
     this.projectiles.push({ mesh, target, life: 0 })
-    Sounds.play('shoot', 1.0, 0.2, 0.5)
+    Sounds.play('shoot', 1.0, 0.2, 0.34)
     return true
   }
 
@@ -304,11 +341,12 @@ export class Turrets {
     const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
+    if (!this.payForShot('laser')) return false
 
     this._to.copy(target.mesh.position)
     this.spawnBeam(muzzle, this._to, tower.laserColor || this._white)
     this.creeps.hit(target, this.laserDamage)
-    Sounds.play('shoot', 0.65, 0.2, 0.5)
+    Sounds.play('shoot', 0.65, 0.2, 0.34)
     return true
   }
 
@@ -397,7 +435,13 @@ export class Turrets {
       const dist = Math.hypot(dx, dy, dz) || 1
       const step = this.projectileSpeed * dt
 
-      if (dist <= this.hitRadius + step) {
+      // Hit against the creep's BODY, not a fixed radius around its centre. A
+      // giant is 3 world units across; with a flat 1.0 the shell had to reach
+      // 2 units INSIDE the model before it registered, so shots visibly passed
+      // through bosses. Giants shrink as they take damage, so this tightens
+      // with them.
+      const hitR = Math.max(this.hitRadius, p.target.mesh.scale.x || 1)
+      if (dist <= hitR + step) {
         // Reached the creep: land a hit and consume the projectile.
         this.creeps.hit(p.target)
         this.scene.remove(p.mesh)
@@ -441,6 +485,7 @@ export class Turrets {
     const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range) // no LOS: arcs over
     if (!target) return false
+    if (!this.payForShot('mortar')) return false
 
     const mesh = new Mesh(this.mortarGeo, this.mortarMat)
     mesh.position.copy(muzzle)
@@ -448,7 +493,7 @@ export class Turrets {
     this.scene.add(mesh)
     const end = new Vector3(target.mesh.position.x, 0.4, target.mesh.position.z)
     this.projectiles.push({ mesh, mortar: true, start: muzzle.clone(), end, t: 0, dur: this.mortarDur })
-    Sounds.play('mortar-shoot', 1.0, 0.15, 0.6)
+    Sounds.play('mortar-shoot', 1.0, 0.15, 0.4)
     return true
   }
 
@@ -459,7 +504,10 @@ export class Turrets {
     for (const c of this.creeps.creeps) {
       if (c.state === 'fly') continue // bombers are at altitude
       const dx = c.mesh.position.x - x, dz = c.mesh.position.z - z
-      if (dx * dx + dz * dz <= r2) this.creeps.hit(c, this.mortarDamage)
+      // Same for the blast: measure to the creep's edge, so a shell landing
+      // beside a giant still catches it.
+      const rr = this.mortarRadius + (c.mesh.scale.x || 0)
+      if (dx * dx + dz * dz <= rr * rr) this.creeps.hit(c, this.mortarDamage)
     }
     // Blast dome: sphere centered at ground (y=0) so only the top half shows;
     // pops its scale up fast then fades out (animated in update()).
@@ -472,6 +520,6 @@ export class Turrets {
     mesh.scale.setScalar(0.001)
     this.scene.add(mesh)
     this.explosions.push({ mesh, mat, life: 0 })
-    Sounds.play('mortar-hit', 1.0, 0.15, 0.7)
+    Sounds.play('mortar-hit', 1.0, 0.15, 0.47)
   }
 }

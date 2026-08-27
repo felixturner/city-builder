@@ -22,6 +22,12 @@ import { Lighting } from './Lighting.js'
 import { Trails } from './lib/Trails.js'
 import { PostFX } from './PostFX.js'
 import { Mana } from './Mana.js'
+import { ResourceFly } from './lib/ResourceFly.js'
+import { ENERGY_COLOR } from './palette.js'
+
+// Heavy shadow so game-over text stays legible over the live city now that
+// there's no scrim behind it.
+const TEXT_SHADOW = '0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.9)'
 import { Creeps } from './Creeps.js'
 import { Turrets } from './Turrets.js'
 import { CreepTimeline } from './CreepTimeline.js'
@@ -30,6 +36,14 @@ import { TilePalette } from './systems/TilePalette.js'
 
 export class Demo {
   static instance = null
+
+  // How much slack past "the grid exactly fills the view" the zoom-out stops at.
+  static ZOOM_OUT_MARGIN = 1.12
+
+  // Seconds between the king dying and the game freezing behind the score panel,
+  // so you get to watch the creeps finish the job instead of cutting to a
+  // screen the instant the last floor drops.
+  static GAME_OVER_DELAY = 3
 
   constructor(canvas) {
     this.canvas = canvas
@@ -44,10 +58,14 @@ export class Demo {
     this.clock = new Clock(false)
     // Gameplay stays frozen until the player presses Start (see main.js).
     this.started = false
+    this.kingDead = false // king lost; game still running out the clock
+    this.gameOverDelay = 0
+    this.isGameOver = false // panel up, everything frozen
     this.targetFPS = 60
     this.frameInterval = 1 / 60
     this.lastFrameTime = 0
     this.resizeTimeout = null
+
 
     // Module instances
     this.gui = null
@@ -111,9 +129,17 @@ export class Demo {
     // Energy/population HUD - grey blocks generate energy and raise its cap
     this.mana = new Mana(100, 100)
     this.city.mana = this.mana
+    // Income boxes flying from generators to the HUD meters. City needs the live
+    // camera to project their launch point.
+    this.resourceFly = new ResourceFly()
+    this.city.resourceFly = this.resourceFly
+    this.city.camera = this.camera
 
     await this.lighting.init()
     await this.city.init()
+    // City now knows its grid size, so the zoom-out cap can be derived. (The
+    // earlier onResize ran before the city existed and bailed out.)
+    this.updateZoomLimit()
 
     // Set up hover and click detection on city blocks
     this.pointerHandler.setRaycastTargets(
@@ -204,7 +230,9 @@ export class Demo {
 
     // Set up perspective camera (closer position for FOV 30)
     // Initial camera position - same rotation but targeting origin
-    this.perspCamera.position.set(-22.0998, 60, -15.012)
+    // 20% further from the origin than the framing this was authored at
+    // (-22.0998, 60, -15.012), for a wider opening shot.
+    this.perspCamera.position.set(-26.5198, 72, -18.0144)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
@@ -212,25 +240,34 @@ export class Demo {
     this.controls.enableDamping = true
     this.controls.dampingFactor = 0.1
     this.controls.enableRotate = true
-    // Swap mouse buttons: left=pan, right=rotate (like Townscaper)
+    // Two verbs only: orbit the city centre, and zoom. There is no panning, so
+    // the camera can never lose the city and there's nothing to re-centre.
+    this.controls.enablePan = false
+    // Right button is not a camera control at all - it's the demolish click, and
+    // having it also orbit meant every demolish nudged the view.
     this.controls.mouseButtons = {
-      LEFT: 2,  // PAN
+      LEFT: 0,  // ROTATE
       MIDDLE: 1, // DOLLY
-      RIGHT: 0   // ROTATE
+      RIGHT: null
     }
-    // Touch: 1 finger=pan, 2 fingers=rotate+zoom
+    // Touch: 1 finger orbits, 2 fingers pinch-zoom + orbit.
     // TOUCH constants: ROTATE=0, PAN=1, DOLLY_PAN=2, DOLLY_ROTATE=3
     this.controls.touches = {
-      ONE: 1,  // TOUCH.PAN
+      ONE: 0,  // TOUCH.ROTATE
       TWO: 3   // TOUCH.DOLLY_ROTATE
     }
-    // Zoom limits (distance from target)
+    // Zoom limits. minDistance is fixed; maxDistance is recomputed from the grid
+    // size and the window aspect in updateZoomLimit().
     this.controls.minDistance = 40
-    this.controls.maxDistance = 470
     // Polar angle limits (vertical tilt) - prevent going below horizon
-    this.controls.maxPolarAngle = 1.53  // ~88° - above horizon
-    // Pan parallel to ground plane instead of screen
-    this.controls.screenSpacePanning = false
+    // Right-drag orbits on the up axis only: the pitch is locked to whatever the
+    // opening framing has, so rotating can't tip the city toward the horizon.
+    const pol = Math.acos(
+      this.perspCamera.position.y / this.perspCamera.position.length()
+    )
+    this.controls.minPolarAngle = pol
+    this.controls.maxPolarAngle = pol
+    // The orbit centre is the middle of the city and stays there for good.
     this.controls.target.set(0, 0, 0)
     this.controls.update()
   }
@@ -248,6 +285,28 @@ export class Demo {
   updatePerspFrustum() {
     this.perspCamera.aspect = window.innerWidth / window.innerHeight
     this.perspCamera.updateProjectionMatrix()
+    this.updateZoomLimit()
+  }
+
+  /**
+   * Cap zoom-out at "the whole build grid, plus a little". Derived rather than a
+   * fixed number: the fov is VERTICAL, so a tall/narrow window needs to pull
+   * back much further to fit the same ground area, and a hardcoded distance that
+   * frames the grid on desktop leaves it cropped on a phone.
+   *
+   * The worst case is the grid presented corner-on (orbit is free), so the extent
+   * to fit is its half-diagonal, with the vertical squashed by the camera pitch.
+   */
+  updateZoomLimit() {
+    if (!this.controls || !this.city) return
+    const cam = this.perspCamera
+    const halfDiag = Math.hypot(this.city.actualGridWidth, this.city.actualGridHeight) / 2
+    const pitch = this.controls.minPolarAngle || 0
+    const needV = halfDiag * Math.cos(pitch) + this.city.maxFloors * this.city.floorHeight * 0.5
+    const needH = halfDiag
+    const tan = Math.tan((cam.fov * Math.PI / 180) / 2)
+    const dist = Math.max(needV, needH / cam.aspect) / tan
+    this.controls.maxDistance = Math.min(900, dist * Demo.ZOOM_OUT_MARGIN)
   }
 
   switchCamera(usePerspective) {
@@ -314,14 +373,19 @@ export class Demo {
     const dt = clock.getDelta()
 
     controls.update(dt)
-    // Clamp target Y to prevent panning under the city
-    if (controls.target.y < 0) controls.target.y = 0
     this.lighting.updateShadowCamera(this.controls.target, this.camera, this.orthoCamera, this.perspCamera)
 
-    // Game systems freeze before Start and while paused; camera + rendering
-    // keep going so the scene is visible/orbitable on the start screen.
+    // Game systems freeze before Start, while paused, and once the game-over
+    // panel is up. The king dying does NOT freeze anything on its own - the city
+    // keeps running for GAME_OVER_DELAY seconds first (see kingDead below).
     if (this.started && !this.paused && !this.isGameOver) {
       this.stepGame(dt)
+    }
+
+    // Countdown from the king's death to the panel.
+    if (this.kingDead && !this.isGameOver) {
+      this.gameOverDelay -= dt
+      if (this.gameOverDelay <= 0) this.showGameOver()
     }
 
     this.creepTimeline.update()
@@ -339,7 +403,9 @@ export class Demo {
 
   /** Advance all game systems by `dt` seconds. */
   stepGame(dt) {
-    this.mana.tick(dt) // survival-time score
+    // The score stops the moment the king dies, not when the panel appears -
+    // the run ended at the death, the extra seconds are just the aftermath.
+    if (!this.kingDead) this.mana.tick(dt)
     this.city.update(dt)
     this.trails.update(dt)
     this.creeps.update(dt)
@@ -369,29 +435,68 @@ export class Demo {
     btn.addEventListener('click', () => {
       this.paused = !this.paused
       btn.textContent = this.paused ? '▶ Play' : '⏸ Pause'
+      // The wave clock freezes while paused, so a running countdown bed would
+      // drift out of sync with it. Cut it; it re-cues on the next wave.
+      if (this.paused) {
+        Sounds.stop('tick-fast')
+        Sounds.fadeOut('horn-boss', 0.3)
+        if (this.creeps) {
+          this.creeps._cuedWave = -1
+          this.creeps._riserWave = -1
+          this.creeps._riser = null
+        }
+        Sounds.holdBeds(true)
+        // Fade the master bus out so one-shots already in flight go quiet too,
+        // not just the beds.
+        Sounds.fadeMaster(0, 0.25)
+      } else {
+        Sounds.fadeMaster(1, 0.25)
+        Sounds.holdBeds(false)
+      }
     })
     document.body.appendChild(btn)
     this.pauseButton = btn
   }
 
-  /** The king died: freeze the game, play a stinger, and show the overlay. */
+  /**
+   * The king died. The game keeps running for GAME_OVER_DELAY seconds - creeps
+   * carry on overrunning the city - and only then does showGameOver() freeze it
+   * and put the panel up.
+   */
   gameOver() {
+    if (this.kingDead) return
+    this.kingDead = true
+    this.gameOverDelay = Demo.GAME_OVER_DELAY
+    // 3.2s long, peaking at 1.46s - it plays out across the GAME_OVER_DELAY
+    // window and lands just as the panel appears.
+    Sounds.play('game-over', 1.0, 0, 0.85)
+  }
+
+  /** Freeze the game and show the score panel. */
+  showGameOver() {
     if (this.isGameOver) return
     this.isGameOver = true
-    Sounds.play('power-down', 1.0, 0.05, 0.9)
+    // Now that everything really has stopped, take the wave audio down with it.
+    Sounds.stop('tick-fast')
+    Sounds.fadeOut('horn-boss', 0.5)
+    Sounds.stopBeds(1.2)
 
     const el = document.createElement('div')
     el.id = 'game-over'
     Object.assign(el.style, {
       position: 'fixed', inset: '0', zIndex: '2000',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      gap: '28px', background: 'rgba(10,8,6,0.82)', backdropFilter: 'blur(5px)',
+      gap: '28px',
+      // No scrim: the city you just lost stays fully visible behind the text.
+      // Each label carries its own shadow instead so it reads over any scene.
+      background: 'transparent',
+      pointerEvents: 'none',
     })
     const title = document.createElement('div')
     title.textContent = 'GAME OVER'
     Object.assign(title.style, {
-      color: '#ff7000', font: '800 72px ui-monospace, Menlo, monospace',
-      letterSpacing: '2px', textShadow: '0 3px 18px rgba(0,0,0,0.8)',
+      color: ENERGY_COLOR, font: '800 72px ui-monospace, Menlo, monospace',
+      letterSpacing: '2px', textShadow: TEXT_SHADOW,
     })
 
     // Final score + persisted high score (localStorage).
@@ -407,11 +512,14 @@ export class Demo {
     })
     const scoreEl = document.createElement('div')
     scoreEl.textContent = `score: ${final}`
-    Object.assign(scoreEl.style, { color: '#fff', font: '700 30px ui-monospace, Menlo, monospace' })
+    Object.assign(scoreEl.style, {
+      color: '#fff', font: '700 30px ui-monospace, Menlo, monospace', textShadow: TEXT_SHADOW,
+    })
     const bestEl = document.createElement('div')
     bestEl.textContent = isBest ? `★ new best ★` : `best: ${best}`
     Object.assign(bestEl.style, {
-      color: isBest ? '#ffd23f' : '#bbb', font: '600 20px ui-monospace, Menlo, monospace',
+      color: isBest ? ENERGY_COLOR : '#dfdfdf', font: '600 20px ui-monospace, Menlo, monospace',
+      textShadow: TEXT_SHADOW,
     })
     stats.appendChild(scoreEl)
     stats.appendChild(bestEl)
@@ -420,7 +528,9 @@ export class Demo {
     btn.textContent = 'Restart'
     Object.assign(btn.style, {
       padding: '12px 36px', font: '600 18px ui-monospace, monospace', color: '#fff',
-      background: 'transparent', border: '2px solid #fff', borderRadius: '24px', cursor: 'pointer',
+      background: 'rgba(0,0,0,0.35)', border: '2px solid #fff', borderRadius: '24px',
+      cursor: 'pointer', textShadow: TEXT_SHADOW,
+      pointerEvents: 'auto', // the panel itself is click-through; the button isn't
     })
     btn.addEventListener('click', () => location.reload())
     el.appendChild(title)

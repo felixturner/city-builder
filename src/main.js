@@ -27,6 +27,12 @@ async function init() {
 function start() {
   // Play intro sound (also unlocks AudioContext on user gesture)
   Sounds.play('intro')
+  // Background beds loop for the whole session. They can only be started from
+  // inside a user gesture, so this has to happen here and nowhere earlier.
+  Sounds.startBeds()
+  Sounds.setBedMode('build', 3.0)
+  // Reveal sting over the opening build period, under the intro animation.
+  Sounds.play('reveal', 1.0, 0, 0.5)
 
   // Hide loading overlay
   loadingEl.style.display = 'none'

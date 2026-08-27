@@ -10,7 +10,8 @@ import {
   Quaternion,
   Color,
 } from 'three/webgpu'
-import { Sounds } from './lib/Sounds.js'
+import { Sounds, BOSS_HORN_PREROLL, MAX_RISER_PREROLL } from './lib/Sounds.js'
+import { AMMO_COLOR } from './Mana.js'
 
 /**
  * Creeps - abstract enemy nodes. Black diamonds (cubes rotated 45deg off the
@@ -125,8 +126,26 @@ export class Creeps {
     this.rampDuration = 600 // seconds to ramp from start -> min (longer ramp)
 
     // Waves: spawn for waveActive secs, then wait until the next wavePeriod.
-    this.wavePeriod = 40 // 20s spawn + 20s wait
+    // Build rounds are 30s to match the opening grace period, so every breather
+    // is the same length as the one you learned the game in.
+    this.wavePeriod = 50 // 20s spawn + 30s build
     this.waveActive = 20 // seconds each wave spawns for
+
+    // Wave audio: a ticking clock fills the breather, then a horn lands on the
+    // spawn. Leads are in seconds before the wave starts; the clock bed is
+    // seeked so its last tick falls on zero (see Sounds.countdown).
+    // The clock runs for this long before a wave, and the riser lands its peak
+    // on the spawn inside that window: ~5s of riser over the tail of a normal
+    // wave's ticker, ~11s over a boss's. The build phase is 30s, so a 15s clock
+    // still leaves half the breather quiet to build in.
+    this.countdownLead = 15
+    this.bossCountdownLead = 15
+    this._audioWave = -1 // last wave index whose horn fired
+    this._cuedWave = -1 // last wave index whose countdown started
+    this._bossCuedWave = -1 // last boss wave whose horn was pre-rolled
+    this._waveActiveNow = false // in combat? (spawning, or creeps still alive)
+    this._riser = null // riser armed for the next wave, fired at its own peak
+    this._riserWave = -1
     this.bigChance = 0.1 // fraction of creeps that are big (once they unlock)
     this.bigUnlockTime = 90 // no big creeps until this many seconds in
     // Fraction of creeps that doggedly smash toward the king (ignoring gens) when
@@ -155,10 +174,27 @@ export class Creeps {
     this.stepDuration = 0.30 // seconds to move one cell
     this.hopHeight = 0.6
     this.reach = 49 // ~half the map (7 lots * 14 / 2)
+    // Half-extent of the buildable grid. Creeps spawn at `reach`, i.e. well
+    // outside this, and only count as having arrived once they cross it.
+    this.fieldHalf = city.actualGridWidth / 2
 
     this.knockInterval = 0.45 // seconds between knocks
     this.knocksPerFloor = 3
     this.hitsToKill = 4 // turret sphere hits needed to destroy a creep
+
+    // Ammo boxes: a dying creep leaves one 20% of the time. At 5 a box that's
+    // 1.0 ammo per kill on average, which is what Turrets.SHOT_COST is priced
+    // against - see the table there.
+    this.ammoDropChance = 0.2
+    this.ammoDropAmount = 5
+    this.ammoBoxGeo = new BoxGeometry(1.1, 1.1, 1.1)
+    this.ammoBoxMat = new MeshStandardNodeMaterial({
+      color: new Color(AMMO_COLOR),
+      emissive: new Color(AMMO_COLOR).multiplyScalar(0.45),
+      roughness: 0.35,
+      metalness: 0,
+    })
+    this.ammoBoxes = []
 
     this._p = new Vector2()
     this._sv = new Vector2()
@@ -200,6 +236,11 @@ export class Creeps {
     const laser = !giant && !forceShooter && !big && !shooter && this.elapsed >= this.laserUnlockTime && Math.random() < this.laserChance
     // Bombers fly across at altitude and drop bombs.
     const bomber = !giant && !forceShooter && !big && !shooter && !laser && this.elapsed >= this.bomberUnlockTime && Math.random() < this.bomberChance
+    // Heads-up blips for the two threats you can't just out-wall: a bright high
+    // one for the airborne bomber, a sharper mid one for the laser. Fixed per
+    // type (not randomised) so they stay learnable, and quiet enough to sit
+    // under the wave horn. Sounds.js rate-limits them, so a burst of bombers
+    // gives one warning rather than five.
     if (bomber) { this.spawnBomber(); return }
     const scale = giant ? 3 : (big ? 1.4 : 0.7)
     const baseY = giant ? 3 : (big ? 1.5 : 0.8)
@@ -230,7 +271,6 @@ export class Creeps {
 
     mesh.position.set(x, baseY, z)
     this.scene.add(mesh)
-    Sounds.play('spawn', giant ? 0.4 : (big ? 0.7 : 1.0), 0.12, giant ? 0.5 : (big ? 0.25 : 0.15))
 
     // F-mode seeker dot above the creep (red = king-seeker, green = gen-seeker).
     // Counter-scaled so it reads the same on big/small creeps.
@@ -256,6 +296,16 @@ export class Creeps {
       shooter,
       laser,
       giant,
+      // Arrival sound, held until the creep crosses onto the playfield (see
+      // updateEntries). Rank-and-file creeps get the short creep-warn tick;
+      // spawn.mp3 is loud and full-bodied, so it's reserved for the rare big
+      // bodies where an announcement is actually warranted.
+      entered: false,
+      baseScale: scale, // spawn size; giants shrink from this as they take hits
+      baseYSpawn: baseY, // resting height at spawn size, scaled down alongside it
+      entrySound: giant || big ? 'spawn' : 'creep-warn',
+      entryRate: giant ? 0.4 : (big ? 0.7 : 1.0),
+      entryVol: giant ? 1.0 : (big ? 0.7 : 0.22),
       shootTimer: 0,
       baseY,
       maxHits: giant ? this.hitsToKill * 10 : (big ? this.hitsToKill * 2 : this.hitsToKill),
@@ -278,6 +328,125 @@ export class Creeps {
   /** Which boss wave this is (1, 2, 3, ...) = giant count. */
   bossOrdinal(waveIdx) { return (waveIdx + 1) / 5 }
 
+  /**
+   * Voice for a boss wave. Each tier gets its own reading of the same low horn:
+   * a semitone-ish deeper and a touch louder per boss, so the 5th boss wave is
+   * an audibly bigger animal than the 1st without needing five more files.
+   * Deliberately quieter than the regular wave horns - it's a 9s sustained
+   * swell, so at wave-horn volume it would smother everything under it.
+   */
+  bossHornVoice(waveIdx) {
+    const n = this.bossOrdinal(waveIdx) // 1, 2, 3, ...
+    return {
+      rate: Math.max(0.6, 1.0 - (n - 1) * 0.1),
+      volume: Math.min(0.5, 0.3 + (n - 1) * 0.04),
+    }
+  }
+
+  /**
+   * Fire each creep's arrival sound the moment it crosses onto the playfield.
+   *
+   * Creeps spawn at `reach` (~14 units outside the grid) and take a couple of
+   * seconds to walk in, so playing this at birth put the sound well before
+   * there was anything to look at - and during a burst it fired the whole
+   * wave's worth at the edge in one clump. On the crossing it tracks what you
+   * can actually see arriving.
+   */
+  updateEntries() {
+    const half = this.fieldHalf
+    for (const c of this.creeps) {
+      if (c.entered) continue
+      const p = c.mesh.position
+      if (Math.abs(p.x) > half || Math.abs(p.z) > half) continue
+      c.entered = true
+      Sounds.play(c.entrySound, c.entryRate, 0.12, c.entryVol)
+      // Flyers get their own call over the top - they cross the whole map at
+      // altitude, so this is the only warning you get that one is up there.
+      if (c.bomber) Sounds.play('flyer-warn', 1.0, 0.03, 0.22)
+      else if (c.laser) Sounds.play('alert2', 1.0, 0.04, 0.26)
+    }
+  }
+
+  /**
+   * Schedule the audio around wave boundaries. Called once per frame from
+   * update() - deliberately NOT from advanceSpawns(), which skipAhead() runs in
+   * a tight loop (that would fire a horn per simulated step).
+   *
+   * Timeline for a wave that starts at T:
+   *    T-10  boss clock + riser begin (ticks pitched down) [boss waves]
+   *    T-6   normal clock + riser begin                  [normal waves]
+   *    T-2.5 boss horn starts, so its 2.5s swell peaks at T
+   *    T     wave horn + spawns
+   */
+  updateWaveAudio() {
+    if (!this.spawnEnabled) return
+    const t = this.elapsed
+
+    // The wave now in progress (or -1 during the opening grace period).
+    const current = t < this.graceTime
+      ? -1 : Math.floor((t - this.graceTime) / this.wavePeriod)
+    // ...and the next one to arrive.
+    const next = current + 1
+    const away = (this.graceTime + next * this.wavePeriod) - t
+    const bossNext = this.isBossWave(next)
+
+    // Countdown bed, seeked so the final tick lands on the spawn. A mechanical
+    // clock rather than a digital alarm - it fills the breather with tension
+    // instead of nagging - with a soft riser layered over it for the build.
+    const lead = bossNext ? this.bossCountdownLead : this.countdownLead
+    if (away <= lead && this._cuedWave !== next) {
+      this._cuedWave = next
+      // No stab ahead of the clock - the ticker starting IS the "incoming" cue,
+      // and a horn in front of it just stepped on the build-up.
+      if (bossNext) Sounds.countdown('tick-fast', away, 0.35, 0.92)
+      else Sounds.countdown('tick-fast', away, 0.28)
+    }
+
+    // Riser: armed early (its pre-roll is up to ~11s, longer than the tick
+    // lead) and fired when its own measured peak lines up with the spawn, so
+    // the swell tops out on the horn rather than after it.
+    if (away <= MAX_RISER_PREROLL + 1 && this._riserWave !== next) {
+      this._riserWave = next
+      this._riser = Sounds.pickRiser(bossNext)
+    }
+    if (this._riser && away <= this._riser.peak) {
+      const r = this._riser
+      this._riser = null
+      Sounds.play(r.name, 1.0, 0, r.volume * (bossNext ? 1.25 : 1.0))
+    }
+
+    // Boss horn pre-roll: start early so the swell peaks as the giants land.
+    if (bossNext && away <= BOSS_HORN_PREROLL && this._bossCuedWave !== next) {
+      this._bossCuedWave = next
+      const { rate, volume } = this.bossHornVoice(next)
+      Sounds.play('horn-boss', rate, 0.02, volume)
+    }
+
+    // Wave horn on the boundary. Boss waves already have their horn running.
+    if (current >= 0 && current !== this._audioWave) {
+      this._audioWave = current
+      if (!this.isBossWave(current)) Sounds.play('horn', 1.0, 0.06, 0.55)
+    }
+
+    // A round is not over when the spawns stop - it's over when the last creep
+    // of it is dead. Dropping to the build bed at the end of the spawn window
+    // put calm music over a field still full of creeps, so combat holds until
+    // the board is actually clear.
+    const spawning = current >= 0 && ((t - this.graceTime) % this.wavePeriod) < this.waveActive
+    const inCombat = spawning || this.creeps.length > 0
+    if (inCombat !== this._waveActiveNow) {
+      this._waveActiveNow = inCombat
+      // The stab marks the real end of the round, so it moves with it.
+      if (!inCombat) Sounds.play('round-end', 1.0, 0.04, 0.4)
+    }
+
+    // Background music follows the same state: calm while you build, a fight
+    // track (drawn from the bucket, so it varies round to round) while the
+    // board is hot, and the boss bed on boss rounds.
+    const mode = !inCombat ? 'build' : (this.isBossWave(current) ? 'boss' : 'fight')
+    Sounds.setBedMode(mode, inCombat ? 1.5 : 3.0)
+  }
+
   /** Spawn a bomber: enters from one edge, flies straight across at altitude. */
   spawnBomber() {
     const r = this.reach
@@ -297,7 +466,6 @@ export class Creeps {
     mesh.position.set(x, this.bomberY, z)
     mesh.rotation.set(Math.PI / 4, alongX ? 0 : Math.PI / 2, Math.PI / 4)
     this.scene.add(mesh)
-    Sounds.play('spawn', 0.55, 0.15, 0.3)
 
     this.creeps.push({
       mesh,
@@ -311,6 +479,10 @@ export class Creeps {
       big: false,
       shooter: false,
       bomber: true,
+      entered: false,
+      entrySound: 'creep-warn',
+      entryRate: 0.8,
+      entryVol: 0.3,
       vx, vz,
       bombTimer: this.bombInterval * 0.5,
       bob: Math.random() * Math.PI * 2,
@@ -329,7 +501,7 @@ export class Creeps {
     mesh.rotation.set(Math.PI / 4, 0, Math.PI / 4)
     this.scene.add(mesh)
     this.bombs.push({ mesh, x: mesh.position.x, z: mesh.position.z, y: mesh.position.y, vy: 0 })
-    Sounds.play('shoot', 0.4, 0.2, 0.4)
+    Sounds.play('shoot', 0.4, 0.2, 0.27)
   }
 
   /** Advance falling bombs; on landing, damage the tower at the impact cell. */
@@ -372,6 +544,18 @@ export class Creeps {
   }
 
   /** Distance (world units) from a world point to a tower's footprint edge. */
+  /**
+   * How close a creep's CENTRE may get to a tower's box before it stops and
+   * attacks. Small creeps keep the old half-cell; anything bigger stands off by
+   * its own body radius plus a little clearance for the lunge, so a giant hits
+   * the wall from outside it instead of standing a metre inside the block it's
+   * demolishing. Giants shrink as they're damaged, so a hurt one closes in.
+   */
+  attackStandoff(c) {
+    const radius = (c.mesh && c.mesh.scale && c.mesh.scale.x) || 0
+    return Math.max(this.cell * 0.5, radius + this.cell * 0.2)
+  }
+
   towerDist(tower, wx, wz) {
     this._p.set(wx - this.city.gridOffsetX, wz - this.city.gridOffsetZ)
     return tower.box.distanceToPoint(this._p)
@@ -435,7 +619,7 @@ export class Creeps {
         const nz = c.toZ + fdz[i] * this.cell
         for (const tower of city.towers) {
           if (!tower.visible) continue
-          if (this.towerDist(tower, nx, nz) < this.cell * 0.5) { c.target = tower; return 'attack' }
+          if (this.towerDist(tower, nx, nz) < this.attackStandoff(c)) { c.target = tower; return 'attack' }
         }
         c.fromX = c.toX; c.fromZ = c.toZ; c.toX = nx; c.toZ = nz; c.t = 0
         return 'move'
@@ -475,7 +659,7 @@ export class Creeps {
     // If the next cell is occupied by a standing tower, attack it instead.
     for (const tower of this.city.towers) {
       if (!tower.visible) continue
-      if (this.towerDist(tower, nx, nz) < this.cell * 0.5) {
+      if (this.towerDist(tower, nx, nz) < this.attackStandoff(c)) {
         c.target = tower
         return 'attack'
       }
@@ -494,6 +678,17 @@ export class Creeps {
     creep.hits += dmg
     // Random stone thunk on every hit (slight pitch variation for variety).
     Sounds.play('stone', 0.9 + Math.random() * 0.3, 0.2, 0.6)
+    // Giants visibly wear down: a boss shrinks toward 45% of its spawn size as
+    // its health goes, so you can read how close it is from across the map
+    // without a health bar. baseY tracks the scale so it stays on the ground,
+    // and the seeker dot is counter-scaled to hold its apparent size.
+    if (creep.giant && creep.baseScale) {
+      const hp = Math.max(0, 1 - creep.hits / creep.maxHits)
+      const s = creep.baseScale * (0.45 + 0.55 * hp)
+      creep.mesh.scale.setScalar(s)
+      creep.baseY = creep.baseYSpawn * (s / creep.baseScale)
+      if (creep.typeDot) creep.typeDot.scale.setScalar(1 / s)
+    }
     // Float a "-N" damage caption above the creep.
     const ft = this.city.floatingText
     if (ft) {
@@ -508,9 +703,55 @@ export class Creeps {
       this.explode(creep)
       this.scene.remove(creep.mesh)
       this.creeps.splice(i, 1)
-      Sounds.play('hit', 1.0, 0.2, 0.6)
+      Sounds.play('hit', 1.0, 0.2, 0.3)
+      // Killing a giant is the biggest thing that happens in a run and until now
+      // it sounded exactly like swatting a marcher. Give it a payoff sting, and
+      // duck the boss horn if that swell is still running - the fight is over.
+      if (creep.giant) {
+        Sounds.fadeOut('horn-boss', 0.6)
+        Sounds.play('sting', 0.85, 0.04, 0.7)
+      }
+      this.rollAmmoDrop(creep)
     }
     return true
+  }
+
+  /**
+   * Chance for a dying creep to leave an ammo box. The ammo is credited straight
+   * away - the cube is a pink marker that pops and rises so you can see WHERE it
+   * came from, not something to walk over and collect.
+   */
+  rollAmmoDrop(creep) {
+    if (Math.random() >= this.ammoDropChance) return
+    const p = creep.mesh.position
+    this.city.mana?.addAmmo(this.ammoDropAmount)
+    const mesh = new Mesh(this.ammoBoxGeo, this.ammoBoxMat)
+    mesh.position.set(p.x, Math.max(0.9, creep.baseY), p.z)
+    mesh.rotation.y = Math.PI / 4
+    mesh.scale.setScalar(0.01)
+    mesh.castShadow = true
+    this.scene.add(mesh)
+    this.ammoBoxes.push({ mesh, life: 0, y0: mesh.position.y })
+    this.city.floatingText?.spawn(
+      p.x, Math.max(0.9, creep.baseY) + 1.8, p.z,
+      `+${this.ammoDropAmount}`, AMMO_COLOR, 0, 'good'
+    )
+  }
+
+  /** Pop the ammo cubes in, float them up, fade them out. */
+  updateAmmoBoxes(dt) {
+    const LIFE = 1.1
+    for (let i = this.ammoBoxes.length - 1; i >= 0; i--) {
+      const b = this.ammoBoxes[i]
+      b.life += dt
+      const f = b.life / LIFE
+      if (f >= 1) { this.scene.remove(b.mesh); this.ammoBoxes.splice(i, 1); continue }
+      // Pop to full in the first 20%, then drift up and shrink away.
+      const pop = Math.min(1, f / 0.2)
+      b.mesh.scale.setScalar((1 - (1 - pop) * (1 - pop)) * (1 - f * 0.55))
+      b.mesh.position.y = b.y0 + f * 2.4
+      b.mesh.rotation.y += dt * 2.4
+    }
   }
 
   /** Whether a creep is still alive (present in the active list). */
@@ -524,7 +765,7 @@ export class Creeps {
     mesh.position.set(c.mesh.position.x, c.baseY + 0.6, c.mesh.position.z)
     this.scene.add(mesh)
     this.shots.push({ mesh, target, life: 0 })
-    Sounds.play('shoot', 0.5, 0.2, 0.4)
+    Sounds.play('shoot', 0.5, 0.2, 0.27)
   }
 
   /** Laser creep: hitscan a tower for laserDamage + flash a turret-style beam. */
@@ -535,7 +776,7 @@ export class Creeps {
     this._beamTo.set(this._sv.x, ty, this._sv.y)
     this.spawnBeam(this._beamFrom, this._beamTo, this.creepLaserColor)
     for (let n = 0; n < this.laserDamage; n++) this.city.renderer.damageTower(target)
-    Sounds.play('shoot', 0.6, 0.2, 0.45)
+    Sounds.play('shoot', 0.6, 0.2, 0.3)
   }
 
   /** Light up a pooled beam cylinder stretched from `from` to `to`. */
@@ -613,6 +854,12 @@ export class Creeps {
     this.elapsed = 0
     this.spawnTimer = 0
     this._lastWave = -1
+    this._audioWave = -1
+    this._cuedWave = -1
+    this._bossCuedWave = -1
+    this._waveActiveNow = false
+    this._riser = null
+    this._riserWave = -1
   }
 
   /**
@@ -663,8 +910,11 @@ export class Creeps {
     // Rebuild the creep flow field when the city changed (cheap, shared by all).
     if (!this.city.flowDist || this.city.flowDirty) this.city.computeFlowField()
     this.advanceSpawns(dt)
+    this.updateWaveAudio()
+    this.updateEntries()
 
     this.updateShots(dt)
+    this.updateAmmoBoxes(dt)
     this.updateBombs(dt)
     this.updateBeams(dt)
 
@@ -763,6 +1013,10 @@ export class Creeps {
             // Big creeps hit harder (knock multiple floors).
             for (let n = 0; n < c.knockFloors; n++) this.city.renderer.damageTower(target)
             // Job done: the creep bursts into debris after landing its kill.
+            // It rolls for ammo like any other death: with turrets dry, creeps
+            // reaching your walls become the way back into ammo, so running out
+            // is a setback rather than an unrecoverable state.
+            this.rollAmmoDrop(c)
             this.explode(c)
             this.scene.remove(c.mesh)
             this.creeps.splice(i, 1)
@@ -811,7 +1065,7 @@ export class Creeps {
     // Re-arm / fire the king-proximity siren on a cooldown.
     this._kingWarnTimer = (this._kingWarnTimer || 0) - dt
     if (creepNearKing) {
-      if (this._kingWarnTimer <= 0) { Sounds.play('warning2', 1.0, 0, 0.7); this._kingWarnTimer = 1.5 }
+      if (this._kingWarnTimer <= 0) { Sounds.play('alert2', 1.0, 0, 0.7); this._kingWarnTimer = 1.5 }
     } else {
       this._kingWarnTimer = 0 // ready to fire the instant a creep gets close again
     }

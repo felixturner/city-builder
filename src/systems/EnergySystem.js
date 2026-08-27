@@ -1,5 +1,6 @@
 import { Vector2, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
+import { ENERGY_COLOR } from '../Mana.js'
 import {
   isPathGenerator, isEnclosureGenerator, isGrey, towerArea, towerTopY,
 } from '../blockTypes.js'
@@ -9,8 +10,21 @@ const GREY_INTERVAL = 5 // seconds between passive grey-block mana ticks
 const PULSE_DECAY = 0.8 // seconds for a tower's flash to fade back to baseline
 const ENCLOSURE_RATE = 0.2 // mana per (enclosed cell x generator floor)
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
-const PROD_FACTOR = 0.2 // global energy-production scale (applied to every source)
+// Global generator-production scale. Raised from 0.2 (+30%) when grey walls
+// stopped generating: generators are now the only thing producing energy besides
+// the king's trickle, so they carry the income walls used to supply.
+const PROD_FACTOR = 0.26
 const KING_INCOME = 8 // baseline mana the king trickles every GREY_INTERVAL (safety net)
+// Income arrives one unit at a time rather than as a lump, so a generator's
+// output is audible as a RATE: 2 energy a tick trickles, 12 rattles.
+//
+// The cadence is derived from the amount (one unit per span/amt), floored at
+// MIN_SPAWN_GAP so a huge generator can't spawn hundreds of captions. Capping
+// the COUNT instead - which is what this used to do - flattened the cadence:
+// everything at or above the cap emitted at exactly the same speed and only the
+// number on the caption changed, so big generators stopped sounding bigger.
+const MIN_SPAWN_GAP = 0.07 // seconds between units at full tilt
+const MAX_SPAWNS_PER_TICK = 40 // hard backstop on captions per tower per tick
 
 /**
  * EnergySystem - all energy generation and the visual/audio feedback for it.
@@ -19,7 +33,7 @@ const KING_INCOME = 8 // baseline mana the king trickles every GREY_INTERVAL (sa
  *    combined-height reach, drawing trails and generating height*area mana.
  *  - Adjacency generators (hole blocks) form orthogonal clusters; each cluster
  *    is one unit that generates 1 mana per built member and glows together.
- *  - Grey blocks trickle passive mana.
+ *  - Grey walls generate nothing; they only raise the energy cap.
  *
  * Each generating unit schedules a "flash" at a random offset within the tick
  * so its glow, "+N" caption and sound all fire together but stagger across the
@@ -112,7 +126,7 @@ export class EnergySystem {
       for (let j = i + 1; j < plus.length; j++) {
         const a = plus[i], b = plus[j]
         if (a.colorIndex !== b.colorIndex) continue
-        const combinedReach = (a.numFloors + b.numFloors) * 2
+        const combinedReach = a.numFloors + b.numFloors // 1 cell of reach per floor
         if (combinedReach <= 0) continue
         a.box.getCenter(this._ca)
         b.box.getCenter(this._cb)
@@ -160,8 +174,10 @@ export class EnergySystem {
     if (this._connectorKeys) {
       for (const key of this._connectorKeys) if (!pairKeys.has(key)) lostConnection = true
     }
-    if (newConnection) Sounds.play('energy') // distinct from the per-tick pulse 'dink'
-    if (lostConnection) Sounds.play('power-down')
+    // Both fire on every rewiring of the trail network, which happens constantly
+    // as you build - kept well down so they read as feedback, not events.
+    if (newConnection) Sounds.play('energy', 1.0, 0.15, 0.3) // distinct from the per-tick 'dink'
+    if (lostConnection) Sounds.play('warning1', 1.0, 0.15, 0.25)
     this._connectorKeys = pairKeys
 
     // Restore steady colour on towers that just lost all their connections.
@@ -173,6 +189,39 @@ export class EnergySystem {
     this.connectedTowers = connected
   }
 
+  /**
+   * Break one source's tick into individual +1 arrivals spaced evenly across
+   * `span` seconds, so income reads (and sounds) as a stream whose rate tracks
+   * how much you're producing rather than a lump every tick.
+   *
+   * The generator's lifespan is charged ONCE here, not per arrival - the pulses
+   * used to be one-per-tick and genLife counts ticks, so decrementing per
+   * arrival would burn generators down eight times too fast.
+   */
+  scheduleIncome(tower, amt, span = GEN_INTERVAL) {
+    const city = this.city
+    // One unit per slot, until the slots would be closer together than
+    // MIN_SPAWN_GAP; past that each slot carries more than 1.
+    const n = Math.max(1, Math.min(amt, Math.floor(span / MIN_SPAWN_GAP), MAX_SPAWNS_PER_TICK))
+    const per = amt / n
+    const gap = span / n
+    const c = tower.box.getCenter(this._c)
+    const cx = c.x + city.gridOffsetX
+    const cy = towerTopY(tower, city.floorHeight) + 0.5
+    const cz = c.y + city.gridOffsetZ
+    if (tower.genLife !== undefined) tower.genLife -= 1
+    let left = amt
+    for (let i = 0; i < n; i++) {
+      // Integer amounts that still sum to exactly `amt`.
+      const give = i === n - 1 ? left : Math.max(1, Math.round(per))
+      left -= give
+      this.pulseEvents.push({
+        members: [tower], t: i * gap, amt: give, sound: 'dink',
+        color: ENERGY_COLOR, cx, cy, cz,
+      })
+    }
+  }
+
   /** Per-frame: advance mana ticks, fire scheduled flashes, decay pulses. */
   update(dt) {
     const city = this.city
@@ -182,35 +231,16 @@ export class EnergySystem {
     const genMana = this.pathGenMana + this.enclosureGenMana
     // Cache live income/sec (gens + grey trickle + king) for price scaling.
     this.incomePerSecValue = genMana / GEN_INTERVAL
-      + (this.countGreyBlocks() * PROD_FACTOR + (city.king && city.king.visible ? KING_INCOME : 0)) / GREY_INTERVAL
+      + (city.king && city.king.visible ? KING_INCOME : 0) / GREY_INTERVAL
     if (genMana > 0) {
       this.manaTimer += dt
       while (this.manaTimer >= GEN_INTERVAL) {
         this.manaTimer -= GEN_INTERVAL
-        city.mana.add(genMana)
         for (const [tower, amt] of this.pathGenContribution) {
-          if (amt > 0 && tower.visible) {
-            const c = tower.box.getCenter(this._c)
-            this.pulseEvents.push({
-              members: [tower], t: Math.random(), amt, sound: 'dink',
-              color: city.accentColors[tower.colorIndex],
-              cx: c.x + city.gridOffsetX,
-              cy: towerTopY(tower, city.floorHeight) + 0.5,
-              cz: c.y + city.gridOffsetZ,
-            })
-          }
+          if (amt > 0 && tower.visible) this.scheduleIncome(tower, amt)
         }
-
         for (const t of this.enclosureGens) {
-          if (!t.visible || !t.enclosureMana) continue
-          const c = t.box.getCenter(this._c)
-          this.pulseEvents.push({
-            members: [t], t: Math.random(), amt: t.enclosureMana, sound: 'dink',
-            color: city.accentColors[t.colorIndex],
-            cx: c.x + city.gridOffsetX,
-            cy: towerTopY(t, city.floorHeight) + 0.5,
-            cz: c.y + city.gridOffsetZ,
-          })
+          if (t.visible && t.enclosureMana) this.scheduleIncome(t, t.enclosureMana)
         }
       }
     }
@@ -223,28 +253,30 @@ export class EnergySystem {
         for (const m of e.members) {
           if (!m.visible) continue
           m.pulseEnv = 1
-          if (m.genLife !== undefined) m.genLife -= 1 // one lifespan tick per energy spawn
         }
+        // The energy lands at the moment its caption pops, not up front, so the
+        // bar climbs in step with the bleeps.
+        city.mana.add(e.amt)
         this.spawnTextAt(e.cx, e.cy, e.cz, `+${e.amt}`, e.color, e.sound)
+        // ...and a little yellow box flies from the generator up to the meter.
+        city.resourceFly?.spawn(e.cx, e.cy, e.cz, city.camera, city.mana.energyBar, ENERGY_COLOR)
         this.pulseEvents.splice(i, 1)
       }
     }
 
-    // Grey blocks trickle passive mana; their captions spread across the cycle.
+    // Walls no longer generate anything - they're defence, not income, and a
+    // city full of them was out-earning actual generators. They still count as
+    // population, so building raises the energy CAP (see refreshManaStats).
+    // Only the king trickles on this timer now.
     this.greyManaTimer += dt
     while (this.greyManaTimer >= GREY_INTERVAL) {
       this.greyManaTimer -= GREY_INTERVAL
-      const n = this.countGreyBlocks()
-      if (n > 0) city.mana.add(Math.round(n * PROD_FACTOR))
-      for (const t of city.towers) {
-        if (!t.visible || t.numFloors < 1 || !isGrey(t)) continue
-        this.spawnTowerText(t, `+${t.numFloors}`, '#dfe6ff', 'dink', Math.random() * GREY_INTERVAL)
-      }
       // The king itself trickles a baseline income, so you can always recover even
-      // with no generators standing.
+      // with no generators standing. Emitted one unit at a time like a generator
+      // (spread over its own 5s tick, not the 2s generator one) so it bleeps and
+      // flies to the meter the same way rather than landing as a silent lump.
       if (city.king && city.king.visible) {
-        city.mana.add(KING_INCOME)
-        this.spawnTowerText(city.king, `+${KING_INCOME}`, '#ff8a3c', 'dink', Math.random() * GREY_INTERVAL)
+        this.scheduleIncome(city.king, KING_INCOME, GREY_INTERVAL)
       }
     }
 

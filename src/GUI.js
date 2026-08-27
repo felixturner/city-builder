@@ -14,6 +14,7 @@ export class GUIManager {
       spawnThreshold: 15,
       spawnCreeps: true,
       freeClicks: false,
+      music: true,
     },
     camera: {
       perspective: true,
@@ -83,6 +84,10 @@ export class GUIManager {
     })
     gameplayFolder.add(allParams.gameplay, 'freeClicks').name('Free Clicks').onChange((v) => {
       demo.city.freeClicks = v
+    })
+    // Beds only - one-shot sound effects keep playing.
+    gameplayFolder.add(allParams.gameplay, 'music').name('Music').onChange((v) => {
+      Sounds.setMusicEnabled(v)
     })
 
     // View folder holds all rendering/debug controls (collapsed at start)

@@ -2,11 +2,12 @@ import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color,
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
+import { ENERGY_COLOR, AMMO_COLOR } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
 
-const SLOTS = 6
-const REFILL_TIME = 2.5 // seconds for a used/discarded palette slot to refill
+const SLOTS = 4
+const REFILL_TIME = 1.9 // seconds for a used/discarded palette slot to refill
 const ICON = 72 // palette icon canvas size (px)
 const CELL = 20 // px per footprint cell (rects); tetrominoes shrink to fit
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
@@ -40,12 +41,23 @@ export class TilePalette {
 
     this._onMove = (e) => this._pointerMove(e)
     this._onUp = (e) => this._pointerUp(e)
+    this._onStickyDown = (e) => this._stickyDown(e)
+    // Esc drops a stuck tile back into its slot.
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.drag && this.drag.sticky) this._cancelDrag()
+    })
     // R rotates the held tile 90deg CW while dragging.
     window.addEventListener('keydown', (e) => {
       if (!this.drag || (e.key !== 'r' && e.key !== 'R')) return
       this.drag.rot = (this.drag.rot + 1) % 4
       this._setGhostGeom() // tetrominoes use a distinct geometry per rotation
+      // Rotating changes the footprint, so the re-pick below often lands on a
+      // new cell and would fire its own tick. Suppress that one and play the
+      // rotate tick instead - a turn is one action, not two.
+      this.drag.suppressSnap = true
       if (this.drag.lastX != null) this._dragMove({ clientX: this.drag.lastX, clientY: this.drag.lastY })
+      this.drag.suppressSnap = false
+      Sounds.play('snap', 1.3, 0.05, 0.22)
     })
 
     this._buildDOM()
@@ -213,7 +225,7 @@ export class TilePalette {
     if (!slot.costEl) return
     if (!slot.tile) { slot.costEl.textContent = ''; return }
     slot.costEl.textContent = `${this._tileCost(slot.tile)}`
-    slot.costEl.style.color = this._affordable(slot.tile) ? '#fff' : '#ff6a6a'
+    slot.costEl.style.color = this._affordable(slot.tile) ? '#fff' : AMMO_COLOR
   }
 
   // ---- icon drawing -----------------------------------------------------------
@@ -403,6 +415,47 @@ export class TilePalette {
     this.pending = null
   }
 
+  /**
+   * A rejected drop keeps the tile in hand instead of firing it back to the
+   * palette: the ghost follows the cursor with no button held, and the next
+   * click tries again. Right-click or Esc puts it back.
+   */
+  _goSticky() {
+    this.drag.sticky = true
+    window.addEventListener('pointermove', this._onMove)
+    // Capture phase: the retry click must not also reach the canvas, or the
+    // city's build/destroy handler fires on the same press.
+    window.addEventListener('pointerdown', this._onStickyDown, true)
+  }
+
+  _endSticky() {
+    if (!this.drag || !this.drag.sticky) return
+    window.removeEventListener('pointermove', this._onMove)
+    window.removeEventListener('pointerdown', this._onStickyDown, true)
+  }
+
+  _stickyDown(e) {
+    if (!this.drag || !this.drag.sticky) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.button !== 0) { this._cancelDrag(); return } // right/middle click puts it back
+    this._dragMove(e) // make sure the target matches where they actually clicked
+    this._dropDrag()
+  }
+
+  /** Put a held tile back in its slot and clear the drag. */
+  _cancelDrag() {
+    if (!this.drag) return
+    const { slot, ghost } = this.drag
+    this._endSticky()
+    this.city.scene.remove(ghost)
+    if (this.demo.controls) this.demo.controls.enabled = true
+    this.slots[slot].el.style.cursor = 'grab'
+    this._drawTile(this.slots[slot])
+    this.drag = null
+    Sounds.play('clink', 0.9, 0.1, 0.3)
+  }
+
   /** Ghost geometry for a tile at a rotation (tetromino body / scaled block). */
   _ghostGeomFor(tile, rot) {
     if (tile.wall) {
@@ -435,7 +488,7 @@ export class TilePalette {
     if (this.demo.controls) this.demo.controls.enabled = false
     const base = this._tileColor3(tile, new Color())
     const hi = base.clone().lerp(this._white, 0.45)
-    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot: 0, lastX: null, lastY: null }
+    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot: 0, lastX: null, lastY: null, lastCell: null, sticky: false }
     mat.color.copy(base)
   }
 
@@ -500,8 +553,15 @@ export class TilePalette {
     if (overPal) { ghost.visible = false; this.drag.target = null; return }
     const t = this._pickTarget(e.clientX, e.clientY)
     this.drag.target = t
-    if (!t) { ghost.visible = false; return }
+    if (!t) { ghost.visible = false; this.drag.lastCell = null; return }
     ghost.visible = true
+    // Tick as the ghost snaps to a new cell, so the grid feels magnetic rather
+    // than the tile just sliding. Pitched up when the cell is a legal drop.
+    const cellKey = `${t.gx},${t.gy}`
+    if (cellKey !== this.drag.lastCell) {
+      this.drag.lastCell = cellKey
+      if (!this.drag.suppressSnap) Sounds.play('snap', t.valid ? 1.0 : 0.75, 0.06, t.valid ? 0.15 : 0.08)
+    }
     const cu = city.cellUnit
     if (tile.wall) {
       // Geometry is centred on its bbox; thin flat preview.
@@ -527,11 +587,16 @@ export class TilePalette {
   _dropDrag() {
     const { slot, tile, ghost, target, rot } = this.drag
     const city = this.city
-    city.scene.remove(ghost)
-    if (this.demo.controls) this.demo.controls.enabled = true
-    const restore = () => { this.slots[slot].el.style.cursor = 'grab'; this._drawTile(this.slots[slot]) }
+    const finish = () => {
+      this._endSticky()
+      city.scene.remove(ghost)
+      if (this.demo.controls) this.demo.controls.enabled = true
+      this.slots[slot].el.style.cursor = 'grab'
+      this.drag = null
+    }
+    const restore = () => { finish(); this._drawTile(this.slots[slot]) }
     // Released over the palette: drop it back in its slot (no place, no error).
-    if (this._overPalette(this.drag.lastX, this.drag.lastY)) { restore(); this.drag = null; return }
+    if (this._overPalette(this.drag.lastX, this.drag.lastY)) { restore(); return }
     if (target && target.valid) {
       // Escalating placement cost (per-type standing count); validity already
       // confirmed it's affordable.
@@ -544,6 +609,7 @@ export class TilePalette {
         : { typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex }
       const placed = city.placeTileFree(target.gx, target.gy, target.cells, opts)
       if (placed) {
+        finish()
         city.mana?.spend(cost)
         city.recordPlacement(this._typeKey(tile)) // bump the cumulative per-type price
         this._consume(slot)
@@ -551,12 +617,13 @@ export class TilePalette {
         const cu = city.cellUnit
         const wx = (target.gx + target.w / 2) * cu + city.gridOffsetX
         const wz = (target.gy + target.h / 2) * cu + city.gridOffsetZ
-        this.demo.floatingText?.spawn(wx, 2, wz, `-${cost}`, '#ff6a6a', 0, null)
+        this.demo.floatingText?.spawn(wx, 2, wz, `-${cost}`, ENERGY_COLOR, 0, null)
       } else restore() // pool exhausted: restore icon, no charge
     } else {
-      if (target) Sounds.play('error', 1.0, 0.2, 0.5) // dropped on an invalid cell
-      restore() // invalid / cancelled: restore icon
+      // Invalid cell (or off-grid): hold onto it so a misjudged drop doesn't
+      // cost a trip back to the palette. Click again to retry, Esc to give up.
+      Sounds.play('error', 1.0, 0.2, 0.5)
+      if (!this.drag.sticky) this._goSticky()
     }
-    this.drag = null
   }
 }

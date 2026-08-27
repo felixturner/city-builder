@@ -11,16 +11,54 @@ import { Sounds } from './lib/Sounds.js'
  */
 export class Tower {
 
+  /**
+   * One grey for every wall. Walls used to draw a random shade from a list of
+   * four, which meant colour carried no information - a short pale wall and a
+   * tall dark one looked unrelated. With a single base colour the per-floor
+   * gradient (see shadeForFloor) is the ONLY thing varying, so shade reads
+   * purely as height.
+   *
+   * Everything picks an index via COLORS.length, so a one-entry list is safe.
+   */
   static COLORS = [
-    new Color(0x777777),
-    new Color(0x888888),
-    new Color(0x999999),
-    new Color(0xbbbbbb),
-    new Color(0xcccccc),
+    new Color(0x707070),
   ]
 
+  /**
+   * How far the top floor of a full-height stack is pushed toward white. Each
+   * floor is its own BatchedMesh instance with its own colour, so a stack can
+   * carry a gradient for free - no extra draw calls, no extra geometry.
+   */
+  static STACK_LIGHTEN = 0.55
+
+  /** Shade for floor `f` of a stack: floor 0 keeps `base`, higher floors lerp
+   *  toward white so a wall reads lighter the taller it gets. */
+  static shadeForFloor(base, f, maxFloors, out) {
+    const t = maxFloors > 1 ? (f / (maxFloors - 1)) * Tower.STACK_LIGHTEN : 0
+    return out.copy(base).lerp(Tower.WHITE, t)
+  }
+
+  static WHITE = new Color(0xffffff)
+
+  /**
+   * Roofs get slightly darker vertex colour than the block they cap: a roof's
+   * top face points at the key light while the wall below only shows side
+   * faces, so identical RGB renders lighter up there. 1.0 disables it.
+   */
+  static ROOF_SHADE_BIAS = 0.9
+
+  /** The colour a tower's roof should be: the shade of the highest block under
+   *  it, with the lighting bias applied. Single source for the renderer AND the
+   *  hover tween - the tween used to write flat topColor here, which quietly
+   *  undid the stack gradient every time the pointer crossed a tower. */
+  static roofShade(tower, base, out) {
+    const n = tower.floorInstances ? tower.floorInstances.length : 1
+    Tower.shadeForFloor(base, Math.max(0, tower.numFloors - 1), n, out)
+    return out.multiplyScalar(Tower.ROOF_SHADE_BIAS)
+  }
+
   static ID = 0
-  static BASE_COLOR = new Color(0x666666)
+  static BASE_COLOR = new Color(0x707070) // matches COLORS[0] so rects and tetro walls read alike
 
   constructor() {
     this.id = Tower.ID++
@@ -101,19 +139,25 @@ export class Tower {
       const baseFloor = this.isLit && this.litColor ? this.litColor : this.baseColor
       const baseRoof = this.isLit && this.litColor ? this.litColor : this.topColor
       toFloorColor = Tower.lightenColor(baseFloor)
-      toRoofColor = Tower.lightenColor(baseRoof)
+      // Lighten the roof's SHADED colour, not the flat base, or hovering resets
+      // it to a colour it should never have had.
+      toRoofColor = Tower.lightenColor(Tower.roofShade(this, baseRoof, new Color()))
     } else if (this.isLit && this.litColor) {
       // Lit towers stay at their lit color
       toFloorColor = this.litColor.clone()
       toRoofColor = this.litColor.clone()
     } else {
       toFloorColor = this.baseColor
-      toRoofColor = this.topColor
+      toRoofColor = Tower.roofShade(this, this.baseColor, new Color())
     }
 
     // Interpolation colors
     const floorColor = currentFloorColor.clone()
     const roofColor = currentRoofColor.clone()
+    // floorInstances[0] was sampled above, so `current`/`to` are both floor-0
+    // shades; the gradient is re-applied per floor in onUpdate.
+    const _shade = new Color()
+    const maxFloorsForShade = floorInstances.length
 
     // Animation state object
     const anim = { t: 0 }
@@ -127,9 +171,11 @@ export class Tower {
         floorColor.copy(currentFloorColor).lerp(toFloorColor, anim.t)
         roofColor.copy(currentRoofColor).lerp(toRoofColor, anim.t)
 
-        // Apply to all visible floors
+        // Apply to all visible floors, re-deriving each floor's shade so the
+        // stack gradient survives the hover instead of flattening to one colour.
         for (let f = 0; f < numFloors; f++) {
-          mesh.setColorAt(floorInstances[f], floorColor)
+          Tower.shadeForFloor(floorColor, f, maxFloorsForShade, _shade)
+          mesh.setColorAt(floorInstances[f], _shade)
         }
         // Apply to roof
         mesh.setColorAt(roofInstance, roofColor)
@@ -478,7 +524,7 @@ export class Tower {
 
       // Pitch increases with floor height (0.8 at ground, 2.0 at top)
       const pitch = 0.8 + (numFloors / maxFloors) * 1.2
-      Sounds.play('pop', pitch, 0.15)
+      Sounds.play('pop', pitch, 0.15, 0.7)
 
       // Animate the tower back up with the new floor emerging
       this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers, onComplete)

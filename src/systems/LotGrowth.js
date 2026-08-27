@@ -1,5 +1,6 @@
 import { Vector2, BufferGeometry, Float32BufferAttribute, LineSegments, LineBasicNodeMaterial } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
+import { ENERGY_COLOR } from '../palette.js'
 import { isGrey, towerArea } from '../blockTypes.js'
 
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]]
@@ -95,10 +96,10 @@ export class LotGrowth {
 
     // Each click costs 1 mana; out of mana - block and signal (consume click).
     if (!city.freeClicks && city.mana && !city.mana.spend(1)) {
-      Sounds.play('incorrect', 1.0, 0.2, 0.5)
+      Sounds.play('no-money', 1.0, 0.06, 0.55)
       return true
     }
-    if (!city.freeClicks && city.floatingText) city.floatingText.spawn(worldX, 1.5, worldZ, '-1', '#ff6a6a', 0, null)
+    if (!city.freeClicks && city.floatingText) city.floatingText.spawn(worldX, 1.5, worldZ, '-1', ENERGY_COLOR, 0, null)
 
     lot.clickPoints = (lot.clickPoints || 0) + this.clickValue
     Sounds.play('clink', 1.0, 0.1, 0.7)

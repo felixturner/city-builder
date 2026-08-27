@@ -62,6 +62,11 @@ export class RangeVisuals {
     this.zoc = new RingLayer(
       city.scene,
       () => new MeshBasicNodeMaterial({ transparent: true, opacity: 0.6, depthWrite: false }),
+      // Link reach, in world units. Two path generators connect when the gap
+      // between their centres is less than (a.numFloors + b.numFloors) CELLS -
+      // one cell per floor - so a generator's own half of that is numFloors
+      // cells. Drawn at exactly that, so two rings touching is precisely the
+      // moment the link forms.
       (n) => n * city.cellUnit,
       { thickness: 0.15, y: 0.06 }
     )

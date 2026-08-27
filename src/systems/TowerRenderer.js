@@ -1,10 +1,13 @@
 import { MathUtils, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
+import { ACCENT_COLORS } from '../palette.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex, KING_HEALTH } from '../blockTypes.js'
 
-const KING_COLOR = new Color(0xff7000) // bright orange central king piece
+// Fallback only - the king normally wears one of the three accents.
+const KING_COLOR = ACCENT_COLORS[0]
+
 
 /**
  * TowerRenderer - runtime tower visual state on the shared BatchedMesh: accent
@@ -16,6 +19,7 @@ export class TowerRenderer {
   constructor(city) {
     this.city = city
     this.turretColor = new Color(0xbbbbbb) // grey shade for turret tower blocks
+    this._shade = new Color()
   }
 
   /**
@@ -105,8 +109,31 @@ export class TowerRenderer {
     tower.laserColor = null
     tower.topColor = Tower.COLORS[tower.topColorIndex]
     tower.baseColor = tower.topColor // under-blocks match the top
-    for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.baseColor)
-    mesh.setColorAt(tower.roofInstance, tower.topColor)
+    this.shadeStack(tower)
+  }
+
+  /**
+   * Colour a tower's floors as a gradient - base colour at the bottom, lighter
+   * toward the top - so a tall wall reads as tall at a glance instead of a flat
+   * slab. Every floor is already its own instance, so this costs nothing beyond
+   * the colour writes.
+   *
+   * Shades all maxFloors instances, not just the built ones, so floors added
+   * later come in at the right shade without a recolour pass.
+   */
+  shadeStack(tower) {
+    const mesh = this.city.towerMesh
+    const n = tower.floorInstances.length
+    for (let f = 0; f < n; f++) {
+      Tower.shadeForFloor(tower.baseColor, f, n, this._shade)
+      mesh.setColorAt(tower.floorInstances[f], this._shade)
+    }
+    // The roof caps the stack, so it matches the highest block UNDER it - index
+    // numFloors - 1, not numFloors. A roof-only tower (0 floors) takes floor 0's
+    // shade. ROOF_SHADE_BIAS then compensates for the roof mesh catching more
+    // light than the wall's side faces.
+    Tower.roofShade(tower, tower.baseColor, this._shade)
+    mesh.setColorAt(tower.roofInstance, this._shade)
   }
 
   /**
@@ -124,10 +151,12 @@ export class TowerRenderer {
     mesh.setGeometryIdAt(tower.roofInstance, city.geomIds[g])
 
     if (tower.king) {
+      // The king wears one of the three light city accents, picked in placeKing.
+      const accent = city.accentColors[tower.colorIndex] || KING_COLOR
       tower.isLit = false
       tower.litColor = null
-      tower.baseColor = KING_COLOR.clone()
-      tower.topColor = KING_COLOR.clone()
+      tower.baseColor = accent.clone()
+      tower.topColor = accent.clone().multiplyScalar(Tower.ROOF_SHADE_BIAS)
       for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.baseColor)
       mesh.setColorAt(tower.roofInstance, tower.topColor)
       return
@@ -142,7 +171,7 @@ export class TowerRenderer {
       tower.baseColor = accent.clone()
       tower.topColor = accent.clone()
       for (const idx of tower.floorInstances) mesh.setColorAt(idx, accent)
-      mesh.setColorAt(tower.roofInstance, accent)
+      mesh.setColorAt(tower.roofInstance, this._shade.copy(accent).multiplyScalar(Tower.ROOF_SHADE_BIAS))
     } else {
       tower.litColor = null
       if (isTurret(tower)) {
@@ -152,8 +181,7 @@ export class TowerRenderer {
         tower.baseColor = Tower.BASE_COLOR
         tower.topColor = Tower.COLORS[tower.topColorIndex]
       }
-      for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.baseColor)
-      mesh.setColorAt(tower.roofInstance, tower.topColor)
+      this.shadeStack(tower)
     }
   }
 
@@ -169,12 +197,19 @@ export class TowerRenderer {
     const y = Math.max(0.5, tower.numFloors - 0.5) * city.floorHeight
     const color = tower.litColor || tower.baseColor
     city.debris.spawn(center.x + city.gridOffsetX, y, center.y + city.gridOffsetZ, 0.8, color, 10)
-    Sounds.play('break2', 1.0, 0.2)
+    if (!tower.king) Sounds.play('break2', 1.0, 0.2)
 
     if (tower.numFloors >= 1) {
       tower.numFloors -= 1
       city.onTowerChanged(tower)
-      if (tower.king && tower.numFloors === 0) city.triggerGameOver()
+      if (tower.king) {
+        // Every block the king loses is its own hit, pitched up as its health
+        // goes so the last one sounds frantic. This replaces both the generic
+        // break thunk and the old last-two-floors alarm - one event, one sound.
+        const hurt = 1 - tower.numFloors / KING_HEALTH // 0 fresh .. 1 dead
+        Sounds.play('king-hit', 0.92 + hurt * 0.5, 0.03, 0.6 + hurt * 0.3)
+        if (tower.numFloors === 0) city.triggerGameOver()
+      }
       return tower.numFloors
     }
     // The king is never demolished - knocking its last floor ends the game.

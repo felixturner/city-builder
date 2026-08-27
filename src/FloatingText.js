@@ -1,6 +1,7 @@
 import { Vector3 } from 'three/webgpu'
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
+import { ENERGY_COLOR } from './palette.js'
 
 /**
  * FloatingText - short-lived "+N" captions that rise from a world position and
@@ -36,7 +37,7 @@ export class FloatingText {
    * @param {string} [sound] - sound name played the instant the caption pops in.
    * @param {number} [delay] - holds it hidden for N seconds before popping in.
    */
-  spawn(x, y, z, text, color = '#ffe27a', delay = 0, sound = null) {
+  spawn(x, y, z, text, color = ENERGY_COLOR, delay = 0, sound = null) {
     const el = document.createElement('div')
     el.textContent = text
     Object.assign(el.style, {
