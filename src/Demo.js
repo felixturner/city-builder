@@ -37,6 +37,10 @@ import { CreepTimeline } from './CreepTimeline.js'
 import { FloatingText } from './FloatingText.js'
 import { TilePalette } from './systems/TilePalette.js'
 
+/** Debug UI (dat.GUI panel + FPS meter) is off for players and on with ?dev.
+ *  Any value works - ?dev, ?dev=1 - it's presence that counts. */
+export const DEV_MODE = new URLSearchParams(location.search).has('dev')
+
 export class Demo {
   static instance = null
 
@@ -215,6 +219,7 @@ export class Demo {
     // Initialize GUI after modules are ready
     this.gui = new GUIManager(this)
     this.gui.init()
+    if (!DEV_MODE) this.gui.gui?.hide()
     this.gui.applyParams()
 
     // Play/pause toggle button at the bottom of the screen
@@ -373,7 +378,9 @@ export class Demo {
     this.stats.showPanel(0) // 0: fps, 1: ms, 2: mb
     this.stats.dom.style.top = 'auto'
     this.stats.dom.style.bottom = '0'
-    document.body.appendChild(this.stats.dom)
+    // Built either way so animate()'s begin/end calls need no guard; just not
+    // shown to players.
+    if (DEV_MODE) document.body.appendChild(this.stats.dom)
   }
 
   onResize(_e, toSize) {

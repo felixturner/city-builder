@@ -22,6 +22,9 @@ async function init() {
   loaderGif.style.display = 'none'
   startBtn.style.display = 'block'
   startBtn.textContent = 'Start'
+
+  // The button is up; pull the rest of the audio down while the player reads it.
+  Sounds.loadDeferred()
 }
 
 function start() {

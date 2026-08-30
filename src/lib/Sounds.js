@@ -134,14 +134,39 @@ const VOICES = {
 // only peaks at 0.31, so "volume 0.2" lands at an effective 0.06 while pop.mp3
 // hits 1.07. Judge these by ear, not by the number.
 
+/**
+ * Sounds needed in the first moments: the intro, and everything a player can
+ * trigger by building before the first wave lands at 30s. These preload.
+ *
+ * Everything else - combat, waves, the music beds - is fetched in the
+ * background by loadDeferred() once the game is up. It used to all preload
+ * eagerly, which put ~9MB of audio (bed-calm alone is 1.9MB) between the player
+ * and the Start button.
+ *
+ * A deferred sound played before its fetch finishes is not an error: Howler
+ * queues the play and fires it on load, so the worst case is one late blip.
+ */
+const CORE = new Set([
+  'intro', 'reveal', 'pop', 'tick', 'pluck', 'roll', 'good', 'dink', 'energy',
+  'snap', 'error', 'no-money', 'success',
+  'stone-01', 'stone-02', 'stone-03', 'stone-04', 'stone-05',
+  'clink01', 'clink02', 'clink03', 'clink04', 'clink05', 'clink06', 'clink07', 'clink08',
+])
+
+/**
+ * Declared once, played nowhere. Kept out of the load set rather than deleted -
+ * the files are still on disk if a cue wants them back - because loading them
+ * cost 1.6MB up front, tick-rapid and count being 1.2MB of that between them:
+ *
+ *   break  burn  count  debris  energy-2  gen-expire
+ *   incorrect  round-end  round-start  tick-rapid
+ */
 const SIMPLE = [
-  'pop', 'tick', 'roll', 'debris', 'good', 'intro', 'incorrect', 'error', 'pluck',
-  'energy', 'energy-2', 'power-down', 'spawn', 'step1', 'step2', 'burn',
-  'break', 'break2', 'hit', 'dink', 'mortar-shoot', 'mortar-hit', 'warning1',
-  'success',
-  // new: long-form event sounds
-  'horn-boss', 'countdown', 'tick-fast', 'tick-rapid', 'count',
-  'gen-expire', 'gen-online', 'sting', 'round-start', 'round-end',
+  'pop', 'tick', 'roll', 'good', 'intro', 'error', 'pluck',
+  'energy', 'power-down', 'spawn', 'step1', 'step2', 'break2', 'hit', 'dink',
+  'mortar-shoot', 'mortar-hit', 'warning1', 'success',
+  // long-form event sounds
+  'horn-boss', 'countdown', 'tick-fast', 'gen-online', 'sting',
   'creep-warn', 'flyer-warn', 'snap', 'no-money', 'game-over', 'king-hit', 'level-complete', 'card-reveal',
   // short alert blips, addressed individually so each threat type is learnable
   'alert1', 'alert2', 'alert3',
@@ -217,7 +242,7 @@ class SoundsManager {
     const all = new Set([...SIMPLE, ...OPTIONAL])
     for (const members of Object.values(GROUPS)) for (const m of members) all.add(m)
     for (const name of all) {
-      const opts = { src: [`assets/sfx/${name}.mp3`] }
+      const opts = { src: [`assets/sfx/${name}.mp3`], preload: CORE.has(name) }
       if (TRIM[name]) opts.sprite = { play: TRIM[name] }
       if (BEDS_SRC[name]) { opts.loop = true; opts.volume = 0 }
       if (OPTIONAL.has(name)) {
@@ -228,6 +253,33 @@ class SoundsManager {
     for (const [group, members] of Object.entries(GROUPS)) {
       this.groups[group] = members
     }
+  }
+
+  /**
+   * Fetch everything outside CORE, a few at a time. Called once the game is up,
+   * so the download runs against an idle network instead of competing with the
+   * models and shaders the first frame needs.
+   *
+   * Batched rather than fired at once: ~50 parallel requests starve each other.
+   * Soonest-needed first, since the wave audio is what a player hits next.
+   */
+  loadDeferred(batch = 4, gapMs = 300) {
+    const queue = Object.keys(this.sounds).filter(n => !CORE.has(n) && !this._unavailable.has(n))
+    const priority = ['bed-calm', 'tick-fast', 'horn1', 'horn2', 'horn3', 'riser1',
+      'creep-warn', 'spawn', 'step1', 'step2', 'shoot1', 'shoot2', 'shoot3']
+    queue.sort((a, b) => {
+      const ia = priority.indexOf(a), ib = priority.indexOf(b)
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+    })
+    let i = 0
+    const pump = () => {
+      for (let n = 0; n < batch && i < queue.length; n++, i++) {
+        const snd = this.sounds[queue[i]]
+        if (snd && snd.state() === 'unloaded') snd.load()
+      }
+      if (i < queue.length) setTimeout(pump, gapMs)
+    }
+    pump()
   }
 
   /** Resolve a name to a concrete { sound, key }, expanding groups with a
