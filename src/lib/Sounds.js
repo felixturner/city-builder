@@ -49,18 +49,13 @@ const TRIM = {
   horn1: [1000, 3560],
   horn2: [140, 8360],
   horn3: [380, 5520],
-  // horn-boss now fires per fat creep, not once per boss wave, so it plays a
-  // 1.6s slice around its peak (5.10s) instead of the whole 10.7s swell - one
-  // per giant, overlapping, would otherwise turn to mush.
-  'horn-boss': [4300, 1600],
+  'horn-boss': [560, 10170],
   'gen-expire': [140, 4300],
 }
 
-/** How long the boss cue takes to reach its peak - start it this far ahead of
- *  the spawn so the hit lands with the giants, not after them. Retuned from 2.5
- *  when the cue changed from horn-boss (peak 2.54s) to spawn (peak 0.20s); left
- *  as-is the whole sound would have finished before the wave arrived. */
-export const BOSS_HORN_PREROLL = 0.25
+/** How long the boss horn takes to reach its peak - start it this far ahead of
+ *  the spawn so the hit lands with the giants, not after them. */
+export const BOSS_HORN_PREROLL = 2.5
 
 /**
  * Continuous background beds. All of them loop for the whole session and are
