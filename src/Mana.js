@@ -95,6 +95,23 @@ export class Mana {
 
     document.body.appendChild(el)
     this.el = el
+    this.layout()
+    window.addEventListener('resize', () => this.layout())
+  }
+
+  /**
+   * Keep the meters clear of the incoming-wave strip.
+   *
+   * The strip is centred and 34vw wide, so on a narrow screen its left edge
+   * reaches back over the meters in the top-left corner. When that happens the
+   * meters drop below it rather than overlapping.
+   */
+  layout() {
+    const strip = document.getElementById('creep-timeline')
+    if (!strip) return
+    const r = strip.getBoundingClientRect()
+    const overlaps = r.left < 20 + this.el.offsetWidth + 12
+    this.el.style.top = overlaps ? `${r.bottom + 12}px` : '20px'
   }
 
   render() {

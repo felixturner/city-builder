@@ -49,16 +49,7 @@ export class TilePalette {
     })
     // R rotates the held tile 90deg CW while dragging.
     window.addEventListener('keydown', (e) => {
-      if (!this.drag || (e.key !== 'r' && e.key !== 'R')) return
-      this.drag.rot = (this.drag.rot + 1) % 4
-      this._setGhostGeom() // tetrominoes use a distinct geometry per rotation
-      // Rotating changes the footprint, so the re-pick below often lands on a
-      // new cell and would fire its own tick. Suppress that one and play the
-      // rotate tick instead - a turn is one action, not two.
-      this.drag.suppressSnap = true
-      if (this.drag.lastX != null) this._dragMove({ clientX: this.drag.lastX, clientY: this.drag.lastY })
-      this.drag.suppressSnap = false
-      Sounds.play('snap', 1.3, 0.05, 0.22)
+      if (e.key === 'r' || e.key === 'R') this.rotateHeld()
     })
 
     this._buildDOM()
@@ -175,6 +166,87 @@ export class TilePalette {
     wrap.appendChild(reroll)
     document.body.appendChild(wrap)
     this.el = wrap
+    this._buildRotateButton()
+    this.layout()
+    window.addEventListener('resize', () => this.layout())
+  }
+
+  /**
+   * Rotate control for touch, where there's no R key. Bottom-left, styled as
+   * the tray is so it reads as part of the same furniture.
+   *
+   * It turns the HELD tile mid-drag, which is the only moment rotation means
+   * anything - so it has to be reachable with the other thumb while one is
+   * already down on the board.
+   */
+  _buildRotateButton() {
+    const btn = document.createElement('button')
+    btn.setAttribute('aria-label', 'Rotate tile')
+    Object.assign(btn.style, {
+      position: 'fixed', bottom: '18px', left: '18px',
+      width: '58px', height: '58px', padding: '0',
+      background: 'rgba(20,20,28,0.7)', border: '1px solid rgba(255,255,255,0.25)',
+      borderRadius: '14px', backdropFilter: 'blur(4px)',
+      display: 'none', alignItems: 'center', justifyContent: 'center',
+      cursor: 'pointer', zIndex: '551', touchAction: 'manipulation', color: '#fff',
+    })
+    // 90-degree rotation arrow: a three-quarter arc with a head on the end.
+    btn.innerHTML = `
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 12a8 8 0 1 1-2.34-5.66"/>
+        <polyline points="20 4 20 10 14 10"/>
+      </svg>`
+    // pointerdown, not click: a drag already owns the primary pointer, and a
+    // click wouldn't fire until release - by which time the tile is dropped.
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      this.rotateHeld()
+    })
+    document.body.appendChild(btn)
+    this.rotateBtn = btn
+  }
+
+  /**
+   * Place the rotate button, and get out of the tray's way when the screen is
+   * too narrow to sit beside it.
+   *
+   * Shown on touch devices only - on a mouse the R key already does this and a
+   * permanent button is clutter.
+   */
+  layout() {
+    const btn = this.rotateBtn
+    if (!btn) return
+    const touch = matchMedia('(pointer: coarse)').matches
+    btn.style.display = touch ? 'flex' : 'none'
+    if (!touch) return
+
+    const tray = this.el.getBoundingClientRect()
+    const BTN = 58, GAP = 18
+    // Room to the left of the tray? Sit beside it. Otherwise stack above it,
+    // still on the left edge, so it never overlaps the tiles.
+    if (tray.left >= BTN + GAP * 2) {
+      btn.style.bottom = `${GAP}px`
+    } else {
+      btn.style.bottom = `${GAP + tray.height + 10}px`
+    }
+  }
+
+  /** Turn the tile currently in hand. Shared by the R key and the on-screen
+   *  button so the two can't drift apart. */
+  rotateHeld() {
+    if (!this.drag) return
+    this.drag.rot = (this.drag.rot + 1) % 4
+    this._setGhostGeom() // tetrominoes use a distinct geometry per rotation
+    // Rotating changes the footprint, so the re-pick below often lands on a new
+    // cell and would fire its own tick. Suppress that one and play the rotate
+    // tick instead - a turn is one action, not two.
+    this.drag.suppressSnap = true
+    if (this.drag.lastX != null) this._dragMove({ clientX: this.drag.lastX, clientY: this.drag.lastY })
+    this.drag.suppressSnap = false
+    Sounds.play('snap', 1.3, 0.05, 0.22)
   }
 
   /** Reroll every slot at once (costs REROLL_COST): clear each tile and run its
@@ -269,6 +341,35 @@ export class TilePalette {
     for (const [cx, cy] of cells) ctx.strokeRect(ox + cx * c + 0.5, oy + cy * c + 0.5, c - 1, c - 1)
   }
 
+  /**
+   * Draw a tile whose ROOF SHAPE is the tile: the shield's triangle and the
+   * barracks' quarter circle, filling the same footprint a square tile would.
+   *
+   * These used to be small glyphs floating inside a coloured square, which made
+   * them read as a different class of thing from the walls and generators. Only
+   * turrets keep the glyph-in-a-square treatment, because a turret genuinely is
+   * a square block with a gun on top.
+   */
+  _drawRoofShape(ctx, tile, ox, oy, fw, fh) {
+    ctx.fillStyle = this.tileColor(tile)
+    ctx.beginPath()
+    if (tile.typeTop === TopType.SHIELD) {
+      // Triangle (Tri_Top) filling the tile.
+      ctx.moveTo(ox + fw / 2, oy)
+      ctx.lineTo(ox + fw, oy + fh)
+      ctx.lineTo(ox, oy + fh)
+    } else {
+      // Quarter circle (Quart_Top), corner at the bottom-left of the footprint.
+      ctx.moveTo(ox, oy + fh)
+      ctx.arc(ox, oy + fh, Math.min(fw, fh), -Math.PI / 2, 0)
+    }
+    ctx.closePath()
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+    ctx.lineWidth = 1.5
+    ctx.stroke()
+  }
+
   _drawRectTile(ctx, tile) {
     const fw = tile.w * CELL
     const fh = tile.h * CELL
@@ -279,6 +380,15 @@ export class TilePalette {
     const m = Math.min(fw, fh)
     const raised = 'rgba(255,255,255,0.32)'
     const recess = 'rgba(0,0,0,0.3)'
+
+    // Shield and barracks ARE their roof shape seen from above, drawn at full
+    // tile size. Everything else is a square footprint with a glyph on it, so
+    // those get the square first and the glyph on top.
+    if (tile.typeTop === TopType.SHIELD || tile.typeTop === TopType.BARRACKS) {
+      this._drawRoofShape(ctx, tile, ox, oy, fw, fh)
+      return
+    }
+
     ctx.fillStyle = this.tileColor(tile)
     ctx.fillRect(ox, oy, fw, fh)
 
@@ -301,42 +411,6 @@ export class TilePalette {
         ctx.fillStyle = recess
         ctx.beginPath(); ctx.arc(cx, cy - r * 0.9, m * 0.1, 0, Math.PI * 2); ctx.fill()
       }
-    } else if (tile.typeTop === TopType.BARRACKS) {
-      // A quarter-circle pie - the literal Quart_Top roof shape. Was an arched
-      // gable with two soldiers under it, which described what the building
-      // DOES but looked like nothing on the board; every other glyph here is
-      // the roof you're about to place, so this one is too.
-      const r = m * 0.52
-      // Corner offset back along both axes so the wedge sits centred in the
-      // tile rather than hanging off one side (a quarter disc's centroid is
-      // ~0.42r from its corner).
-      const kx = cx - r * 0.42, ky = cy + r * 0.42
-      ctx.fillStyle = raised
-      ctx.beginPath()
-      ctx.moveTo(kx, ky)
-      ctx.arc(kx, ky, r, -Math.PI / 2, 0) // sweep up-and-right from the corner
-      ctx.closePath()
-      ctx.fill()
-      ctx.strokeStyle = recess
-      ctx.lineWidth = Math.max(1, m * 0.05)
-      ctx.stroke()
-    } else if (tile.typeTop === TopType.SHIELD) {
-      // Just the triangle - it IS the roof (Tri_Top). This used to be a small
-      // triangle inside a heavy ring standing for the coverage radius, and the
-      // ring won: the tile read as a circle, matching nothing you see on the
-      // board. Tall and narrow so it doesn't read as a turret, whose glyph is a
-      // squat triangle; the accent-coloured tile behind it separates them too.
-      const r = m * 0.42
-      ctx.fillStyle = raised
-      ctx.beginPath()
-      ctx.moveTo(cx, cy - r)
-      ctx.lineTo(cx + r * 0.66, cy + r * 0.6)
-      ctx.lineTo(cx - r * 0.66, cy + r * 0.6)
-      ctx.closePath()
-      ctx.fill()
-      ctx.strokeStyle = recess
-      ctx.lineWidth = Math.max(1, m * 0.05)
-      ctx.stroke()
     } else if (tile.typeTop === TopType.ENCLOSURE_GENERATOR) {
       // Peg disc reads purely via its drop shadow (same colour as the tile).
       ctx.save()

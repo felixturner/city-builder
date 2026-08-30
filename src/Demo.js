@@ -210,6 +210,9 @@ export class Demo {
 
     // Incoming-wave timeline strip across the top of the screen
     this.creepTimeline = new CreepTimeline(this.creeps)
+    // Mana was built before the strip existed, so its first layout pass found
+    // nothing to avoid. Re-run it now the strip is measurable.
+    this.mana.layout()
 
     // Floating "+N" energy captions above buildings
     this.floatingText = new FloatingText()
