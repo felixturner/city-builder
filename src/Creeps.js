@@ -198,6 +198,19 @@ export class Creeps {
     this.knocksPerFloor = 3
     this.hitsToKill = 4 // turret sphere hits needed to destroy a creep
 
+    /**
+     * Difficulty ramp. Waves already arrive thicker over time (spawnInterval
+     * shortens and the nastier types unlock), but each individual creep was
+     * identical at wave 30 to wave 1 - so a city that could hold once could
+     * hold forever, and the only pressure was volume.
+     *
+     * Both curves are capped: uncapped, a giant at 10x base HP times an
+     * unbounded multiplier stops being a fight and becomes a wall.
+     */
+    this.hpPerWave = 0.12 // +12% health per wave
+    this.attackPerWave = 0.10 // +10% floors knocked per hit
+    this.maxRampMul = 3.0 // both curves stop here (~wave 17-20)
+
     // Ammo boxes: a dying creep leaves one 20% of the time. At 5 a box that's
     // 1.0 ammo per kill on average, which is what Turrets.SHOT_COST is priced
     // against - see the table there.
@@ -215,6 +228,21 @@ export class Creeps {
     this._p = new Vector2()
     this._sv = new Vector2()
     this._black = new Color(0x080808)
+  }
+
+  /** Waves elapsed, 0 during the opening grace period. Drives the stat ramp. */
+  get waveNumber() {
+    if (this.elapsed < this.graceTime) return 0
+    return Math.floor((this.elapsed - this.graceTime) / this.wavePeriod)
+  }
+
+  /** Health and attack multipliers for a creep spawning right now. */
+  rampMul() {
+    const w = this.waveNumber
+    return {
+      hp: Math.min(this.maxRampMul, 1 + w * this.hpPerWave),
+      atk: Math.min(this.maxRampMul, 1 + w * this.attackPerWave),
+    }
   }
 
   /** Current seconds-between-spawns, ramping down after the grace period. */
@@ -258,6 +286,7 @@ export class Creeps {
     // under the wave horn. Sounds.js rate-limits them, so a burst of bombers
     // gives one warning rather than five.
     if (bomber) { this.spawnBomber(); return }
+    const ramp = this.rampMul()
     const scale = giant ? 3 : (big ? 1.4 : 0.7)
     const baseY = giant ? 3 : (big ? 1.5 : 0.8)
 
@@ -327,9 +356,10 @@ export class Creeps {
       shootTimer: 0,
       baseY,
       maxHits: Math.max(1, Math.round(
-        (giant ? this.hitsToKill * 10 : (big ? this.hitsToKill * 2 : this.hitsToKill)) * Buffs.creepHp
+        (giant ? this.hitsToKill * 10 : (big ? this.hitsToKill * 2 : this.hitsToKill))
+        * Buffs.creepHp * ramp.hp
       )),
-      knockFloors: giant ? 4 : (big ? 2 : 1),
+      knockFloors: Math.max(1, Math.round((giant ? 4 : (big ? 2 : 1)) * ramp.atk)),
       stepMul: giant ? 2.2 : 1, // giants lumber slower
       kingSeeker,
     })
@@ -562,7 +592,7 @@ export class Creeps {
       bob: Math.random() * Math.PI * 2,
       shootTimer: 0,
       baseY: this.bomberY,
-      maxHits: this.hitsToKill,
+      maxHits: Math.max(1, Math.round(this.hitsToKill * Buffs.creepHp * this.rampMul().hp)),
       knockFloors: 1,
     })
   }

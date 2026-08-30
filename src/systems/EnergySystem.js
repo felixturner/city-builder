@@ -18,7 +18,7 @@ const FLOOR_PULSE_DECAY = 0.22
 // Mana per (enclosed cell x generator floor) for the pink area generators.
 // Cut 20% from 0.2: their output scales with enclosed AREA, so it climbs much
 // faster than the blue path generators as a city grows.
-const ENCLOSURE_RATE = 0.16
+const ENCLOSURE_RATE = 0.08 // halved: area gens were out-earning the trails they cost nothing to run
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
 // Global generator-production scale. Raised from 0.2 (+30%) when grey walls
 // stopped generating: generators are now the only thing producing energy besides
