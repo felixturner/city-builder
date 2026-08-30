@@ -11,6 +11,12 @@ import {
 } from 'three/webgpu'
 import { uniform, uv, smoothstep, mix, vec3, float, fract, abs, min, max, clamp, select, Fn, mrt, output } from 'three/tsl'
 
+// World units of phase shift between consecutive trails, so their gradients
+// don't march in lockstep. Baked into the geometry's uv.y ramp (createPathMesh)
+// rather than the shader, which is what lets all trails of a colour share one
+// compiled material.
+const TRAIL_PHASE_SPACING = 2.0
+
 // RGB to HSV conversion in TSL
 const rgb2hsv = Fn(([rgb]) => {
   const r = rgb.x
@@ -497,7 +503,11 @@ export class Trails {
     const uvs = []
     const indices = []
 
-    let accumulatedLength = 0
+    // Start the distance ramp at a per-path offset instead of 0. The shader
+    // reads uv.y as "distance along the path", so shifting it here decorrelates
+    // each trail's animation exactly as the old per-path phaseOffset did - but
+    // in data the geometry rebuild already writes, not in the shader.
+    let accumulatedLength = pathIndex * TRAIL_PHASE_SPACING
 
     for (let i = 0; i < path.length; i++) {
       const p = path[i]
@@ -553,7 +563,7 @@ export class Trails {
     geometry.computeVertexNormals()
 
     // Create glowing animated material
-    const material = this.createGlowMaterial(pathIndex, colorIndex)
+    const material = this.createGlowMaterial(colorIndex)
 
     const mesh = new Mesh(geometry, material)
     mesh.frustumCulled = false
@@ -566,7 +576,23 @@ export class Trails {
    * Create animated glow material using TSL
    * Gradient from tower color to white, no opacity fade
    */
-  createGlowMaterial(pathIndex, colorIndex) {
+  /**
+   * One material per trail COLOUR, built once and reused.
+   *
+   * This used to build a fresh MeshBasicNodeMaterial per trail, and since
+   * setConnectors() clears and rebuilds every trail whenever the connector set
+   * changes, adding a single link recompiled the shader for every trail on the
+   * board. That compile is the hitch you can feel.
+   *
+   * The graph only ever varied by colour and by a per-path phase offset, so the
+   * phase moved into the geometry (see createPathMesh) and colour is the only
+   * axis left - three materials, compiled once for the whole session.
+   */
+  createGlowMaterial(colorIndex) {
+    if (!this._matCache) this._matCache = new Map()
+    const cached = this._matCache.get(colorIndex)
+    if (cached) return cached
+
     const material = new MeshBasicNodeMaterial()
     material.transparent = true
     material.side = DoubleSide
@@ -582,10 +608,11 @@ export class Trails {
     // Get the trail color for this path (one of the tower colors)
     const trailColor = this.trailColors[colorIndex]
 
-    // Animated position walking down the path (in world units)
+    // Animated position walking down the path (in world units). The per-path
+    // phase offset that used to live here is baked into uv.y instead, so this
+    // graph is identical for every trail of a given colour.
     const speed = 5.0 // World units per second
-    const phaseOffset = float(pathIndex).mul(2.0) // Offset each path's animation
-    const animPos = this.uTime.mul(speed).add(phaseOffset)
+    const animPos = this.uTime.mul(speed)
 
     // Gradient spacing in world units - roughly one gradient per 2 world units
     const gradientSpacing = 2.0
@@ -620,6 +647,7 @@ export class Trails {
       normal: vec3(0, 1, 0)
     })
 
+    this._matCache.set(colorIndex, material)
     return material
   }
 
@@ -637,7 +665,9 @@ export class Trails {
     for (const mesh of this.meshes) {
       this.scene.remove(mesh)
       mesh.geometry.dispose()
-      mesh.material.dispose()
+      // NOT mesh.material.dispose() - materials are shared from _matCache now,
+      // and disposing one here would drop the compiled shader every other trail
+      // of that colour is using.
     }
     this.meshes = []
     this.paths = []
