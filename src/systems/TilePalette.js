@@ -1,4 +1,4 @@
-import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color, MathUtils, BufferGeometry, Float32BufferAttribute } from 'three/webgpu'
+import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color, MathUtils, AxesHelper } from 'three/webgpu'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
@@ -352,26 +352,46 @@ export class TilePalette {
     for (const [cx, cy] of cells) ctx.strokeRect(ox + cx * c + 0.5, oy + cy * c + 0.5, c - 1, c - 1)
     // Orientation marker, on the centroid cell so it sits ON the shape.
     const [ax, ay] = TetrominoGeometry.anchor(cells)
-    this._drawUpArrow(ctx, ox + (ax + 0.5) * c, oy + (ay + 0.5) * c, c)
+    this._drawAxes2D(ctx, ox + (ax + 0.5) * c, oy + (ay + 0.5) * c, c)
   }
 
   /**
-   * Orientation marker: an arrow pointing UP in whichever space it's drawn. On
-   * the icon that's canvas-up; in 3D it's world +x, because placeOrient turns
-   * the board shape 90deg CCW relative to the icon, which maps icon-up (0,-1)
-   * onto (1,0). Same arrow, same meaning, both views.
+   * A 2D axes helper on the icon, to read against the 3D one on the ghost:
+   * red horizontal (canvas +x), green vertical (canvas up).
+   *
+   * The correspondence to check is that placeOrient maps icon-up (0,-1) to
+   * world (1,0) and icon-right (1,0) to world (0,1). So on screen the icon's
+   * GREEN should point the way the ghost's RED (+X) does, and the icon's RED
+   * the way the ghost's BLUE (+Z) does. If they don't, the camera compensation
+   * in placeOrient is the thing that's wrong, not the rotation logic.
    */
-  _drawUpArrow(ctx, cx, cy, size) {
-    const r = size * 0.34
+  _drawAxes2D(ctx, cx, cy, size) {
+    const r = size * 0.62
+    const head = size * 0.16
     ctx.save()
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'
+    ctx.lineWidth = Math.max(1.5, size * 0.09)
+    ctx.lineCap = 'round'
+
+    // Red: canvas +x (right)
+    ctx.strokeStyle = '#ff4444'
+    ctx.fillStyle = '#ff4444'
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + r, cy); ctx.stroke()
     ctx.beginPath()
-    ctx.moveTo(cx, cy - r)
-    ctx.lineTo(cx + r * 0.62, cy + r * 0.42)
-    ctx.lineTo(cx, cy + r * 0.1)
-    ctx.lineTo(cx - r * 0.62, cy + r * 0.42)
-    ctx.closePath()
-    ctx.fill()
+    ctx.moveTo(cx + r + head * 0.6, cy)
+    ctx.lineTo(cx + r - head * 0.2, cy - head * 0.55)
+    ctx.lineTo(cx + r - head * 0.2, cy + head * 0.55)
+    ctx.closePath(); ctx.fill()
+
+    // Green: canvas up (-y)
+    ctx.strokeStyle = '#44dd44'
+    ctx.fillStyle = '#44dd44'
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - r); ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cx, cy - r - head * 0.6)
+    ctx.lineTo(cx - head * 0.55, cy - r + head * 0.2)
+    ctx.lineTo(cx + head * 0.55, cy - r + head * 0.2)
+    ctx.closePath(); ctx.fill()
+
     ctx.restore()
   }
 
@@ -657,28 +677,22 @@ export class TilePalette {
   }
 
   /**
-   * The 3D twin of the icon's arrow: a flat triangle over the ghost pointing
-   * world +x, which is where placeOrient sends icon-up. Kept as its own mesh
-   * rather than a child of the ghost, because the ghost gets non-uniform scale
-   * (0.3 in Y for walls, footprint size for rects) that would squash it.
+   * Axes at the dragged tile's centroid: red +X, green +Y, blue +Z. Shows both
+   * ground axes rather than just an "up", so the icon's orientation and the
+   * board's can be compared directly - icon-up should read as +X (red), since
+   * that's where placeOrient sends it.
+   *
+   * Its own object rather than a child of the ghost: the ghost carries
+   * non-uniform scale (0.3 in Y for walls, footprint size for rects) that would
+   * skew the axes. depthTest off so blocks don't bury it.
    */
-  _makeGhostArrow() {
-    const cu = this.city.cellUnit
-    const g = new BufferGeometry()
-    const t = cu * 0.42
-    // Points along +x, lying flat in the XZ plane.
-    g.setAttribute('position', new Float32BufferAttribute([
-      t, 0, 0,
-      -t * 0.55, 0, t * 0.6,
-      -t * 0.55, 0, -t * 0.6,
-    ], 3))
-    g.computeVertexNormals()
-    const m = new MeshBasicNodeMaterial({
-      color: 0x101014, transparent: true, opacity: 0.75, depthTest: false,
-    })
-    const mesh = new Mesh(g, m)
-    mesh.renderOrder = 6 // above the ghost
-    return mesh
+  _makeGhostAxes() {
+    const helper = new AxesHelper(this.city.cellUnit * 1.2)
+    helper.material.depthTest = false
+    helper.material.transparent = true
+    helper.material.opacity = 0.95
+    helper.renderOrder = 6 // above the ghost
+    return helper
   }
 
   _beginDrag(i) {
@@ -691,7 +705,7 @@ export class TilePalette {
     const ghost = new Mesh(this._ghostGeomFor(tile, tile.rot || 0), mat)
     ghost.renderOrder = 5
     this.city.scene.add(ghost)
-    const arrow = this._makeGhostArrow()
+    const arrow = this._makeGhostAxes()
     this.city.scene.add(arrow)
     this.dragArrow = arrow
     // Hide the icon in its slot while it's being dragged.
@@ -823,9 +837,12 @@ export class TilePalette {
     if (this.dragArrow) {
       const [ax, ay] = TetrominoGeometry.anchor(t.cells)
       this.dragArrow.visible = true
+      // Centre of the centroid CELL - which is also the cell under the cursor,
+      // since _pickTarget anchors the centroid there. So the axes sit exactly
+      // where you're pointing, and the tile turns about them.
       this.dragArrow.position.set(
         (t.gx + ax + 0.5) * cu + city.gridOffsetX,
-        1.2,
+        0.35,
         (t.gy + ay + 0.5) * cu + city.gridOffsetZ
       )
     }
