@@ -25,20 +25,20 @@ export class Tower {
   ]
 
   /**
-   * How far the top floor of a full-height stack is pushed toward white. Each
+   * How far the top floor of a full-height stack is pushed toward black. Each
    * floor is its own BatchedMesh instance with its own colour, so a stack can
    * carry a gradient for free - no extra draw calls, no extra geometry.
    */
-  static STACK_LIGHTEN = 0.55
+  static STACK_DARKEN = 0.55
 
   /** Shade for floor `f` of a stack: floor 0 keeps `base`, higher floors lerp
-   *  toward white so a wall reads lighter the taller it gets. */
+   *  toward black so a wall reads DARKER the taller it gets. */
   static shadeForFloor(base, f, maxFloors, out) {
-    const t = maxFloors > 1 ? (f / (maxFloors - 1)) * Tower.STACK_LIGHTEN : 0
-    return out.copy(base).lerp(Tower.WHITE, t)
+    const t = maxFloors > 1 ? (f / (maxFloors - 1)) * Tower.STACK_DARKEN : 0
+    return out.copy(base).lerp(Tower.BLACK, t)
   }
 
-  static WHITE = new Color(0xffffff)
+  static BLACK = new Color(0x000000)
 
   /**
    * Roofs get slightly darker vertex colour than the block they cap: a roof's
