@@ -1,10 +1,30 @@
 # TODO
 
-- remove cloisters (too easy boring)
+
+make the big trails do more. 
+	hurt bad guys?
+	need trails to power everyhting?
+	guns / barracks / enegy gens?
+
+needs more strtegy for tile placement
+	closed walls are stronger?
+	diff colored area gens? limit on area gen size to encorage different plots?
+
+fix gens get stuck at 0 or trail gens get stuck once not connected.
+
+grey out gens when dead or destroy them.
+add power up slector screen after each wave.
+	stronger walls, bigger king, heal king, stronger shots by type, weaker bad guys, more tile slots etc faster gen
+ammo generators tiles
+shield tiles - protect other tiles.
+power up tiles - boost guns and other tiles
+after x waves, expand play field? (would need panning)
+later waves - send stronger creeps not just more creeps.
+show energy /ammo bnoxes with little crates that explode?
+
 - make completing wall rings more important. buff walls that are completed x2 def.
 - add wildcards bonuses buffs etc.
 - remove 3rd party blender file. start new clean repo?
-- add rest periods between waves to select power ups.
 
 - add more unit types like 9 kings (adjancy boosters)
 
@@ -25,4 +45,6 @@
 - mak online live demo
 - make mobile friendly (right click + R key)
 - fix AO on pies etc
+
+
 

@@ -2,8 +2,9 @@ import { MathUtils, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
 import { ACCENT_COLORS } from '../palette.js'
+import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex, KING_HEALTH } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, KING_HEALTH, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
 
 // Fallback only - the king normally wears one of the three accents.
 const KING_COLOR = ACCENT_COLORS[0]
@@ -162,6 +163,17 @@ export class TowerRenderer {
       return
     }
 
+    if (isBarracks(tower) || isShield(tower)) {
+      const accent = city.accentColors[isShield(tower) ? SHIELD_COLOR : BARRACKS_COLOR]
+      tower.isLit = false
+      tower.litColor = null
+      tower.laserColor = null
+      tower.baseColor = accent.clone()
+      tower.topColor = accent.clone()
+      this.shadeStack(tower)
+      return
+    }
+
     tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
     if (isGenerator(tower)) {
       // Generators always use their fixed accent colour — no per-instance colour variation.
@@ -192,6 +204,19 @@ export class TowerRenderer {
   damageTower(tower) {
     const city = this.city
     if (!tower || !tower.visible) return 0
+
+    // Reinforced walls soak blows rather than inflating the floor count, so a
+    // tower never keeps phantom health after a buff is recalculated. (Shields
+    // used to double this; they burn creeps at the perimeter now instead.)
+    let soak = 1
+    if (isGrey(tower)) soak *= 1 + Buffs.wallHits
+    if (soak > 1) {
+      tower.soakHits = (tower.soakHits || 0) + 1
+      if (tower.soakHits % soak !== 0) {
+        Sounds.play('dink', 1.6, 0.1, 0.35)
+        return tower.numFloors
+      }
+    }
 
     const center = tower.box.getCenter(city.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * city.floorHeight

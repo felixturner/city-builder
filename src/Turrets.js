@@ -14,6 +14,8 @@ import {
 } from 'three/webgpu'
 import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Sounds } from './lib/Sounds.js'
+import { Creeps } from './Creeps.js'
+import { Buffs } from './buffs.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { roofGeomIndex } from './blockTypes.js'
 import { mrt, output, vec3 } from 'three/tsl'
@@ -255,7 +257,9 @@ export class Turrets {
     for (const c of this.creeps.creeps) {
       const dx = c.mesh.position.x - x
       const dz = c.mesh.position.z - z
-      const d = dx * dx + dz * dz
+      // Distance to the creep's EDGE, so a giant whose body is inside the range
+      // ring but whose centre isn't is still a valid target.
+      const d = Math.max(0, Math.hypot(dx, dz) - Creeps.radiusOf(c)) ** 2
       if (d >= bestD) continue
       if (losMuzzle && c.state !== 'fly' && !this.hasLOS(losMuzzle, c.mesh.position)) continue
       bestD = d
@@ -345,7 +349,7 @@ export class Turrets {
 
     this._to.copy(target.mesh.position)
     this.spawnBeam(muzzle, this._to, tower.laserColor || this._white)
-    this.creeps.hit(target, this.laserDamage)
+    this.creeps.hit(target, this.laserDamage + Buffs.shotDamage.laser)
     Sounds.play('shoot', 0.65, 0.2, 0.34)
     return true
   }
@@ -440,10 +444,10 @@ export class Turrets {
       // 2 units INSIDE the model before it registered, so shots visibly passed
       // through bosses. Giants shrink as they take damage, so this tightens
       // with them.
-      const hitR = Math.max(this.hitRadius, p.target.mesh.scale.x || 1)
+      const hitR = Math.max(this.hitRadius, Creeps.radiusOf(p.target))
       if (dist <= hitR + step) {
         // Reached the creep: land a hit and consume the projectile.
-        this.creeps.hit(p.target)
+        this.creeps.hit(p.target, 1 + Buffs.shotDamage.peg)
         this.scene.remove(p.mesh)
         this.projectiles.splice(i, 1)
         continue
@@ -470,7 +474,7 @@ export class Turrets {
       let cd = (this.cooldowns.get(tower) ?? 0) - dt
       if (cd <= 0) {
         const fired = isMortar ? this.fireMortar(tower) : isLaser ? this.fireLaser(tower) : this.fire(tower)
-        if (fired) cd = isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown
+        if (fired) cd = (isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown) * Buffs.fireRate
         else cd = 0.15 // nothing in range or out of energy; re-check soon
       }
       this.cooldowns.set(tower, cd)
@@ -506,8 +510,8 @@ export class Turrets {
       const dx = c.mesh.position.x - x, dz = c.mesh.position.z - z
       // Same for the blast: measure to the creep's edge, so a shell landing
       // beside a giant still catches it.
-      const rr = this.mortarRadius + (c.mesh.scale.x || 0)
-      if (dx * dx + dz * dz <= rr * rr) this.creeps.hit(c, this.mortarDamage)
+      const rr = this.mortarRadius + Creeps.radiusOf(c)
+      if (dx * dx + dz * dz <= rr * rr) this.creeps.hit(c, this.mortarDamage + Buffs.shotDamage.mortar)
     }
     // Blast dome: sphere centered at ground (y=0) so only the top half shows;
     // pops its scale up fast then fades out (animated in update()).

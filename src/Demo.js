@@ -29,6 +29,9 @@ import { ENERGY_COLOR } from './palette.js'
 // there's no scrim behind it.
 const TEXT_SHADOW = '0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.9)'
 import { Creeps } from './Creeps.js'
+import { Soldiers } from './Soldiers.js'
+import { PowerUpScreen, resetBuffs } from './PowerUps.js'
+import { LootBoxes } from './LootBoxes.js'
 import { Turrets } from './Turrets.js'
 import { CreepTimeline } from './CreepTimeline.js'
 import { FloatingText } from './FloatingText.js'
@@ -39,6 +42,9 @@ export class Demo {
 
   // How much slack past "the grid exactly fills the view" the zoom-out stops at.
   static ZOOM_OUT_MARGIN = 1.12
+
+  // Seconds between a crate bursting and the upgrade cards flying out of it.
+  static CARD_DELAY = 0.55
 
   // Seconds between the king dying and the game freezing behind the score panel,
   // so you get to watch the creeps finish the job instead of cutting to a
@@ -127,7 +133,7 @@ export class Demo {
     this.city.interaction.pointer = this.pointerHandler
 
     // Energy/population HUD - grey blocks generate energy and raise its cap
-    this.mana = new Mana(100, 100)
+    this.mana = new Mana(100, 50) // cap 100, start on half so the opening build has a cost
     this.city.mana = this.mana
     // Income boxes flying from generators to the HUD meters. City needs the live
     // camera to project their launch point.
@@ -171,6 +177,26 @@ export class Demo {
     // Enemy creeps marching in from the map edges
     this.creeps = new Creeps(this.scene, this.city)
     this.city.creeps = this.creeps // let placement checks query creep positions
+
+    // Friendly units raised by barracks tiles
+    this.soldiers = new Soldiers(this.scene, this.city, this.creeps)
+    this.city.soldiers = this.soldiers
+
+    // Pick-one-of-four upgrade screen, paid out by walling in a loot crate
+    // rather than by surviving N waves.
+    resetBuffs()
+    this.powerUps = new PowerUpScreen(this)
+    this.lootBoxes = new LootBoxes(this.scene, this.city, this)
+    this.city.lootBoxes = this.lootBoxes // placement checks read it
+    this.lootBoxes.place()
+    this.lootBoxes.onOpened = (screenPos) => {
+      if (this.isGameOver || this.kingDead) return
+      // A short beat after the burst so the confetti reads before the menu.
+      this._cardTimer = setTimeout(() => {
+        this._cardTimer = null
+        if (!this.isGameOver && !this.kingDead) this.powerUps.show(screenPos)
+      }, Demo.CARD_DELAY * 1000)
+    }
 
     // Incoming-wave timeline strip across the top of the screen
     this.creepTimeline = new CreepTimeline(this.creeps)
@@ -409,6 +435,8 @@ export class Demo {
     this.city.update(dt)
     this.trails.update(dt)
     this.creeps.update(dt)
+    this.lootBoxes.update(dt)
+    this.soldiers.update(dt)
     this.turrets.update(dt)
   }
 
@@ -435,27 +463,38 @@ export class Demo {
     btn.addEventListener('click', () => {
       this.paused = !this.paused
       btn.textContent = this.paused ? '▶ Play' : '⏸ Pause'
-      // The wave clock freezes while paused, so a running countdown bed would
-      // drift out of sync with it. Cut it; it re-cues on the next wave.
-      if (this.paused) {
-        Sounds.stop('tick-fast')
-        Sounds.fadeOut('horn-boss', 0.3)
-        if (this.creeps) {
-          this.creeps._cuedWave = -1
-          this.creeps._riserWave = -1
-          this.creeps._riser = null
-        }
-        Sounds.holdBeds(true)
-        // Fade the master bus out so one-shots already in flight go quiet too,
-        // not just the beds.
-        Sounds.fadeMaster(0, 0.25)
-      } else {
-        Sounds.fadeMaster(1, 0.25)
-        Sounds.holdBeds(false)
-      }
+      this.setPauseAudio(this.paused)
     })
     document.body.appendChild(btn)
     this.pauseButton = btn
+  }
+
+  /** Silence (or restore) everything for a pause - shared by the pause button
+   *  and the upgrade screen, which freezes the game the same way. */
+  /**
+   * Silence (or restore) everything for a freeze. Shared by the pause button and
+   * the upgrade screen, which stops the game the same way.
+   *
+   * The wave clock stops with the game, so a running countdown bed would drift
+   * out of sync with it - it's cut and re-cues on the next wave.
+   */
+  setPauseAudio(paused) {
+    if (paused) {
+      Sounds.stop('tick-fast')
+      Sounds.fadeOut('horn-boss', 0.3)
+      if (this.creeps) {
+        this.creeps._cuedWave = -1
+        this.creeps._riserWave = -1
+        this.creeps._riser = null
+      }
+      Sounds.holdBeds(true)
+      // Fade the master bus out so one-shots already in flight go quiet too,
+      // not just the beds.
+      Sounds.fadeMaster(0, 0.25)
+    } else {
+      Sounds.fadeMaster(1, 0.25)
+      Sounds.holdBeds(false)
+    }
   }
 
   /**

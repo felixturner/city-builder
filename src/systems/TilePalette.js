@@ -2,9 +2,10 @@ import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color,
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
+import { Buffs } from '../buffs.js'
 import { ENERGY_COLOR, AMMO_COLOR } from '../palette.js'
 import { Tower } from '../Tower.js'
-import { TopType, isTurret, isGenerator, roofGeomIndex, genColorIndex } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex, BARRACKS_COLOR } from '../blockTypes.js'
 
 const SLOTS = 4
 const REFILL_TIME = 1.9 // seconds for a used/discarded palette slot to refill
@@ -61,7 +62,7 @@ export class TilePalette {
     })
 
     this._buildDOM()
-    for (let i = 0; i < SLOTS; i++) this._setTile(i, this.randomTile())
+    for (let i = 0; i < this.slots.length; i++) this._setTile(i, this.randomTile())
   }
 
   // ---- random tiles -----------------------------------------------------------
@@ -73,7 +74,7 @@ export class TilePalette {
     const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
     if (spec.wall) return { wall: true, shapeName: spec.shapeName, topColorIndex }
     // Generators use their fixed type colour; turrets keep a random accent.
-    const colorIndex = genColorIndex(spec.typeTop) ?? 0
+    const colorIndex = tileColorIndex(spec.typeTop)
     return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex, topColorIndex }
   }
 
@@ -99,7 +100,7 @@ export class TilePalette {
   /** The tile's block colour as a THREE.Color (matches its palette icon). */
   _tileColor3(tile, out) {
     if (tile.wall) { out.copy(Tower.COLORS[tile.topColorIndex]); return out }
-    if (isGenerator(tile)) {
+    if (isGenerator(tile) || isBarracks(tile) || isShield(tile)) {
       out.copy(this.city.accentColors[tile.colorIndex])
     } else if (isTurret(tile)) {
       out.set(0x9aa0aa)
@@ -157,33 +158,10 @@ export class TilePalette {
       background: 'rgba(20,20,28,0.7)', border: '1px solid rgba(255,255,255,0.25)',
       borderRadius: '14px', backdropFilter: 'blur(4px)',
     })
-    for (let i = 0; i < SLOTS; i++) {
-      const el = document.createElement('div')
-      Object.assign(el.style, {
-        position: 'relative',
-        width: `${ICON}px`, height: `${ICON}px`,
-        cursor: 'grab', touchAction: 'none',
-      })
-      const canvas = document.createElement('canvas')
-      canvas.width = ICON
-      canvas.height = ICON
-      el.appendChild(canvas)
-      // Live energy-cost readout in the bottom corner of each slot.
-      const costEl = document.createElement('div')
-      Object.assign(costEl.style, {
-        position: 'absolute', bottom: '1px', left: '0', width: '100%', textAlign: 'center',
-        font: '700 12px ui-monospace, Menlo, monospace', color: '#fff',
-        textShadow: '0 1px 2px rgba(0,0,0,0.95)', pointerEvents: 'none',
-      })
-      el.appendChild(costEl)
-      const idx = i
-      el.addEventListener('pointerdown', (e) => this._pointerDown(e, idx))
-      el.addEventListener('contextmenu', (e) => { e.preventDefault(); this._discard(idx) })
-      wrap.appendChild(el)
-      this.slots.push({ tile: null, refill: 0, el, canvas, costEl })
-    }
+    this.wrap = wrap
+    for (let i = 0; i < SLOTS; i++) this._buildSlot()
     // Little reroll-all button in the top-right corner of the tray.
-    const reroll = document.createElement('button')
+    const reroll = this.rerollBtn = document.createElement('button')
     reroll.textContent = '×'
     reroll.title = `Reroll all tiles (${REROLL_COST})`
     Object.assign(reroll.style, {
@@ -207,7 +185,7 @@ export class TilePalette {
       return
     }
     Sounds.play('roll', 1.0, 0.15)
-    for (let i = 0; i < SLOTS; i++) this._consume(i)
+    for (let i = 0; i < this.slots.length; i++) this._consume(i)
   }
 
   _setTile(i, tile) {
@@ -229,6 +207,44 @@ export class TilePalette {
   }
 
   // ---- icon drawing -----------------------------------------------------------
+
+  /** Build one palette slot and append it to the tray. Split out of _buildDOM
+   *  so the "Wider Hand" power-up can add a slot mid-run. */
+  _buildSlot() {
+    const el = document.createElement('div')
+    Object.assign(el.style, {
+      position: 'relative',
+      width: `${ICON}px`, height: `${ICON}px`,
+      cursor: 'grab', touchAction: 'none',
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = ICON
+    canvas.height = ICON
+    el.appendChild(canvas)
+    // Live energy-cost readout in the bottom corner of each slot.
+    const costEl = document.createElement('div')
+    Object.assign(costEl.style, {
+      position: 'absolute', bottom: '1px', left: '0', width: '100%', textAlign: 'center',
+      font: '700 12px ui-monospace, Menlo, monospace', color: '#fff',
+      textShadow: '0 1px 2px rgba(0,0,0,0.95)', pointerEvents: 'none',
+    })
+    el.appendChild(costEl)
+    const idx = this.slots.length
+    el.addEventListener('pointerdown', (e) => this._pointerDown(e, idx))
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); this._discard(idx) })
+    // The reroll button is appended last, so insert before it to keep it in the
+    // corner rather than stranded mid-tray.
+    if (this.rerollBtn) this.wrap.insertBefore(el, this.rerollBtn)
+    else this.wrap.appendChild(el)
+    this.slots.push({ tile: null, refill: 0, el, canvas, costEl })
+    return this.slots.length - 1
+  }
+
+  /** Add a slot at runtime (power-up), pre-filled with a tile. */
+  addSlot() {
+    const i = this._buildSlot()
+    this._setTile(i, this.randomTile())
+  }
 
   _drawTile(slot) {
     const ctx = slot.canvas.getContext('2d')
@@ -285,6 +301,42 @@ export class TilePalette {
         ctx.fillStyle = recess
         ctx.beginPath(); ctx.arc(cx, cy - r * 0.9, m * 0.1, 0, Math.PI * 2); ctx.fill()
       }
+    } else if (tile.typeTop === TopType.BARRACKS) {
+      // A quarter-circle pie - the literal Quart_Top roof shape. Was an arched
+      // gable with two soldiers under it, which described what the building
+      // DOES but looked like nothing on the board; every other glyph here is
+      // the roof you're about to place, so this one is too.
+      const r = m * 0.52
+      // Corner offset back along both axes so the wedge sits centred in the
+      // tile rather than hanging off one side (a quarter disc's centroid is
+      // ~0.42r from its corner).
+      const kx = cx - r * 0.42, ky = cy + r * 0.42
+      ctx.fillStyle = raised
+      ctx.beginPath()
+      ctx.moveTo(kx, ky)
+      ctx.arc(kx, ky, r, -Math.PI / 2, 0) // sweep up-and-right from the corner
+      ctx.closePath()
+      ctx.fill()
+      ctx.strokeStyle = recess
+      ctx.lineWidth = Math.max(1, m * 0.05)
+      ctx.stroke()
+    } else if (tile.typeTop === TopType.SHIELD) {
+      // Just the triangle - it IS the roof (Tri_Top). This used to be a small
+      // triangle inside a heavy ring standing for the coverage radius, and the
+      // ring won: the tile read as a circle, matching nothing you see on the
+      // board. Tall and narrow so it doesn't read as a turret, whose glyph is a
+      // squat triangle; the accent-coloured tile behind it separates them too.
+      const r = m * 0.42
+      ctx.fillStyle = raised
+      ctx.beginPath()
+      ctx.moveTo(cx, cy - r)
+      ctx.lineTo(cx + r * 0.66, cy + r * 0.6)
+      ctx.lineTo(cx - r * 0.66, cy + r * 0.6)
+      ctx.closePath()
+      ctx.fill()
+      ctx.strokeStyle = recess
+      ctx.lineWidth = Math.max(1, m * 0.05)
+      ctx.stroke()
     } else if (tile.typeTop === TopType.ENCLOSURE_GENERATOR) {
       // Peg disc reads purely via its drop shadow (same colour as the tile).
       ctx.save()
@@ -332,7 +384,7 @@ export class TilePalette {
   // ---- per-frame: refill timers ----------------------------------------------
 
   update(dt) {
-    for (let i = 0; i < SLOTS; i++) {
+    for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i]
       if (slot.tile) { this._updateCostLabel(slot); continue }
       if (slot.refill <= 0) continue
@@ -340,7 +392,7 @@ export class TilePalette {
       // Always show the refilled tile; if it's unaffordable its cost reads red and
       // it can't be dragged (no more holding slots empty until affordable).
       if (slot.refill <= 0) this._setTile(i, this.randomTile())
-      else this._drawRing(slot, 1 - slot.refill / REFILL_TIME)
+      else this._drawRing(slot, 1 - slot.refill / (REFILL_TIME * Buffs.refillRate))
     }
   }
 
@@ -353,7 +405,7 @@ export class TilePalette {
     const slot = this.slots[i]
     slot.tile = null
     slot.pending = null
-    slot.refill = REFILL_TIME
+    slot.refill = REFILL_TIME * Buffs.refillRate
     slot.el.style.cursor = 'default'
     this._drawRing(slot, 0)
     if (slot.costEl) slot.costEl.textContent = ''
@@ -512,9 +564,17 @@ export class TilePalette {
     const claimColor = !tile.wall && isGenerator(tile) ? tile.colorIndex : -1
     let valid = city.fits(gx, gy, cells, claimColor)
     // One enclosure generator per enclosure: block placing into an already-claimed area.
+    // One claimant per enclosure - and the king counts, so you can't drop a hole
+    // block into the region the king is already earning from.
     if (valid && tile.typeTop === TopType.ENCLOSURE_GENERATOR && city.cellClaim) {
       for (const [dx, dy] of cells) {
         if (city.cellClaim[(gy + dy) * city.gridCellsX + (gx + dx)] >= 0) { valid = false; break }
+      }
+    }
+    // Can't build on a loot crate - see LootBoxes.occupiesCell.
+    if (valid && city.lootBoxes) {
+      for (const [dx, dy] of cells) {
+        if (city.lootBoxes.occupiesCell(gx + dx, gy + dy)) { valid = false; break }
       }
     }
     // Can't drop a block onto a cell a creep is standing in.

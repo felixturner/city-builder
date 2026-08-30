@@ -16,6 +16,7 @@ export class BlockGeometry {
     [3, 6],
     [4, 6],
     [5, 6],
+    [9, 10], // Tri
   ])
 
   /**
@@ -38,6 +39,10 @@ export class BlockGeometry {
     const topPeg = this.findAndCenterGeometry(gltf, 'Peg_Top')
     const topDivot = this.findAndCenterGeometry(gltf, 'Divot_Top')
     const topCross = this.findAndCenterGeometry(gltf, 'Cross_Top')
+    // Tri was modelled but never loaded. Appended at the END (9/10) rather than
+    // slotted in with the other tops, so no existing geometry index shifts.
+    const topTri = this.findAndCenterGeometry(gltf, 'Tri_Top')
+    const bottomTri = this.findAndCenterGeometry(gltf, 'Tri_Base')
 
     // Push in same order as before (tops 0-5, bottoms 6-8)
     this.geoms.push(topSquare.geom)
@@ -67,6 +72,11 @@ export class BlockGeometry {
     this.geoms.push(bottomHole.geom)
     this.halfHeights.push(bottomHole.halfHeight)
 
+    this.geoms.push(topTri.geom) // 9
+    this.halfHeights.push(topTri.halfHeight)
+
+    this.geoms.push(bottomTri.geom) // 10
+    this.halfHeights.push(bottomTri.halfHeight)
   }
 
   /**

@@ -1,4 +1,5 @@
 import { BlockGeometry } from './lib/BlockGeometry.js'
+import { Buffs } from './buffs.js'
 
 /**
  * Named top-block types (the roof geometry on a tower) and small predicates /
@@ -17,11 +18,16 @@ export const TopType = {
   PATH_GENERATOR: 5, // Cross_Top "plus" block - connects to others via trails
   ENCLOSURE_GENERATOR: 6, // generates mana when sealed inside an enclosure
   MORTAR_TURRET: 7, // lobs an AoE mortar; heavy damage, slow fire
+  BARRACKS: 8, // spawns soldiers that patrol nearby and fight creeps
+  SHIELD: 9, // projects a radius in which everything takes double punishment
 }
 
 // Role -> top geometry index (decoupled). All three turrets render the divot top;
-// the enclosure generator renders the (freed) peg top.
-const ROOF_GEOM = [0, 1, 2, 4, 4, 5, 3, 4]
+// the enclosure generator renders the (freed) peg top; the barracks takes the
+// triangular Quart_Top, which nothing else uses.
+// ...and the shield takes the true triangular Tri_Top (geometry 9), which the
+// barracks' curved Quart_Top is not.
+const ROOF_GEOM = [0, 1, 2, 4, 4, 5, 3, 4, 1, 9]
 export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 
 // Each generator type has ONE fixed accent colour (index into City.accentColors:
@@ -33,8 +39,46 @@ const GEN_COLOR = {
 /** Fixed accent index for a generator type, or undefined for non-generators. */
 export const genColorIndex = (typeTop) => GEN_COLOR[typeTop]
 
+/** Accent index for any accent-coloured tile (generators and the barracks).
+ *  Falls back to 0 so callers never index the palette with undefined. */
+export const tileColorIndex = (typeTop) =>
+  typeTop === TopType.BARRACKS ? BARRACKS_COLOR
+    : typeTop === TopType.SHIELD ? SHIELD_COLOR
+      : (GEN_COLOR[typeTop] ?? 0)
+
+/** Accent index for the barracks (the one accent no generator uses). */
+export const BARRACKS_COLOR = 1
+/** Shields share the yellow accent - their ring is the thing that identifies
+ *  them, and the palette only has three colours to spend. */
+export const SHIELD_COLOR = 1
+
+/** Shield radius in CELLS for a shield of `floors` storeys - the same height
+ *  rule a turret's range uses. Shared by the ring that draws it and the test
+ *  that decides what crosses it, so the circle never lies. */
+export const shieldRadiusCells = (floors) => floors * 2 + 1
+
+/** Charges a shield carries per storey. Each creep that crosses the perimeter
+ *  is burned for one; when they run out the barrier is spent and goes dark. */
+export const SHIELD_HITS_PER_FLOOR = 5
+
+/** Charges a shield has left: 5 per floor, minus what's been spent. */
+export const shieldCharges = (t) =>
+  Math.max(0, t.numFloors * SHIELD_HITS_PER_FLOOR - (t.shieldUsed || 0)) + Buffs.shieldRadius
+
+export const isBarracks = (t) => t.typeTop === TopType.BARRACKS
+export const isShield = (t) => t.typeTop === TopType.SHIELD
 export const isPathGenerator = (t) => t.typeTop === TopType.PATH_GENERATOR
 export const isEnclosureGenerator = (t) => t.typeTop === TopType.ENCLOSURE_GENERATOR
+/**
+ * Anything that behaves as an enclosure generator: the hole block, and the king.
+ * The king earns from the area it seals on exactly the same terms and claims its
+ * enclosure the same way, so only one of the two can occupy any given region.
+ *
+ * Deliberately separate from isEnclosureGenerator rather than folding the king
+ * into it - that predicate also feeds isGenerator, which would hand the king a
+ * lifespan, a countdown pie and a slot in the MAX_GENS cap.
+ */
+export const claimsEnclosure = (t) => isEnclosureGenerator(t) || !!t.king
 export const isTurret = (t) =>
   t.typeTop === TopType.PEG_TURRET || t.typeTop === TopType.DIVOT_TURRET || t.typeTop === TopType.MORTAR_TURRET
 export const isPegTurret = (t) => t.typeTop === TopType.PEG_TURRET
@@ -45,8 +89,10 @@ export const isGenerator = (t) =>
   t.typeTop === TopType.PATH_GENERATOR ||
   t.typeTop === TopType.ENCLOSURE_GENERATOR
 
-/** A plain "grey" tower: not a generator, turret, or the king. */
-export const isGrey = (t) => !isGenerator(t) && !isTurret(t) && !t.king
+/** A plain "grey" tower: not a generator, turret, barracks, or the king.
+ *  Grey towers are walls - they block creep pathing rather than attracting it. */
+export const isGrey = (t) => !isGenerator(t) && !isTurret(t) && !isBarracks(t) && !isShield(t) && !t.king
+
 
 /** World-space Y of the very top of a tower (roof block top), given floorHeight. */
 export const towerTopY = (tower, floorHeight) =>

@@ -1,5 +1,8 @@
-import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2 } from 'three/webgpu'
-import { isTurret, isPathGenerator } from '../blockTypes.js'
+import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three/webgpu'
+import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges } from '../blockTypes.js'
+
+// Solid yellow, not the palette accent: this is a hazard line, not a building.
+const SHIELD_LINE = '#ffd23f'
 
 /**
  * A pool of flat ground rings (one per tower). Geometry is cached per radius
@@ -63,12 +66,24 @@ export class RangeVisuals {
       city.scene,
       () => new MeshBasicNodeMaterial({ transparent: true, opacity: 0.6, depthWrite: false }),
       // Link reach, in world units. Two path generators connect when the gap
-      // between their centres is less than (a.numFloors + b.numFloors) CELLS -
-      // one cell per floor - so a generator's own half of that is numFloors
-      // cells. Drawn at exactly that, so two rings touching is precisely the
-      // moment the link forms.
-      (n) => n * city.cellUnit,
+      // between their centres is less than (a.numFloors + b.numFloors) * 2
+      // CELLS - two cells per floor - so a generator's own half of that is
+      // numFloors * 2 cells. Drawn at exactly that, so two rings touching is
+      // precisely the moment the link forms.
+      (n) => n * 2 * city.cellUnit,
       { thickness: 0.15, y: 0.06 }
+    )
+    // Shields draw a hard, solid line: a barrier is a thing with a definite
+    // edge you either crossed or didn't, and the soft screen-space glow this
+    // replaced said "area of influence", which is the wrong idea entirely.
+    this.shield = new RingLayer(
+      city.scene,
+      () => new MeshBasicNodeMaterial({
+        color: new Color(SHIELD_LINE),
+        transparent: true, opacity: 0.95, depthWrite: false,
+      }),
+      (n) => shieldRadiusCells(n) * city.cellUnit,
+      { thickness: 0.16, y: 0.05 }
     )
     this.range = new RingLayer(
       city.scene,
@@ -81,6 +96,22 @@ export class RangeVisuals {
   refresh() {
     this.updateZocCircles()
     this.updateTurretRanges()
+    this.updateShieldRings()
+  }
+
+  /** One solid ring per shield that still has charges; a spent one goes dark. */
+  updateShieldRings() {
+    const city = this.city
+    const seen = new Set()
+    for (const t of city.towers) {
+      if (!t.visible || !isShield(t) || t.numFloors < 1) continue
+      if (shieldCharges(t) <= 0) continue
+      seen.add(t)
+      t.box.getCenter(this._zc)
+      const m = this.shield.place(t, this._zc.x + city.gridOffsetX, this._zc.y + city.gridOffsetZ)
+      m.visible = true
+    }
+    this.shield.hideUnseen(seen)
   }
 
   /** One accent disc per path generator, sized to its zone of control. */

@@ -1,20 +1,33 @@
 import { Vector2, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../Mana.js'
+import { Buffs } from '../buffs.js'
 import {
-  isPathGenerator, isEnclosureGenerator, isGrey, towerArea, towerTopY,
+  isPathGenerator, claimsEnclosure, isGrey, towerArea, towerTopY,
 } from '../blockTypes.js'
 
 const GEN_INTERVAL = 2 // seconds between generator mana ticks
 const GREY_INTERVAL = 5 // seconds between passive grey-block mana ticks
 const PULSE_DECAY = 0.8 // seconds for a tower's flash to fade back to baseline
-const ENCLOSURE_RATE = 0.2 // mana per (enclosed cell x generator floor)
+// The enclosure floor gets its own, much faster envelope. Riding the tower's
+// 0.8s decay never worked once income became a stream: units can arrive every
+// MIN_SPAWN_GAP (0.07s) and each one resets the envelope to 1, so it never got
+// near baseline and the floor just sat bright. At 0.22s each arrival reads as a
+// distinct blink at ordinary rates, and only a very rich enclosure glows solid.
+const FLOOR_PULSE_DECAY = 0.22
+// Mana per (enclosed cell x generator floor) for the pink area generators.
+// Cut 20% from 0.2: their output scales with enclosed AREA, so it climbs much
+// faster than the blue path generators as a city grows.
+const ENCLOSURE_RATE = 0.16
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
 // Global generator-production scale. Raised from 0.2 (+30%) when grey walls
 // stopped generating: generators are now the only thing producing energy besides
 // the king's trickle, so they carry the income walls used to supply.
 const PROD_FACTOR = 0.26
-const KING_INCOME = 8 // baseline mana the king trickles every GREY_INTERVAL (safety net)
+// Slow bonus the king trickles every GREY_INTERVAL, separate from what it earns
+// by sealing an enclosure. Smaller than the old flat income now that the king
+// has a real earning mechanic - it's the floor you can recover from, not a wage.
+const KING_BONUS = 4
 // Income arrives one unit at a time rather than as a lump, so a generator's
 // output is audible as a RATE: 2 energy a tick trickles, 12 rattles.
 //
@@ -57,6 +70,7 @@ export class EnergySystem {
 
     // Scheduled flashes: {members, t, amt, sound, color, cx, cy, cz}
     this.pulseEvents = []
+    this.floorPulse = 0 // enclosure-floor flash envelope (own decay, see above)
     this.manaTimer = 0
     this.greyManaTimer = 0
 
@@ -80,10 +94,10 @@ export class EnergySystem {
     let mana = 0
     this.enclosureGens = []
     for (const t of this.city.towers) {
-      if (!t.visible || !isEnclosureGenerator(t)) continue
+      if (!t.visible || !claimsEnclosure(t)) continue
       const cells = t.enclosureRegionCells || 0
       if (cells <= 0 || t.numFloors < 1) { t.enclosureMana = 0; continue }
-      t.enclosureMana = Math.max(1, Math.round(cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR))
+      t.enclosureMana = Math.max(1, Math.round(cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR * Buffs.genRate))
       mana += t.enclosureMana
       this.enclosureGens.push(t)
     }
@@ -126,7 +140,7 @@ export class EnergySystem {
       for (let j = i + 1; j < plus.length; j++) {
         const a = plus[i], b = plus[j]
         if (a.colorIndex !== b.colorIndex) continue
-        const combinedReach = a.numFloors + b.numFloors // 1 cell of reach per floor
+        const combinedReach = (a.numFloors + b.numFloors) * 2 // 2 cells of reach per floor
         if (combinedReach <= 0) continue
         a.box.getCenter(this._ca)
         b.box.getCenter(this._cb)
@@ -141,8 +155,8 @@ export class EnergySystem {
     let mana = 0
     const contrib = new Map()
     for (const [a, b, dist] of pairs) {
-      const pa = Math.max(1, Math.round(this.area(a) * dist * PATH_RATE * PROD_FACTOR))
-      const pb = Math.max(1, Math.round(this.area(b) * dist * PATH_RATE * PROD_FACTOR))
+      const pa = Math.max(1, Math.round(this.area(a) * dist * PATH_RATE * PROD_FACTOR * Buffs.genRate))
+      const pb = Math.max(1, Math.round(this.area(b) * dist * PATH_RATE * PROD_FACTOR * Buffs.genRate))
       mana += pa + pb
       contrib.set(a, (contrib.get(a) || 0) + pa)
       contrib.set(b, (contrib.get(b) || 0) + pb)
@@ -150,11 +164,32 @@ export class EnergySystem {
     this.pathGenMana = mana
     this.pathGenContribution = contrib
 
+    // Decorative trails: on top of the mana-bearing links above, every path
+    // generator also runs a line to any non-wall building inside its OWN reach
+    // (numFloors * 2 cells - the other end contributes nothing, unlike a
+    // gen-to-gen link). Purely cosmetic for now: these are appended after the
+    // mana loop, so they light up the city without paying anything.
+    const drawn = pairs.slice()
+    for (const a of plus) {
+      const reach = a.numFloors * 2
+      if (reach <= 0) continue
+      a.box.getCenter(this._ca)
+      for (const b of city.towers) {
+        if (b === a || !b.visible || b.numFloors < 1) continue
+        if (isGrey(b)) continue // walls are the thing trails route AROUND
+        // Same-colour gen pairs are already linked above; don't double-draw.
+        if (isPathGenerator(b) && b.colorIndex === a.colorIndex) continue
+        b.box.getCenter(this._cb)
+        const dist = this._ca.distanceTo(this._cb) / cell
+        if (dist < reach) drawn.push([a, b, dist])
+      }
+    }
+
     // Only rebuild trail meshes when the actual connection set changes (disposing
     // WebGPU node materials leaks, so we avoid rebuilding every tower change).
     const pairKeys = new Set()
     const keyList = []
-    for (const [a, b] of pairs) {
+    for (const [a, b] of drawn) {
       const key = a.id < b.id ? `${a.id}-${b.id}` : `${b.id}-${a.id}`
       pairKeys.add(key)
       keyList.push(key)
@@ -164,7 +199,7 @@ export class EnergySystem {
     if (sig === this._connectorSig) return
     this._connectorSig = sig
 
-    city.trails.setConnectors(pairs)
+    city.trails.setConnectors(drawn)
 
     let newConnection = false
     for (const key of pairKeys) {
@@ -231,7 +266,7 @@ export class EnergySystem {
     const genMana = this.pathGenMana + this.enclosureGenMana
     // Cache live income/sec (gens + grey trickle + king) for price scaling.
     this.incomePerSecValue = genMana / GEN_INTERVAL
-      + (city.king && city.king.visible ? KING_INCOME : 0) / GREY_INTERVAL
+      + (city.king && city.king.visible ? KING_BONUS : 0) / GREY_INTERVAL
     if (genMana > 0) {
       this.manaTimer += dt
       while (this.manaTimer >= GEN_INTERVAL) {
@@ -253,6 +288,8 @@ export class EnergySystem {
         for (const m of e.members) {
           if (!m.visible) continue
           m.pulseEnv = 1
+          // Anything that claims an enclosure also flashes its floor.
+          if (claimsEnclosure(m)) this.floorPulse = 1
         }
         // The energy lands at the moment its caption pops, not up front, so the
         // bar climbs in step with the bleeps.
@@ -271,12 +308,12 @@ export class EnergySystem {
     this.greyManaTimer += dt
     while (this.greyManaTimer >= GREY_INTERVAL) {
       this.greyManaTimer -= GREY_INTERVAL
-      // The king itself trickles a baseline income, so you can always recover even
-      // with no generators standing. Emitted one unit at a time like a generator
-      // (spread over its own 5s tick, not the 2s generator one) so it bleeps and
-      // flies to the meter the same way rather than landing as a silent lump.
+      // The king earns from its enclosure like any hole block (see
+      // updateEnclosureGenerators); this is a slow bonus trickle ON TOP, so an
+      // unsealed king still brings in enough to rebuild from. Emitted one unit
+      // at a time over its own 5s tick rather than as a silent lump.
       if (city.king && city.king.visible) {
-        this.scheduleIncome(city.king, KING_INCOME, GREY_INTERVAL)
+        this.scheduleIncome(city.king, KING_BONUS, GREY_INTERVAL)
       }
     }
 
@@ -284,17 +321,25 @@ export class EnergySystem {
     for (const tower of this.connectedTowers) this._pulseTower(tower, dt)
     for (const tower of this.enclosureGens) this._pulseTower(tower, dt)
 
-    // Pulse the enclosure floor with its generators' flash (strongest one wins).
+    // Pulse the enclosure floor with its claimant's flash (strongest wins). The
+    // king is in enclosureGens now, so its enclosure lights up on every unit it
+    // earns too. Swings much wider than before - each +1 arrival should visibly
+    // flash the sealed area, not just nudge it.
+    this.floorPulse = Math.max(0, this.floorPulse - dt / FLOOR_PULSE_DECAY)
     if (city.enclosureOpacity) {
-      let encPulse = 0
-      for (const t of this.enclosureGens) encPulse = Math.max(encPulse, t.pulseEnv || 0)
-      city.enclosureOpacity.value = 0.2 + encPulse * 0.3
+      const p = this.floorPulse
+      city.enclosureOpacity.value = 0.18 + p * 0.16
+      if (city.enclosureBright) city.enclosureBright.value = 1 + p * 0.25
     }
   }
 
   _pulseTower(tower, dt) {
-    if (!tower.litColor) return
+    // Decay ALWAYS, even with no lit colour to tint. This used to bail out
+    // first, which meant the king - whose litColor is null - had its pulseEnv
+    // set to 1 on its first arrival and never brought back down, pinning
+    // anything reading the envelope (the enclosure floor) permanently on.
     tower.pulseEnv = Math.max(0, (tower.pulseEnv || 0) - dt / PULSE_DECAY)
+    if (!tower.litColor) return
     const brightness = 0.7 + tower.pulseEnv * 0.7 // 0.7..1.4
     this._pulseColor.copy(tower.litColor).multiplyScalar(brightness)
     this.city.setTowerColor(tower, this._pulseColor)

@@ -1,6 +1,7 @@
 import { Vector2, Vector3, Box3, Mesh, RingGeometry, MeshBasicNodeMaterial } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../palette.js'
+import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TopType, isTurret, isGrey, isGenerator, towerArea, towerTopY, GEN_LEVEL_BUDGET } from '../blockTypes.js'
 
@@ -144,7 +145,9 @@ export class TowerInteraction {
     if (!city.mana) return true
     // Walls (grey) cost 1/cell; generators + turrets cost 2/cell (same rule as
     // placing a tile from the palette).
-    const cost = (isGrey(tower) ? 1 : 2) * towerArea(tower, city.cellUnit, city.towerSize)
+    const cost = Math.max(1, Math.round(
+      (isGrey(tower) ? 1 : 2) * towerArea(tower, city.cellUnit, city.towerSize) * Buffs.buildCost
+    ))
     if (!city.freeClicks && !city.mana.spend(cost)) {
       Sounds.play('no-money', 1.0, 0.06, 0.55) // can't afford this build
       return false

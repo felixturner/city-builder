@@ -1,5 +1,6 @@
 import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR, AMMO_COLOR } from './palette.js'
+import { Buffs } from './buffs.js'
 
 // Set false to remove the energy cap (energy is balanced by spend, not a ceiling).
 const CAP_ENABLED = true
@@ -97,12 +98,13 @@ export class Mana {
   }
 
   render() {
+    const ammoCap = this.ammoMax + Buffs.ammoMax
     this.energyEl.textContent = `energy: ${Math.floor(this.current)} /${this.max}`
-    this.ammoEl.textContent = `ammo:   ${Math.floor(this.ammo)} /${this.ammoMax}`
+    this.ammoEl.textContent = `ammo:   ${Math.floor(this.ammo)} /${ammoCap}`
     this.scoreEl.textContent = `score:  ${Math.floor(this.elapsed)}`
     const pct = (v, m) => `${Math.max(0, Math.min(100, (v / m) * 100))}%`
     this.energyFill.style.width = pct(this.current, this.max)
-    this.ammoFill.style.width = pct(this.ammo, this.ammoMax)
+    this.ammoFill.style.width = pct(this.ammo, ammoCap)
   }
 
   /** Advance the survival-time score. Called each frame while the game runs. */
@@ -119,7 +121,7 @@ export class Mana {
   /** Update grey-block-derived stats: population sets the energy cap. */
   setStats(population) {
     this.population = population
-    this.max = this.baseMax + population
+    this.max = this.baseMax + population + Buffs.energyMax
     if (CAP_ENABLED && this.current > this.max) this.current = this.max
     this.render()
   }
@@ -165,7 +167,7 @@ export class Mana {
 
   /** Collect an ammo box. */
   addAmmo(amount = 5) {
-    this.ammo = Math.min(this.ammoMax, this.ammo + amount)
+    this.ammo = Math.min(this.ammoMax + Buffs.ammoMax, this.ammo + amount)
     this.render()
   }
 }

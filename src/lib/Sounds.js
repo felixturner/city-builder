@@ -67,9 +67,9 @@ export const BOSS_HORN_PREROLL = 2.5
  */
 const BEDS_SRC = {
   'bed-calm': { base: 0.30 }, // 126.8s ambient piece - long enough that the loop rarely comes round
-  'bed-fight1': { base: 0.32 },
-  'bed-fight2': { base: 0.34 },
-  'bed-boss': { base: 0.36 },
+  'bed-fight1': { base: 0.20 },
+  'bed-fight2': { base: 0.22 },
+  'bed-boss': { base: 0.23 },
 }
 
 /**
@@ -78,6 +78,9 @@ const BEDS_SRC = {
  * forever. Boss rounds always get their own.
  */
 const BED_MODES = {
+  // No bed at all - used for the beat of silence after a round is cleared, so
+  // the win lands in the quiet instead of straight into the next track.
+  quiet: [],
   build: ['bed-calm'],
   fight: ['bed-fight1', 'bed-fight2'],
   boss: ['bed-boss'],
@@ -96,9 +99,9 @@ const RISERS = {
   // `long` splits them by how much runway they need. The short one fits inside
   // the tail of a normal wave's ticker; the two Titans need ~11s, so they're
   // reserved for boss waves where there's room for a build that size.
-  riser1: { peak: 5.38, volume: 0.9, long: false },
-  riser2: { peak: 10.80, volume: 0.4, long: true },
-  riser3: { peak: 10.60, volume: 0.4, long: true },
+  riser1: { peak: 5.38, volume: 0.63, long: false },
+  riser2: { peak: 10.80, volume: 0.28, long: true },
+  riser3: { peak: 10.60, volume: 0.28, long: true },
 }
 
 /** Longest pre-roll any riser needs - arm the pick at least this far out. */
@@ -133,13 +136,13 @@ const VOICES = {
 
 const SIMPLE = [
   'pop', 'tick', 'roll', 'debris', 'good', 'intro', 'incorrect', 'error', 'pluck',
-  'energy', 'energy-2', 'power-down', 'spawn', 'step1', 'step2', 'attack', 'burn',
+  'energy', 'energy-2', 'power-down', 'spawn', 'step1', 'step2', 'burn',
   'break', 'break2', 'hit', 'dink', 'mortar-shoot', 'mortar-hit', 'warning1',
   'success',
   // new: long-form event sounds
   'horn-boss', 'countdown', 'tick-fast', 'tick-rapid', 'count',
   'gen-expire', 'gen-online', 'sting', 'round-start', 'round-end',
-  'creep-warn', 'flyer-warn', 'snap', 'no-money', 'game-over', 'king-hit',
+  'creep-warn', 'flyer-warn', 'snap', 'no-money', 'game-over', 'king-hit', 'level-complete', 'card-reveal',
   // short alert blips, addressed individually so each threat type is learnable
   'alert1', 'alert2', 'alert3',
 ]
@@ -158,6 +161,10 @@ const GROUPS = {
   shoot: ['shoot1', 'shoot2', 'shoot3'],
   // Wave horns: three distinct calls so consecutive waves don't sound identical.
   horn: ['horn1', 'horn2', 'horn3'],
+  // Every blow landed on something, from either side. attack2/attack3 were
+  // already on disk and never registered; all three are the same length and
+  // within 3dB of each other, so they interchange cleanly.
+  attack: ['attack', 'attack2', 'attack3'],
   // Generator "about to expire": low + dull, 0.86s-2.35s.
   'gen-warn': ['gen-warn1', 'gen-warn2', 'gen-warn3'],
 }

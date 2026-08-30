@@ -72,12 +72,11 @@ export class PostFX {
   _buildMaskScene() {
     this.maskScene = new Scene()
     this.maskScene.background = new Color(0x000000)
-    this.maskGeo = new CircleGeometry(1, 48) // unit disc, scaled per turret
-    this.maskMat = new MeshBasicNodeMaterial({
-      color: 0xffffff,
-      depthTest: false,
-      depthWrite: false,
+    this.maskGeo = new CircleGeometry(1, 48) // unit disc, scaled per source
+    const chan = (hex) => new MeshBasicNodeMaterial({
+      color: hex, depthTest: false, depthWrite: false,
     })
+    this.maskMat = chan(0xffffff) // turret coverage mask
     this.maskMeshes = []
     this._growMaskPool(48)
 
@@ -181,14 +180,14 @@ export class PostFX {
     // gradient just INSIDE the union's outer edge, peaking at the edge and
     // fading inward. Added additively as a soft light-blue tint.
     const maskTex = texture(this.maskTarget.texture)
-    const hardMask = maskTex.r // ~1 inside the union, 0 outside
-    const softMask = gaussianBlur(maskTex, this.coverageBlur, 6).r
+    // Blur the union-of-discs mask; the edge gradient becomes the glow.
+    const blurred = gaussianBlur(maskTex, this.coverageBlur, 6)
     // pow > 1 makes the gradient drop to zero faster, hugging the edge.
-    const innerEdge = clamp(hardMask.sub(softMask), 0, 1).pow(2.0)
-    const glowAlpha = clamp(
-      innerEdge.mul(this.coverageStrength), 0, this.coverageOpacity
+    const edgeGlow = (hard, soft) => clamp(
+      clamp(hard.sub(soft), 0, 1).pow(2.0).mul(this.coverageStrength),
+      0, this.coverageOpacity
     ).mul(this.coverageEnabled)
-    const withCoverage = withVignette.add(this.coverageColor.mul(glowAlpha))
+    const withCoverage = withVignette.add(this.coverageColor.mul(edgeGlow(maskTex.r, blurred.r)))
 
     // Fade to black pass (final effect in chain)
     const fadeColor = vec3(0, 0, 0)

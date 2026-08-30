@@ -32,7 +32,8 @@ import { TowerInteraction } from './systems/TowerInteraction.js'
 import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS } from './palette.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, genColorIndex, GEN_LEVEL_BUDGET, KING_HEALTH } from './blockTypes.js'
+import { Buffs } from './buffs.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, tileColorIndex, shieldRadiusCells, GEN_LEVEL_BUDGET, KING_HEALTH } from './blockTypes.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
 // A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
@@ -359,7 +360,7 @@ export class City {
     }
     const cells = []
     for (let j = 0; j < spec.s; j++) for (let i = 0; i < spec.s; i++) cells.push([i, j])
-    const colorIndex = genColorIndex(spec.typeTop) ?? 0
+    const colorIndex = tileColorIndex(spec.typeTop)
     return { cells, cost: cells.length * 2, opts: { typeTop: spec.typeTop, colorIndex, topColorIndex } }
   }
 
@@ -388,6 +389,8 @@ export class City {
     const turrets = [TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
     for (const typeTop of gens) add(7, { s: 1, typeTop })
     for (const typeTop of turrets) add(3, { s: 1, typeTop })
+    add(4, { s: 1, typeTop: TopType.BARRACKS })
+    add(3, { s: 1, typeTop: TopType.SHIELD })
     for (let i = bag.length - 1; i > 0; i--) {
       const j = MathUtils.randInt(0, i)
       ;[bag[i], bag[j]] = [bag[j], bag[i]]
@@ -492,7 +495,7 @@ export class City {
       typeTop: TopType.HOLE, colorIndex: kingColor, topColorIndex: kingColor, king: true,
     }, true)
     if (!t) return
-    t.numFloors = KING_HEALTH
+    t.numFloors = this.kingMaxFloors || KING_HEALTH
     this.updateTowerMatrices(t)
     this.king = t
     this.kingAlive = true
@@ -1050,6 +1053,7 @@ export class City {
     return this.rangeVisuals.getTurretCircles(out)
   }
 
+
   /** Set every instance color of a tower to a single color. */
   setTowerColor(tower, color) {
     const mesh = this.towerMesh
@@ -1102,7 +1106,8 @@ export class City {
     for (const t of this.towers) {
       if (!t.visible || !isGenerator(t)) continue
       if (t.genLife === undefined) {
-        t.genLife = GEN_PULSES_PER_FLOOR; t.genLifeMax = GEN_PULSES_PER_FLOOR
+        t.genLife = GEN_PULSES_PER_FLOOR + Buffs.genLife
+        t.genLifeMax = t.genLife
         t.genWarned = false; t.genOnline = false
       }
       // genLife counts down one tick per energy spawn (EnergySystem) and measures
@@ -1110,7 +1115,7 @@ export class City {
       // storeys and it's gone. The pie therefore reads as progress through the
       // floor you're burning, and the tower itself shows how many are left.
       if (t.genLife <= 0) {
-        t.genLife = GEN_PULSES_PER_FLOOR
+        t.genLife = GEN_PULSES_PER_FLOOR + Buffs.genLife
         // Out of floors: the gen only truly dies once its level budget is spent.
         // With budget left it collapses to a stub you can build back up, which
         // is what makes GEN_LEVEL_BUDGET a second life rather than a hard timer.
@@ -1364,7 +1369,11 @@ export class City {
       blending: AdditiveBlending,
       side: 2,
     })
-    mat.colorNode = attribute('color') // per-cell white / accent
+    // Per-cell white / accent, scaled by a pulse uniform so the sealed floor
+    // visibly brightens on every unit of energy its claimant earns. Opacity
+    // alone only made it denser; this makes it flash.
+    this.enclosureBright = uniform(1)
+    mat.colorNode = attribute('color').mul(this.enclosureBright)
     // Write a fake "up" normal to the MRT so GTAO treats the floor as flat and
     // barely darkens it (same trick the path trails use). Stays in the main scene
     // so it depth-sorts against blocks for free.
@@ -1407,7 +1416,7 @@ export class City {
     // 1. Wall mask = visible towers except enclosure generators.
     const wall = new Uint8Array(W * H)
     for (const t of this.towers) {
-      if (!t.visible || isEnclosureGenerator(t)) continue
+      if (!t.visible || claimsEnclosure(t)) continue
       this._markTowerCells(t, wall, W, H)
     }
 
@@ -1473,7 +1482,7 @@ export class City {
 
     // 4. Claim colour from enclosure generators inside a region; set mana size.
     for (const t of this.towers) {
-      if (!isEnclosureGenerator(t)) continue
+      if (!claimsEnclosure(t)) continue
       t.enclosureRegionCells = 0
       if (!t.visible) continue
       const rid = region[t.cellY * W + t.cellX]
@@ -1494,9 +1503,15 @@ export class City {
     // 5. Per-cell claim colour for placement checks (-1 = unclaimed / not enclosed).
     if (!this.cellClaim) this.cellClaim = new Int8Array(W * H)
     this.cellClaim.fill(-1)
+    // enclosedCells is a separate mask because cellClaim can't answer "is this
+    // sealed?": an enclosed region with no generator in it has colour -1, which
+    // is the same value as open ground. Loot boxes need sealed-or-not, not
+    // claimed-by-whom.
+    if (!this.enclosedCells) this.enclosedCells = new Uint8Array(W * H)
+    this.enclosedCells.fill(0)
     for (let i = 0; i < W * H; i++) {
       const rid = region[i]
-      if (rid >= 0) this.cellClaim[i] = regions[rid].color
+      if (rid >= 0) { this.cellClaim[i] = regions[rid].color; this.enclosedCells[i] = 1 }
     }
 
     // 6. Render: a glow quad per enclosed cell (white unclaimed, accent claimed).
