@@ -5,6 +5,10 @@ import { uniform } from 'three/tsl'
  * Helper class to handle pointer position and "down" with output exposed in vector3 and uniforms
  */
 export class Pointer {
+  /** Pixels a right-press may travel and still count as a click rather than a
+   *  camera pan. Generous, because a mouse always drifts a little on release. */
+  static RIGHT_CLICK_SLOP = 6
+
   constructor(renderer, camera, plane) {
     this.camera = camera
     this.renderer = renderer
@@ -48,6 +52,14 @@ export class Pointer {
   }
 
   onPointerDown(e) {
+    // Remember where a right-press started. Destroy now fires on RELEASE, and
+    // only if the pointer barely moved - see onPointerUp. contextmenu can't be
+    // the trigger any more: right-drag pans the camera, and on macOS
+    // contextmenu fires on right-DOWN, before there's any way to tell a click
+    // from the start of a pan.
+    if (e.pointerType === 'mouse' && e.button === 2) {
+      this._rightDown = { x: e.clientX, y: e.clientY }
+    }
     if (e.pointerType !== 'mouse' || e.button === 0) {
       this.pointerDown = true
       this.uPointerDown.value = 1
@@ -80,7 +92,23 @@ export class Pointer {
     this.updateScreenPointer(e)
   }
 
+  /** Fire the right-click action if a right-press ended near where it began. */
+  _maybeRightClick(e) {
+    const d = this._rightDown
+    this._rightDown = null
+    if (!d || !this.onRightClickCallback || !this.raycastTargets.length) return
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > Pointer.RIGHT_CLICK_SLOP) return
+    this.pointer.set(
+      (e.clientX / window.innerWidth) * 2 - 1,
+      -(e.clientY / window.innerHeight) * 2 + 1
+    )
+    this.rayCaster.setFromCamera(this.pointer, this.camera)
+    const intersection = this.pickIntersection()
+    if (intersection) this.onRightClickCallback(intersection)
+  }
+
   onPointerUp(e) {
+    if (e.pointerType === 'mouse' && e.button === 2) this._maybeRightClick(e)
     this.clientPointer.set(e.clientX, e.clientY)
     this.updateScreenPointer(e)
 
@@ -131,7 +159,11 @@ export class Pointer {
   onContextMenu(e) {
     e.preventDefault()
 
-    // Raycast for right-click detection
+    // Touch only. A long-press raises contextmenu with no mouse button
+    // involved, and that IS the touch destroy gesture - there's no right-drag
+    // to confuse it with. Mouse right-clicks are handled on pointerup instead.
+    if (!this.isTouch) return
+
     if (this.raycastTargets.length > 0 && this.onRightClickCallback) {
       this.pointer.set(
         (e.clientX / window.innerWidth) * 2 - 1,
