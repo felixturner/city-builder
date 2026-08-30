@@ -63,13 +63,11 @@ export class TilePalette {
   randomTile() {
     const spec = this.city.drawTileSpec()
     const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
-    if (spec.wall) {
-      // Walls come out of the tray already turned, so the hand doesn't read as
-      // four copies of the same orientation. The icon draws this rotation and
-      // _beginDrag picks it up, so what you see is what you place.
-      const states = TetrominoGeometry.states[spec.shapeName].length
-      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: MathUtils.randInt(0, states - 1) }
-    }
+    // Walls always come out at rot 0. Random tray rotation is disabled: it
+    // exposed a placement offset that survived fixing the ghost mesh and the
+    // icon, so the remaining mismatch is somewhere else in the rotation path.
+    // Re-enable by restoring the random rot here once that's found.
+    if (spec.wall) return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: 0 }
     // Generators use their fixed type colour; turrets keep a random accent.
     const colorIndex = tileColorIndex(spec.typeTop)
     return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex, topColorIndex }
