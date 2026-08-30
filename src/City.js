@@ -58,10 +58,16 @@ const rotateY = (v, angle) => {
 
 
 export class City {
-  // City size in lots (10x10 = 100 lots, 50x50 cells, 100x100 world units).
+  // City size in lots (9x9 = 81 lots, 45x45 cells, 90x90 world units).
+  //
+  // Odd on purpose: an odd count has a true middle lot, so the centre cell
+  // (floor(45/2) = 22) is both the centre of the board AND the middle of the
+  // centre 5x5 lot, which is where the king wants to be. An even count has
+  // neither.
+  //
   // Everything downstream derives from this - creep spawn ring, shadow bounds
   // and the zoom-out cap all read actualGridWidth rather than hardcoding it.
-  static CITY_SIZE_LOTS = 10
+  static CITY_SIZE_LOTS = 9
 
   constructor(scene, params) {
     this.scene = scene
