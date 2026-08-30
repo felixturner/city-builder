@@ -562,6 +562,11 @@ export class TilePalette {
 
   _stickyDown(e) {
     if (!this.drag || !this.drag.sticky) return
+    // This listener is on window in CAPTURE phase, so it runs before the
+    // buttons' own handlers. Without this the rotate button was never really
+    // clicked: the capture handler saw the press first and dropped the held
+    // tile at the button's screen position. Let UI presses through to the UI.
+    if (this._overUI(e.clientX, e.clientY)) return
     e.preventDefault()
     e.stopPropagation()
     if (e.button !== 0) { this._cancelDrag(); return } // right/middle click puts it back
@@ -665,6 +670,16 @@ export class TilePalette {
   }
 
   /** True if a screen point is over the palette bar (drag back here to cancel). */
+  /** True over any of our own chrome - the tray or the rotate button. A drag
+   *  must not resolve a board target under either. */
+  _overUI(x, y) {
+    if (this._overPalette(x, y)) return true
+    const b = this.rotateBtn
+    if (!b || b.style.display === 'none') return false
+    const r = b.getBoundingClientRect()
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+  }
+
   _overPalette(x, y) {
     if (x == null) return false
     const r = this.el.getBoundingClientRect()
@@ -678,7 +693,7 @@ export class TilePalette {
     const city = this.city
     // Over the palette: show the tile back in its slot + hide the ghost (release
     // here puts it back). Re-hide the slot icon when moving back onto the grid.
-    const overPal = this._overPalette(e.clientX, e.clientY)
+    const overPal = this._overUI(e.clientX, e.clientY)
     if (overPal !== this.drag.overPal) {
       this.drag.overPal = overPal
       if (overPal) this._drawTile(this.slots[slot])
@@ -730,7 +745,9 @@ export class TilePalette {
     }
     const restore = () => { finish(); this._drawTile(this.slots[slot]) }
     // Released over the palette: drop it back in its slot (no place, no error).
-    if (this._overPalette(this.drag.lastX, this.drag.lastY)) { restore(); return }
+    // Released over our own chrome (tray or rotate button): put it back rather
+    // than trying to resolve a board cell underneath it.
+    if (this._overUI(this.drag.lastX, this.drag.lastY)) { restore(); return }
     if (target && target.valid) {
       // Escalating placement cost (per-type standing count); validity already
       // confirmed it's affordable.
