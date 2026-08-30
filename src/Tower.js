@@ -18,10 +18,14 @@ export class Tower {
    * gradient (see shadeForFloor) is the ONLY thing varying, so shade reads
    * purely as height.
    *
+   * Light on purpose: this is the colour of a freshly placed, zero-level tile,
+   * and shadeForFloor only ever darkens from here - so the lighter the base, the
+   * more range the height gradient has to work with.
+   *
    * Everything picks an index via COLORS.length, so a one-entry list is safe.
    */
   static COLORS = [
-    new Color(0x707070),
+    new Color(0xbcbcbc),
   ]
 
   /**
@@ -58,7 +62,7 @@ export class Tower {
   }
 
   static ID = 0
-  static BASE_COLOR = new Color(0x707070) // matches COLORS[0] so rects and tetro walls read alike
+  static BASE_COLOR = new Color(0xbcbcbc) // matches COLORS[0] so rects and tetro walls read alike
 
   constructor() {
     this.id = Tower.ID++
