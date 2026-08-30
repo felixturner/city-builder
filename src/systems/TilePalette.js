@@ -356,14 +356,15 @@ export class TilePalette {
   }
 
   /**
-   * A 2D axes helper on the icon, to read against the 3D one on the ghost:
-   * red horizontal (canvas +x), green vertical (canvas up).
+   * A 2D axes helper on the icon, colour-matched to the 3D AxesHelper on the
+   * ghost so the two can be compared directly - same colour, same world axis.
    *
-   * The correspondence to check is that placeOrient maps icon-up (0,-1) to
-   * world (1,0) and icon-right (1,0) to world (0,1). So on screen the icon's
-   * GREEN should point the way the ghost's RED (+X) does, and the icon's RED
-   * the way the ghost's BLUE (+Z) does. If they don't, the camera compensation
-   * in placeOrient is the thing that's wrong, not the rotation logic.
+   * placeOrient maps icon-up (0,-1) to world +X and icon-right (1,0) to world
+   * +Z, so the icon draws RED up and BLUE right. Read it as: the icon's red
+   * should point the same way on screen as the ghost's red, and likewise blue.
+   * If they don't, the camera compensation in placeOrient is what's wrong, not
+   * the rotation logic. (Green is skipped - it's world +Y, straight up out of
+   * the ground, which a flat icon has nowhere to put.)
    */
   _drawAxes2D(ctx, cx, cy, size) {
     const r = size * 0.62
@@ -372,9 +373,9 @@ export class TilePalette {
     ctx.lineWidth = Math.max(1.5, size * 0.09)
     ctx.lineCap = 'round'
 
-    // Red: canvas +x (right)
-    ctx.strokeStyle = '#ff4444'
-    ctx.fillStyle = '#ff4444'
+    // Blue = world +Z, which placeOrient puts along canvas +x (right).
+    ctx.strokeStyle = '#4488ff'
+    ctx.fillStyle = '#4488ff'
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + r, cy); ctx.stroke()
     ctx.beginPath()
     ctx.moveTo(cx + r + head * 0.6, cy)
@@ -382,9 +383,9 @@ export class TilePalette {
     ctx.lineTo(cx + r - head * 0.2, cy + head * 0.55)
     ctx.closePath(); ctx.fill()
 
-    // Green: canvas up (-y)
-    ctx.strokeStyle = '#44dd44'
-    ctx.fillStyle = '#44dd44'
+    // Red = world +X, which placeOrient puts along canvas -y (up).
+    ctx.strokeStyle = '#ff4444'
+    ctx.fillStyle = '#ff4444'
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - r); ctx.stroke()
     ctx.beginPath()
     ctx.moveTo(cx, cy - r - head * 0.6)
