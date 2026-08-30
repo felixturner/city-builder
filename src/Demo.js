@@ -291,9 +291,14 @@ export class Demo {
     // size and the window aspect in updateZoomLimit().
     this.controls.minDistance = 40
     // Polar angle limits (vertical tilt) - prevent going below horizon
-    // Free vertical rotation again, stopping just short of the horizon so the
-    // camera can't drop under the board.
-    this.controls.maxPolarAngle = 1.53 // ~88 degrees
+    // Orbit on the up axis only: pitch is pinned to the opening framing, so
+    // dragging can swing you around the city but never tip it toward the
+    // horizon. Panning and zoom are unaffected.
+    const pol = Math.acos(
+      this.perspCamera.position.y / this.perspCamera.position.length()
+    )
+    this.controls.minPolarAngle = pol
+    this.controls.maxPolarAngle = pol
     // The orbit centre is the middle of the city and stays there for good.
     this.controls.target.set(0, 0, 0)
     this.controls.update()
@@ -329,7 +334,7 @@ export class Demo {
     if (!this.controls || !this.city) return
     const cam = this.perspCamera
     const halfDiag = Math.hypot(this.city.actualGridWidth, this.city.actualGridHeight) / 2
-    const pitch = this.controls.getPolarAngle ? this.controls.getPolarAngle() : 0
+    const pitch = this.controls.minPolarAngle || 0 // pitch is locked, so this is exact
     const needV = halfDiag * Math.cos(pitch) + this.city.maxFloors * this.city.floorHeight * 0.5
     const needH = halfDiag
     const tan = Math.tan((cam.fov * Math.PI / 180) / 2)
