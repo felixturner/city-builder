@@ -141,7 +141,7 @@ export class TowerInteraction {
       (isGrey(tower) ? 1 : 2) * towerArea(tower, city.cellUnit, city.towerSize) * Buffs.buildCost
     ))
     if (!city.freeClicks && !city.mana.spend(cost)) {
-      Sounds.play('no-money', 1.0, 0.06, 0.55) // can't afford this build
+      Sounds.play('no-money', 1.0, 0.06, 0.9) // can't afford this build
       return false
     }
     // Floating "-cost" caption rising off the tower (like a placement / gen pulse).
