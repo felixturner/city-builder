@@ -1,4 +1,5 @@
 import {
+  Line2NodeMaterial,
   MathUtils,
   Vector2,
   Vector3,
@@ -17,6 +18,8 @@ import {
   CircleGeometry,
   Group,
 } from 'three/webgpu'
+import { Line2 } from 'three/examples/jsm/lines/webgpu/Line2.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import gsap from 'gsap'
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, attribute, output } from 'three/tsl'
 import { Tower } from './Tower.js'
@@ -55,8 +58,10 @@ const rotateY = (v, angle) => {
 
 
 export class City {
-  // City size in lots (7x7 = 49 lots). Change this to resize the city.
-  static CITY_SIZE_LOTS = 7
+  // City size in lots (10x10 = 100 lots, 50x50 cells, 100x100 world units).
+  // Everything downstream derives from this - creep spawn ring, shadow bounds
+  // and the zoom-out cap all read actualGridWidth rather than hardcoding it.
+  static CITY_SIZE_LOTS = 10
 
   constructor(scene, params) {
     this.scene = scene
@@ -1297,7 +1302,51 @@ export class City {
   /**
    * Create debug grid helpers aligned with the city
    */
+  /**
+   * A 2px outline round the buildable area.
+   *
+   * Line2 rather than a LineLoop or a thin quad: WebGPU (like WebGL) ignores
+   * linewidth on ordinary lines, so a plain line is always 1px, and a
+   * world-space quad border would grow and shrink with zoom. Line2NodeMaterial
+   * with worldUnits:false measures the width in screen pixels, so the outline
+   * stays 2px whether you're zoomed all the way in or out.
+   */
+  createBoardOutline() {
+    const hw = this.actualGridWidth / 2, hh = this.actualGridHeight / 2
+    const y = 0.02
+    const geom = new LineGeometry()
+    geom.setPositions([
+      -hw, y, -hh,
+      hw, y, -hh,
+      hw, y, hh,
+      -hw, y, hh,
+      -hw, y, -hh, // closed
+    ])
+    const mat = new Line2NodeMaterial({
+      color: 0xffffff,
+      linewidth: 2, // screen pixels, because worldUnits is false
+      worldUnits: false,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+    })
+    // Line2 needs the viewport to convert pixel width into clip space.
+    mat.resolution = new Vector2(window.innerWidth, window.innerHeight)
+    const line = new Line2(geom, mat)
+    line.computeLineDistances()
+    line.renderOrder = 4
+    line.frustumCulled = false
+    this.scene.add(line)
+    this.boardOutline = line
+  }
+
+  /** Keep the outline's pixel width correct across resizes. */
+  onResize(w, h) {
+    if (this.boardOutline) this.boardOutline.material.resolution.set(w, h)
+  }
+
   createGrids() {
+    this.createBoardOutline()
     // Fine cell grid - centered at origin (same as lot grid). One line per buildable cell.
     const cellGrid = new GridHelper(this.actualGridWidth, this.actualGridWidth / this.cellUnit, 0x888888, 0x888888)
     cellGrid.material.transparent = true

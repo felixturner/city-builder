@@ -36,7 +36,7 @@ export class Lighting {
     scene.background = texture
     scene.environment = texture
 
-    const groundGeom = new PlaneGeometry(296, 296, 1, 1)
+    const groundGeom = new PlaneGeometry(420, 420, 1, 1)
     groundGeom.rotateX(-Math.PI * 0.5)
     const groundMat = new MeshStandardNodeMaterial({ color: 0x999999 })
     const groundMesh = new Mesh(groundGeom, groundMat)
@@ -44,9 +44,11 @@ export class Lighting {
     scene.add(groundMesh)
 
     // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)
+    // Wide enough for a 10-lot board (100x100, so -50..50) plus the creep
+    // spawn ring outside it; too tight and shadows clip at the edges.
     this.sceneBounds = new Box3(
-      new Vector3(-50, 0, -50),
-      new Vector3(55, 50, 55)
+      new Vector3(-70, 0, -70),
+      new Vector3(70, 50, 70)
     )
 
     // Directional light for key shadows/highlights (values set by applyParams)

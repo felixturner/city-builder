@@ -16,7 +16,7 @@ import { ACCENT_COLORS } from './palette.js'
  * it just asks whether its cell ended up sealed.
  */
 
-const COUNT = 6 // one per angular slice, so they can't all cluster on one side
+const COUNT = 8 // one per angular slice, so they can't all cluster on one side
 const SIZE = 1.5 // world units across
 const MIN_R = 0.30 // placement band, as a fraction of the grid half-extent...
 const MAX_R = 0.90 // ...keeping crates off the king and inside the buildable area

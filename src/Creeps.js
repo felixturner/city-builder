@@ -187,7 +187,9 @@ export class Creeps {
 
     this.stepDuration = 0.30 // seconds to move one cell
     this.hopHeight = 0.6
-    this.reach = 49 // ~half the map (7 lots * 14 / 2)
+    // Spawn ring, always outside the board: hardcoded to 49 for the old 7-lot
+    // city, which would now sit INSIDE a 10-lot one and drop creeps mid-city.
+    this.reach = city.actualGridWidth / 2 + 14
     // Half-extent of the buildable grid. Creeps spawn at `reach`, i.e. well
     // outside this, and only count as having arrived once they cross it.
     this.fieldHalf = city.actualGridWidth / 2

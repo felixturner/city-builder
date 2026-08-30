@@ -58,8 +58,14 @@ export class Demo {
   constructor(canvas) {
     this.canvas = canvas
     this.renderer = null
-    this.orthoCamera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 1000)
-    this.perspCamera = new PerspectiveCamera(30, 1, 0.1, 1000)
+    // near=0.1 against far=1000 spends nearly the whole depth buffer on the
+    // first few units in front of the camera, leaving almost no precision at
+    // the far plane - which is why the ground and the flat overlays on it
+    // (enclosure glow, rings, dot grid, all within 0.07 of y=0) z-fought when
+    // zoomed out. Depth precision scales with near/far, so lifting near by 50x
+    // is the fix. Safe: the camera never gets closer than minDistance 40.
+    this.orthoCamera = new OrthographicCamera(-1, 1, 1, -1, 5, 1000)
+    this.perspCamera = new PerspectiveCamera(30, 1, 5, 1000)
     this.camera = this.perspCamera
     this.controls = null
     this.postFX = null
@@ -315,6 +321,7 @@ export class Demo {
   }
 
   updatePerspFrustum() {
+    this.city?.onResize?.(window.innerWidth, window.innerHeight)
     this.perspCamera.aspect = window.innerWidth / window.innerHeight
     this.perspCamera.updateProjectionMatrix()
     this.updateZoomLimit()
