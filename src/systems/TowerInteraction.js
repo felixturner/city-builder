@@ -131,7 +131,9 @@ export class TowerInteraction {
   canBuild(tower) {
     const city = this.city
     if (tower.numFloors >= city.maxFloors) {
-      Sounds.play('error', 1.0, 0.2, 0.5) // already at max height
+      // Same cue as "can't afford it": both are "that click did nothing", and
+      // two different blips for the same non-event just read as inconsistency.
+      Sounds.play('no-money', 1.0, 0.06, 0.9) // already at max height
       return false
     }
     if (!city.mana) return true
