@@ -47,6 +47,9 @@ export class Demo {
   // How much slack past "the grid exactly fills the view" the zoom-out stops at.
   static ZOOM_OUT_MARGIN = 1.12
 
+  // Largest step the sim will take in one frame, in seconds.
+  static MAX_DT = 1 / 20
+
   // Seconds between a crate bursting and the upgrade cards flying out of it.
   static CARD_DELAY = 0.55
 
@@ -77,6 +80,7 @@ export class Demo {
     this.kingDead = false // king lost; game still running out the clock
     this.gameOverDelay = 0
     this.isGameOver = false // panel up, everything frozen
+    this.tabHidden = false // backgrounded: sim and audio suspended
     this.targetFPS = 60
     this.frameInterval = 1 / 60
     this.lastFrameTime = 0
@@ -113,6 +117,16 @@ export class Demo {
     this.renderer.shadowMap.type = PCFSoftShadowMap
 
     window.addEventListener('resize', this.onResize.bind(this))
+    // Background tab: freeze the game and silence everything. rAF already stops
+    // when hidden in most browsers, but not all - some just throttle it - so the
+    // step is gated explicitly rather than assumed.
+    document.addEventListener('visibilitychange', () => {
+      this.tabHidden = document.hidden
+      Sounds.setSuspended(this.tabHidden)
+      // Coming back, drop the delta that accumulated while away. Without this
+      // the first frame carries the whole absence as one dt and the sim jumps.
+      if (!this.tabHidden) this.clock.getDelta()
+    })
     // Press F to toggle the creep flow-field debug overlay.
     window.addEventListener('keydown', (e) => {
       if ((e.key === 'f' || e.key === 'F') && this.city) {
@@ -405,7 +419,9 @@ export class Demo {
 
     const { controls, clock, postFX } = this
 
-    const dt = clock.getDelta()
+    // Clamp: a stall (alt-tab, a breakpoint, a long GC) otherwise arrives as one
+    // enormous dt and the sim leaps a chunk of the game in a single step.
+    const dt = Math.min(clock.getDelta(), Demo.MAX_DT)
 
     controls.update(dt)
     this.lighting.updateShadowCamera(this.controls.target, this.camera, this.orthoCamera, this.perspCamera)
@@ -413,7 +429,7 @@ export class Demo {
     // Game systems freeze before Start, while paused, and once the game-over
     // panel is up. The king dying does NOT freeze anything on its own - the city
     // keeps running for GAME_OVER_DELAY seconds first (see kingDead below).
-    if (this.started && !this.paused && !this.isGameOver) {
+    if (this.started && !this.paused && !this.isGameOver && !this.tabHidden) {
       this.stepGame(dt)
     }
 

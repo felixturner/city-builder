@@ -237,6 +237,7 @@ class SoundsManager {
     this._bedMode = null // 'build' | 'fight' | 'boss'
     this._musicOn = true // 'Music' toggle in the GUI
     this._bedsHeld = false // game paused - beds hold their position
+    this._suspended = false // tab in the background - everything silent
     this._lastBed = null // last fight bed drawn (avoid immediate repeat)
     this._lastRiser = null
     const all = new Set([...SIMPLE, ...OPTIONAL])
@@ -437,7 +438,10 @@ class SoundsManager {
    * restarting the track.
    */
   _applyBedState() {
-    const silent = !this._musicOn || this._bedsHeld
+    // Three independent switches can silence the beds: the Music toggle, a game
+    // pause, and the tab being in the background. They all land here so none of
+    // them can un-silence what another one is holding.
+    const silent = !this._musicOn || this._bedsHeld || this._suspended
     for (const [name, bed] of Object.entries(this._beds)) {
       const sound = this.sounds[name]
       if (silent) {
@@ -471,6 +475,20 @@ class SoundsManager {
   }
 
   musicEnabled() { return this._musicOn }
+
+  /**
+   * Background the whole mixer when the tab loses focus.
+   *
+   * Two different tools, because they solve different halves: Howler.mute kills
+   * one-shots instantly (a fade is pointless when nobody's watching), while the
+   * beds are PAUSED rather than muted so they don't advance through minutes of
+   * track while you're away and come back somewhere else entirely.
+   */
+  setSuspended(on) {
+    this._suspended = !!on
+    Howler.mute(!!on)
+    this._applyBedState()
+  }
 
   /** Hold/release the beds for a game pause, keeping their playhead. */
   holdBeds(held) {
