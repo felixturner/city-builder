@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../Mana.js'
 import { Buffs } from '../buffs.js'
 import {
-  isPathGenerator, claimsEnclosure, isEnclosureGenerator, isGrey, towerArea, towerTopY,
+  isPathGenerator, claimsEnclosure, isGrey, towerArea, towerTopY,
 } from '../blockTypes.js'
 
 const GEN_INTERVAL = 2 // seconds between generator mana ticks
@@ -288,11 +288,10 @@ export class EnergySystem {
         for (const m of e.members) {
           if (!m.visible) continue
           m.pulseEnv = 1
-          // Only a real area generator flashes the floor. The king claims an
-          // enclosure the same way and earns from it, but it is not what the
-          // glow is reporting - with the king counted, every sealed king lit
-          // the floor permanently whether or not you'd put a generator in it.
-          if (isEnclosureGenerator(m)) this.floorPulse = 1
+          // Any claimant pulses, king included. Which CELLS light up is gated
+          // per-vertex by the 'claimed' attribute (see City.updateEnclosure),
+          // so unclaimed white floor stays still.
+          if (claimsEnclosure(m)) this.floorPulse = 1
         }
         // The energy lands at the moment its caption pops, not up front, so the
         // bar climbs in step with the bleeps.
@@ -331,8 +330,8 @@ export class EnergySystem {
     this.floorPulse = Math.max(0, this.floorPulse - dt / FLOOR_PULSE_DECAY)
     if (city.enclosureOpacity) {
       const p = this.floorPulse
-      city.enclosureOpacity.value = 0.18 + p * 0.16
-      if (city.enclosureBright) city.enclosureBright.value = 1 + p * 0.25
+      city.enclosureOpacity.value = p * 0.16
+      if (city.enclosureBright) city.enclosureBright.value = p * 0.25
     }
   }
 

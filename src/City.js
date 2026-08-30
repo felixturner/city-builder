@@ -43,6 +43,8 @@ import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, is
 // a 1-storey one, so building tall is an investment in uptime rather than just
 // output. It visibly shrinks as it burns down, and dies when the last floor goes.
 const GEN_PULSES_PER_FLOOR = 8
+// Resting opacity of the enclosure floor; the pulse adds on top of this.
+const ENCLOSURE_BASE_OPACITY = 0.18
 const MAX_GENS = 30 // hard cap on simultaneously placed generators
 
 // Rotate a vec3 around Y axis by angle (in radians)
@@ -1421,9 +1423,16 @@ export class City {
     this._encPos = this._encPosAttr.array // Float32BufferAttribute copies; write the real buffer
     this._encColAttr = new Float32BufferAttribute(new Float32Array(this.enclosureMaxVerts * 3), 3)
     this._encCol = this._encColAttr.array
+    // 1 where a claimant (area generator, or the king) holds the region, 0 for
+    // enclosed-but-unclaimed cells. The energy pulse is one uniform for the
+    // whole mesh, so without a per-vertex gate every sealed area flashed -
+    // including plain white ones with nothing generating in them.
+    this._encClaimAttr = new Float32BufferAttribute(new Float32Array(this.enclosureMaxVerts), 1)
+    this._encClaim = this._encClaimAttr.array
     geom.setAttribute('position', this._encPosAttr)
     geom.setAttribute('normal', new Float32BufferAttribute(normals, 3))
     geom.setAttribute('color', this._encColAttr)
+    geom.setAttribute('claimed', this._encClaimAttr)
     geom.setDrawRange(0, 0)
     this._encGeom = geom
     const mat = new MeshBasicNodeMaterial({
@@ -1436,15 +1445,16 @@ export class City {
     // Per-cell white / accent, scaled by a pulse uniform so the sealed floor
     // visibly brightens on every unit of energy its claimant earns. Opacity
     // alone only made it denser; this makes it flash.
-    this.enclosureBright = uniform(1)
-    mat.colorNode = attribute('color').mul(this.enclosureBright)
+    this.enclosureBright = uniform(0) // pulse AMOUNT, 0 = resting
+    const claimed = attribute('claimed')
+    mat.colorNode = attribute('color').mul(float(1).add(this.enclosureBright.mul(claimed)))
     // Write a fake "up" normal to the MRT so GTAO treats the floor as flat and
     // barely darkens it (same trick the path trails use). Stays in the main scene
     // so it depth-sorts against blocks for free.
     mat.mrtNode = mrt({ output: output, normal: vec3(0, 1, 0) })
     // Opacity driven by a uniform so the floor can pulse with its generator.
-    this.enclosureOpacity = uniform(0.2)
-    mat.opacityNode = this.enclosureOpacity
+    this.enclosureOpacity = uniform(0) // pulse AMOUNT on top of the base opacity
+    mat.opacityNode = float(ENCLOSURE_BASE_OPACITY).add(this.enclosureOpacity.mul(claimed))
     this.enclosureMesh = new Mesh(geom, mat)
     this.enclosureMesh.frustumCulled = false
     this.enclosureMesh.renderOrder = 3 // over the ground, under the drag ghost (5)
@@ -1589,12 +1599,14 @@ export class City {
         let cr = 1, cg = 1, cb = 1 // unclaimed = white
         const c = regions[rid].color
         if (c >= 0) { const ac = this.accentColors[c]; cr = ac.r; cg = ac.g; cb = ac.b }
+        const claimFlag = c >= 0 ? 1 : 0
         const x0 = x * cu + this.gridOffsetX, z0 = y * cu + this.gridOffsetZ
         const x1 = x0 + cu, z1 = z0 + cu
         const q = [x0, z0, x1, z0, x1, z1, x0, z0, x1, z1, x0, z1]
         for (let k = 0; k < 6; k++) {
           pos[v * 3] = q[k * 2]; pos[v * 3 + 1] = yp; pos[v * 3 + 2] = q[k * 2 + 1]
           col[v * 3] = cr; col[v * 3 + 1] = cg; col[v * 3 + 2] = cb
+          this._encClaim[v] = claimFlag
           v++
         }
         if (v + 6 > this.enclosureMaxVerts) break
@@ -1602,6 +1614,7 @@ export class City {
     }
     this._encPosAttr.needsUpdate = true
     this._encColAttr.needsUpdate = true
+    this._encClaimAttr.needsUpdate = true
     this._encGeom.setDrawRange(0, v)
     this.enclosureMesh.visible = v > 0
 
