@@ -143,7 +143,7 @@ export class Demo {
     this.city.interaction.pointer = this.pointerHandler
 
     // Energy/population HUD - grey blocks generate energy and raise its cap
-    this.mana = new Mana(100, 50) // cap 100, start on half so the opening build has a cost
+    this.mana = new Mana(100, 80) // cap 100, start near it so the opening build isn't cramped
     this.city.mana = this.mana
     // Income boxes flying from generators to the HUD meters. City needs the live
     // camera to project their launch point.

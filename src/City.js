@@ -399,15 +399,16 @@ export class City {
     // the tetromino walls - which made footprint a second, inconsistent axis of
     // variation on top of height.
     //
-    // Counts keep the old mix: 14 generator tiles to 9 turret tiles, and 23
-    // non-wall tiles overall, the same as when the big ones were in the bag. Drop
-    // those numbers and walls would go from ~68% of draws to ~77%.
+    // Every non-wall count is one lower than it was, and shields are halved on
+    // top of that (2 -> 1), making them the rarest tile in the bag. Walls are
+    // untouched at 7 per shape, so trimming the others also lifts the wall share
+    // of a draw from ~68% to ~74%.
     const gens = [TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
     const turrets = [TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
-    for (const typeTop of gens) add(7, { s: 1, typeTop })
-    for (const typeTop of turrets) add(3, { s: 1, typeTop })
-    add(4, { s: 1, typeTop: TopType.BARRACKS })
-    add(3, { s: 1, typeTop: TopType.SHIELD })
+    for (const typeTop of gens) add(6, { s: 1, typeTop })
+    for (const typeTop of turrets) add(2, { s: 1, typeTop })
+    add(3, { s: 1, typeTop: TopType.BARRACKS })
+    add(1, { s: 1, typeTop: TopType.SHIELD })
     for (let i = bag.length - 1; i > 0; i--) {
       const j = MathUtils.randInt(0, i)
       ;[bag[i], bag[j]] = [bag[j], bag[i]]
