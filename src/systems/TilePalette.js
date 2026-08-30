@@ -8,7 +8,7 @@ import { Tower } from '../Tower.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex, BARRACKS_COLOR } from '../blockTypes.js'
 
 const SLOTS = 4
-const REFILL_TIME = 1.9 // seconds for a used/discarded palette slot to refill
+const REFILL_TIME = 1.33 // seconds for a used/discarded palette slot to refill
 const ICON = 72 // palette icon canvas size (px)
 const CELL = 20 // px per footprint cell (rects); tetrominoes shrink to fit
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
@@ -259,7 +259,7 @@ export class TilePalette {
    *  refill-ring timer, same as discarding them all. */
   _rerollAll() {
     if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
-      Sounds.play('error', 1.0, 0.2, 0.5)
+      Sounds.play('no-money', 1.0, 0.06, 0.9)
       return
     }
     Sounds.play('roll', 1.0, 0.15)
@@ -567,7 +567,7 @@ export class TilePalette {
   _discard(i) {
     if (this.drag || !this.slots[i].tile) return
     if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
-      Sounds.play('error', 1.0, 0.2, 0.5)
+      Sounds.play('no-money', 1.0, 0.06, 0.9)
       return
     }
     this._consume(i)
@@ -583,8 +583,10 @@ export class TilePalette {
       clearTimeout(this.pending.lpTimer)
       const tile = this.slots[this.pending.i].tile
       if (tile && !this._affordable(tile)) {
-        // Too expensive to even pick up — blip and cancel the gesture.
-        Sounds.play('error', 1.0, 0.2, 0.5)
+        // Too expensive to even pick up. Same cue as any other "you can't
+        // afford that" - error is for a move that's wrong, not one you're
+        // merely too poor to make.
+        Sounds.play('no-money', 1.0, 0.06, 0.9)
         this.pending.done = true
         return
       }
