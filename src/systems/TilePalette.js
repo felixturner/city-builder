@@ -336,7 +336,10 @@ export class TilePalette {
   /** Grey tetromino: filled cells with per-cell outlines (rotation 0). */
   _drawTetromino(ctx, tile) {
     const states = TetrominoGeometry.states[tile.shapeName]
-    const cells = states[(tile.rot || 0) % states.length]
+    // placeOrient is what the geometry and the placement footprint both use, so
+    // the icon has to apply it too - drawing the raw state showed the shape 90
+    // degrees off from what actually lands on the board.
+    const cells = TetrominoGeometry.placeCells(states[(tile.rot || 0) % states.length])
     const [w, h] = this._bbox(cells)
     const c = Math.min(CELL, (ICON - 8) / Math.max(w, h))
     const ox = (ICON - w * c) / 2
@@ -626,7 +629,11 @@ export class TilePalette {
   _beginDrag(i) {
     const tile = this.slots[i].tile
     const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0.55, depthTest: false })
-    const ghost = new Mesh(this._ghostGeomFor(tile, 0), mat)
+    // The tile's own rotation, NOT 0. Walls now come out of the tray pre-turned,
+    // and hardcoding 0 here built the ghost mesh for one rotation while
+    // _pickTarget sized and placed the footprint for another - which is the
+    // half-cell offset between the ghost and where the tile actually landed.
+    const ghost = new Mesh(this._ghostGeomFor(tile, tile.rot || 0), mat)
     ghost.renderOrder = 5
     this.city.scene.add(ghost)
     // Hide the icon in its slot while it's being dragged.
