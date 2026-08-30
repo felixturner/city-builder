@@ -128,9 +128,12 @@ export class Creeps {
     this.elapsed = 0
     this.graceTime = 30 // first wave starts ~30s in (build-up grace period)
     this.spawnTimer = 0
-    this.startInterval = 2 // seconds between spawns right after grace
-    this.minInterval = 0.45 // fastest spawn cadence late game (~30% more than before)
-    this.rampDuration = 600 // seconds to ramp from start -> min (longer ramp)
+    // The whole difficulty ramp lives in these three numbers now that
+    // spawnBurst is gone. minInterval is well under the old 0.45 because it no
+    // longer gets multiplied by a burst of 3.
+    this.startInterval = 1.6 // seconds between spawns right after grace
+    this.minInterval = 0.22 // fastest spawn cadence late game
+    this.rampDuration = 420 // seconds to go from start -> min
 
     // Waves run on a fixed clock: spawn for waveActive secs, then the rest of
     // wavePeriod is the build phase. Creeps left alive past the spawn window
@@ -257,19 +260,21 @@ export class Creeps {
     }
   }
 
-  /** Current seconds-between-spawns, ramping down after the grace period. */
+  /**
+   * Current seconds-between-spawns. LINEAR from startInterval to minInterval
+   * across rampDuration, and the only thing that grows wave size.
+   *
+   * It used to ease in quadratically, which spends a quarter of the effect in
+   * the first half of the ramp - so the opening five waves each needed well
+   * under one turret to clear, and everything arrived at once near the end.
+   * Multiplied by a spawnBurst that STEPPED (x2 at 5min, x3 at 10min), that
+   * produced a flat stretch and then a cliff: wave 9 to wave 10 tripled.
+   * One continuous dial instead of two, one of them a step function.
+   */
   get spawnInterval() {
     const since = Math.max(0, this.elapsed - this.graceTime)
-    // Quadratic ease-in: stays slow early, ramps up gradually toward the min.
     const t = Math.min(1, since / this.rampDuration)
-    const k = t * t
-    return this.startInterval + (this.minInterval - this.startInterval) * k
-  }
-
-  /** How many creeps to spawn per tick - stays 1 for the first ~5 min, then
-   *  climbs slowly (2 @ 5min, 3 @ 10min) so late-game waves keep escalating. */
-  get spawnBurst() {
-    return Math.min(3, 1 + Math.floor(this.elapsed / 300))
+    return this.startInterval + (this.minInterval - this.startInterval) * t
   }
 
   snap(v) {
@@ -1025,7 +1030,7 @@ export class Creeps {
         this.spawnTimer += dt
         if (this.spawnTimer >= this.spawnInterval) {
           this.spawnTimer -= this.spawnInterval
-          for (let k = 0; k < this.spawnBurst; k++) this.spawn()
+          this.spawn()
         }
       } else {
         this.spawnTimer = 0
