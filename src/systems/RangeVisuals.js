@@ -1,9 +1,8 @@
 import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three/webgpu'
 import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges } from '../blockTypes.js'
 import { Buffs } from '../buffs.js'
+import { SHIELD_LINE } from '../palette.js'
 
-// Solid yellow, not the palette accent: this is a hazard line, not a building.
-const SHIELD_LINE = '#ffd23f'
 
 /**
  * A pool of flat ground rings (one per tower). Geometry is cached per radius

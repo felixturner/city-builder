@@ -13,9 +13,12 @@ import {
 import { Sounds, BOSS_HORN_PREROLL, MAX_RISER_PREROLL } from './lib/Sounds.js'
 import { AMMO_COLOR } from './Mana.js'
 import { isShield, shieldCharges, shieldRadiusCells } from './blockTypes.js'
+import { SHIELD_LINE } from './palette.js'
 
 // Damage a shield perimeter does to a creep crossing it.
 const SHIELD_DAMAGE = 1
+// Seconds a creep glows shield-yellow after a barrier burns it.
+const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
 
 /**
@@ -228,6 +231,15 @@ export class Creeps {
     this._p = new Vector2()
     this._sv = new Vector2()
     this._black = new Color(0x080808)
+    // One shared material for the burn flash. Creeps already share materials by
+    // TYPE, so tinting a creep's own material would light up every creep of that
+    // type at once; swapping the reference is per-creep and allocates nothing.
+    this.shieldFlashMat = new MeshStandardNodeMaterial({
+      color: new Color(SHIELD_LINE),
+      emissive: new Color(SHIELD_LINE).multiplyScalar(0.7),
+      roughness: 0.4,
+      metalness: 0,
+    })
   }
 
   /** Waves elapsed, 0 during the opening grace period. Drives the stat ramp. */
@@ -540,6 +552,7 @@ export class Creeps {
 
         t.shieldUsed = (t.shieldUsed || 0) + 1
         Sounds.play('alert3', 1.5, 0.08, 0.3)
+        this.burnFlash(cr)
         this.hit(cr, SHIELD_DAMAGE)
         if (shieldCharges(t) <= 0) {
           // Spent: the ring goes dark and the barrier stops burning.
@@ -831,6 +844,16 @@ export class Creeps {
    * away - the cube is a pink marker that pops and rises so you can see WHERE it
    * came from, not something to walk over and collect.
    */
+  /** Barrier burn: sparks off the creep and it glows shield-yellow briefly.
+   *  update() puts its own material back when the timer runs out. */
+  burnFlash(c) {
+    const p = c.mesh.position
+    this.city.debris?.spawn(p.x, p.y, p.z, 0.5, new Color(SHIELD_LINE), 8)
+    if (!c.flashMat) c.flashMat = c.mesh.material // remember what to restore
+    c.mesh.material = this.shieldFlashMat
+    c.flashT = SHIELD_FLASH_TIME
+  }
+
   rollAmmoDrop(creep) {
     if (Math.random() >= this.ammoDropChance) return
     const p = creep.mesh.position
@@ -1054,6 +1077,11 @@ export class Creeps {
     for (let i = this.creeps.length - 1; i >= 0; i--) {
       const c = this.creeps[i]
       if (c.typeDot) c.typeDot.visible = showTypeArrows
+      // Shield burn fading - hand the creep its own material back.
+      if (c.flashT > 0) {
+        c.flashT -= dt
+        if (c.flashT <= 0 && c.flashMat) { c.mesh.material = c.flashMat; c.flashMat = null }
+      }
       if (c.giant) c.mesh.rotation.y += dt * 0.18 // very slow, ominous spin
 
       if (kingHere) {

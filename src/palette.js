@@ -39,3 +39,8 @@ export const BLUE = ACCENTS[2]
 /** Resource colours, drawn from the same three. */
 export const ENERGY_COLOR = LIME // build currency
 export const AMMO_COLOR = PINK // turret ammunition
+
+/** Shield yellow - the barrier ring, and the flash a creep takes crossing it.
+ *  Not one of the three accents: a shield line is a hazard marker, not a
+ *  building, and the burn should read as the same thing that drew the line. */
+export const SHIELD_LINE = '#ffd23f'
