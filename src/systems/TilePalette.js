@@ -1,4 +1,4 @@
-import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color, MathUtils } from 'three/webgpu'
+import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color, MathUtils, BufferGeometry, Float32BufferAttribute } from 'three/webgpu'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
@@ -63,11 +63,13 @@ export class TilePalette {
   randomTile() {
     const spec = this.city.drawTileSpec()
     const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
-    // Walls always come out at rot 0. Random tray rotation is disabled: it
-    // exposed a placement offset that survived fixing the ghost mesh and the
-    // icon, so the remaining mismatch is somewhere else in the rotation path.
-    // Re-enable by restoring the random rot here once that's found.
-    if (spec.wall) return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: 0 }
+    if (spec.wall) {
+      // Random orientation per tile, so the hand isn't four copies of the same
+      // shape. The offset that made this look broken was the board's grid
+      // centring, not rotation - see City.initGrid.
+      const states = TetrominoGeometry.states[spec.shapeName].length
+      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: MathUtils.randInt(0, states - 1) }
+    }
     // Generators use their fixed type colour; turrets keep a random accent.
     const colorIndex = tileColorIndex(spec.typeTop)
     return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex, topColorIndex }
@@ -334,10 +336,11 @@ export class TilePalette {
   /** Grey tetromino: filled cells with per-cell outlines (rotation 0). */
   _drawTetromino(ctx, tile) {
     const states = TetrominoGeometry.states[tile.shapeName]
-    // placeOrient is what the geometry and the placement footprint both use, so
-    // the icon has to apply it too - drawing the raw state showed the shape 90
-    // degrees off from what actually lands on the board.
-    const cells = TetrominoGeometry.placeCells(states[(tile.rot || 0) % states.length])
+    // RAW state, deliberately not placeCells(). placeOrient's 90deg turn exists
+    // to cancel how the isometric camera maps world axes to the screen, so the
+    // board reads the same as this flat icon. Applying it here too double-counts
+    // it and the placed tile comes out a quarter turn off.
+    const cells = states[(tile.rot || 0) % states.length]
     const [w, h] = this._bbox(cells)
     const c = Math.min(CELL, (ICON - 8) / Math.max(w, h))
     const ox = (ICON - w * c) / 2
@@ -347,6 +350,29 @@ export class TilePalette {
     ctx.strokeStyle = 'rgba(0,0,0,0.28)'
     ctx.lineWidth = 1
     for (const [cx, cy] of cells) ctx.strokeRect(ox + cx * c + 0.5, oy + cy * c + 0.5, c - 1, c - 1)
+    // Orientation marker, on the centroid cell so it sits ON the shape.
+    const [ax, ay] = TetrominoGeometry.anchor(cells)
+    this._drawUpArrow(ctx, ox + (ax + 0.5) * c, oy + (ay + 0.5) * c, c)
+  }
+
+  /**
+   * Orientation marker: an arrow pointing UP in whichever space it's drawn. On
+   * the icon that's canvas-up; in 3D it's world +x, because placeOrient turns
+   * the board shape 90deg CCW relative to the icon, which maps icon-up (0,-1)
+   * onto (1,0). Same arrow, same meaning, both views.
+   */
+  _drawUpArrow(ctx, cx, cy, size) {
+    const r = size * 0.34
+    ctx.save()
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'
+    ctx.beginPath()
+    ctx.moveTo(cx, cy - r)
+    ctx.lineTo(cx + r * 0.62, cy + r * 0.42)
+    ctx.lineTo(cx, cy + r * 0.1)
+    ctx.lineTo(cx - r * 0.62, cy + r * 0.42)
+    ctx.closePath()
+    ctx.fill()
+    ctx.restore()
   }
 
   /**
@@ -597,6 +623,12 @@ export class TilePalette {
     const { slot, ghost } = this.drag
     this._endSticky()
     this.city.scene.remove(ghost)
+    if (this.dragArrow) {
+      this.city.scene.remove(this.dragArrow)
+      this.dragArrow.geometry.dispose()
+      this.dragArrow.material.dispose()
+      this.dragArrow = null
+    }
     if (this.demo.controls) this.demo.controls.enabled = true
     this.slots[slot].el.style.cursor = 'grab'
     this._drawTile(this.slots[slot])
@@ -624,6 +656,31 @@ export class TilePalette {
     this.drag.ghost = ghost
   }
 
+  /**
+   * The 3D twin of the icon's arrow: a flat triangle over the ghost pointing
+   * world +x, which is where placeOrient sends icon-up. Kept as its own mesh
+   * rather than a child of the ghost, because the ghost gets non-uniform scale
+   * (0.3 in Y for walls, footprint size for rects) that would squash it.
+   */
+  _makeGhostArrow() {
+    const cu = this.city.cellUnit
+    const g = new BufferGeometry()
+    const t = cu * 0.42
+    // Points along +x, lying flat in the XZ plane.
+    g.setAttribute('position', new Float32BufferAttribute([
+      t, 0, 0,
+      -t * 0.55, 0, t * 0.6,
+      -t * 0.55, 0, -t * 0.6,
+    ], 3))
+    g.computeVertexNormals()
+    const m = new MeshBasicNodeMaterial({
+      color: 0x101014, transparent: true, opacity: 0.75, depthTest: false,
+    })
+    const mesh = new Mesh(g, m)
+    mesh.renderOrder = 6 // above the ghost
+    return mesh
+  }
+
   _beginDrag(i) {
     const tile = this.slots[i].tile
     const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0.55, depthTest: false })
@@ -634,6 +691,9 @@ export class TilePalette {
     const ghost = new Mesh(this._ghostGeomFor(tile, tile.rot || 0), mat)
     ghost.renderOrder = 5
     this.city.scene.add(ghost)
+    const arrow = this._makeGhostArrow()
+    this.city.scene.add(arrow)
+    this.dragArrow = arrow
     // Hide the icon in its slot while it's being dragged.
     this.slots[i].canvas.getContext('2d').clearRect(0, 0, ICON, ICON)
     this.slots[i].el.style.cursor = 'grabbing'
@@ -658,8 +718,12 @@ export class TilePalette {
     const tile = this.drag.tile
     const cells = this._cells(tile, this.drag.rot)
     const [w, h] = this._bbox(cells)
-    const gx = c.gx - Math.floor(w / 2)
-    const gy = c.gy - Math.floor(h / 2)
+    // Anchor the SHAPE's centroid under the cursor, not the bounding box's
+    // centre. For a T the bbox centre isn't even on the piece, so rotating
+    // about it threw the tile sideways; about the centroid it turns in place.
+    const [ax, ay] = TetrominoGeometry.anchor(cells)
+    const gx = c.gx - ax
+    const gy = c.gy - ay
     // Coloured generators are subject to the enclosure colour-claim rule.
     const claimColor = !tile.wall && isGenerator(tile) ? tile.colorIndex : -1
     let valid = city.fits(gx, gy, cells, claimColor)
@@ -720,10 +784,15 @@ export class TilePalette {
       if (overPal) this._drawTile(this.slots[slot])
       else this._clearCanvas(this.slots[slot])
     }
-    if (overPal) { ghost.visible = false; this.drag.target = null; return }
+    if (overPal) { ghost.visible = false; if (this.dragArrow) this.dragArrow.visible = false; this.drag.target = null; return }
     const t = this._pickTarget(e.clientX, e.clientY)
     this.drag.target = t
-    if (!t) { ghost.visible = false; this.drag.lastCell = null; return }
+    if (!t) {
+      ghost.visible = false
+      if (this.dragArrow) this.dragArrow.visible = false
+      this.drag.lastCell = null
+      return
+    }
     ghost.visible = true
     // Tick as the ghost snaps to a new cell, so the grid feels magnetic rather
     // than the tile just sliding. Pitched up when the cell is a legal drop.
@@ -750,6 +819,16 @@ export class TilePalette {
       )
       ghost.scale.set(t.w * cu, 1, t.h * cu)
     }
+    // Arrow rides on the shape's centroid cell, matching the icon.
+    if (this.dragArrow) {
+      const [ax, ay] = TetrominoGeometry.anchor(t.cells)
+      this.dragArrow.visible = true
+      this.dragArrow.position.set(
+        (t.gx + ax + 0.5) * cu + city.gridOffsetX,
+        1.2,
+        (t.gy + ay + 0.5) * cu + city.gridOffsetZ
+      )
+    }
     if (t.valid) { mat.color.copy(this.drag.hi); mat.opacity = 0.92 }
     else { mat.color.copy(this.drag.base); mat.opacity = 0.5 }
   }
@@ -760,6 +839,12 @@ export class TilePalette {
     const finish = () => {
       this._endSticky()
       city.scene.remove(ghost)
+      if (this.dragArrow) {
+        city.scene.remove(this.dragArrow)
+        this.dragArrow.geometry.dispose()
+        this.dragArrow.material.dispose()
+        this.dragArrow = null
+      }
       if (this.demo.controls) this.demo.controls.enabled = true
       this.slots[slot].el.style.cursor = 'grab'
       this.drag = null

@@ -35,7 +35,10 @@ function rotationStates(base) {
     const n = normalize(cur)
     const k = n.map((c) => c.join(',')).sort().join(';')
     if (!seen.has(k)) { seen.add(k); states.push(n) }
-    cur = cur.map(([x, y]) => [y, -x]) // rotate 90deg CW
+    // [x,y] -> [-y,x]. On the icon's canvas axes (x right, y DOWN) this sends
+    // right to down, i.e. clockwise on screen. The old [y,-x] sent right to up,
+    // which read as anticlockwise however it's labelled.
+    cur = cur.map(([x, y]) => [-y, x])
   }
   return states
 }
@@ -51,6 +54,18 @@ export class TetrominoGeometry {
   static names = Object.keys(BASE) // ['I','S','Z','L','J','T']
   static states = {} // name -> [ cells[], ... ] per rotation (icon orientation)
   static roofHalf = 0.15
+
+  /**
+   * Centroid of a cell set, rounded to a cell. Tiles anchor here rather than at
+   * the bounding-box centre so a rotation pivots about the middle of the SHAPE:
+   * a T is 4 cells in a 3x2 box, and its bbox centre isn't on the piece at all,
+   * so rotating about it visibly threw the tile sideways.
+   */
+  static anchor(cells) {
+    let sx = 0, sy = 0
+    for (const [x, y] of cells) { sx += x; sy += y }
+    return [Math.round(sx / cells.length), Math.round(sy / cells.length)]
+  }
 
   /** Placement/geometry cells for a rotation state (rotated 90deg vs the icon). */
   static placeCells(stateCells) {
