@@ -54,9 +54,9 @@ export const CARDS = [
     apply: () => { Buffs.genRate *= 1.25 },
   },
   {
-    id: 'gen-life', title: 'Deep Cells', color: YELLOW,
-    desc: 'Generator floors last 3 pulses longer.',
-    apply: () => { Buffs.genLife += 3 },
+    id: 'support-reach', title: 'Long Lines', color: BLUE,
+    desc: 'Support towers reach 2 cells further.',
+    apply: () => { Buffs.supportReach += 2 },
   },
   {
     id: 'slots', title: 'Wider Hand', color: BLUE,

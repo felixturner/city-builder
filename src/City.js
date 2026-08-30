@@ -36,13 +36,12 @@ import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS } from './palette.js'
 import { Buffs } from './buffs.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, tileColorIndex, shieldRadiusCells, GEN_LEVEL_BUDGET, KING_HEALTH } from './blockTypes.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, tileColorIndex, shieldRadiusCells, KING_HEALTH } from './blockTypes.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
 // A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
 // a 1-storey one, so building tall is an investment in uptime rather than just
 // output. It visibly shrinks as it burns down, and dies when the last floor goes.
-const GEN_PULSES_PER_FLOOR = 8
 // Resting opacity of the enclosure floor; the pulse adds on top of this.
 const ENCLOSURE_BASE_OPACITY = 0.18
 const MAX_GENS = 30 // hard cap on simultaneously placed generators
@@ -323,10 +322,6 @@ export class City {
 
   /** Free a placed tower's cells and return it to the pool (no debris/sound). */
   freePlacedTower(tower) {
-    tower.genLife = undefined // clear lifespan + pie so a reused pool tower starts fresh
-    tower.genWarned = false
-    tower.genOnline = false
-    tower.genLevelsAdded = 0
     this._removeGenPie(tower)
     for (const [dx, dy] of tower.cells) this.occupied[tower.cellY + dy][tower.cellX + dx] = false
     const lot = this.lots[tower.lotY][tower.lotX]
@@ -1088,7 +1083,6 @@ export class City {
     this.debris.update(dt)
     this.interaction.update(dt)
     this.energy.update(dt)
-    this.updateGenLifespans(dt)
   }
 
   /** Count currently-placed generators (for the MAX_GENS cap). */
@@ -1116,96 +1110,12 @@ export class City {
   }
 
   /**
-   * Generators have a limited lifespan: each ticks down a countdown shown as a
-   * little pie wheel (in its accent colour) on top of it, then expires and is
-   * removed. This keeps the energy economy from running away — gens must be
-   * continually replaced rather than accumulating forever.
+   * Generators used to burn down: a countdown pie on top, a floor lost every
+   * N energy pulses, and a lifetime cap on how many floors one would accept.
+   * All removed - a generator is an ordinary tower now: it stays up and can
+   * be built back to full height whenever you like. What gates its output
+   * instead is whether it's linked to a support tower.
    */
-  updateGenLifespans(dt) {
-    if (!this._genPies) this._genPies = new Map() // tower -> { mesh, step }
-    const seen = this._genPies
-    const cu = this.cellUnit
-    for (const t of this.towers) {
-      if (!t.visible || !isGenerator(t)) continue
-      if (t.genLife === undefined) {
-        t.genLife = GEN_PULSES_PER_FLOOR + Buffs.genLife
-        t.genLifeMax = t.genLife
-        t.genWarned = false; t.genOnline = false
-      }
-      // genLife counts down one tick per energy spawn (EnergySystem) and measures
-      // the CURRENT floor only. Spend it and the gen drops a storey; run out of
-      // storeys and it's gone. The pie therefore reads as progress through the
-      // floor you're burning, and the tower itself shows how many are left.
-      if (t.genLife <= 0) {
-        t.genLife = GEN_PULSES_PER_FLOOR + Buffs.genLife
-        // Out of floors: the gen only truly dies once its level budget is spent.
-        // With budget left it collapses to a stub you can build back up, which
-        // is what makes GEN_LEVEL_BUDGET a second life rather than a hard timer.
-        if (t.numFloors <= 1 && (t.genLevelsAdded || 0) >= GEN_LEVEL_BUDGET) {
-          this._removeGenPie(t); this.expireGen(t); continue
-        }
-        if (t.numFloors <= 0) { this._removeGenPie(t); continue }
-        // Burning down is the generator spending itself, not taking damage, so
-        // no debris: the block just goes. Debris here read as "something hit
-        // this", which is the wrong story for a gen running out of fuel.
-        t.numFloors -= 1
-        this.onTowerChanged(t)
-        Sounds.play('alert1', 1.0, 0.1, 0.4)
-        // Down to its last floor: this is the "replace me" moment.
-        if (t.numFloors === 1 && !t.genWarned && this.genIsProducing(t)) {
-          t.genWarned = true
-          Sounds.play('gen-warn', 1.0, 0.1, 0.45)
-        }
-      }
-      if (!this.genIsProducing(t)) {
-        const idle = seen.get(t)
-        if (idle) idle.mesh.visible = false
-        continue
-      }
-      // First time this gen actually produces: a short charge-up, so hooking a
-      // generator into a network has an audible "it's alive" moment to answer
-      // the power-down when it later dies.
-      if (!t.genOnline) {
-        t.genOnline = true
-        Sounds.play('gen-online', 1.0, 0.08, 0.4)
-      }
-
-      const frac = t.genLife / t.genLifeMax
-      let pie = seen.get(t)
-      if (pie) pie.mesh.visible = true
-      if (!pie) {
-        const mat = new MeshBasicNodeMaterial({ color: this.accentColors[t.colorIndex].clone(), depthWrite: false })
-        mat.mrtNode = mrt({ output: output, normal: vec3(0, 1, 0) }) // flat up-normal -> skip AO
-        const mesh = new Mesh(this._genPieGeo(frac), mat)
-        mesh.rotation.x = -Math.PI / 2 // lie flat, facing up
-        mesh.renderOrder = 6
-        this.scene.add(mesh)
-        pie = { mesh, step: -1 }
-        seen.set(t, pie)
-      }
-      // Re-tessellate the wedge only when the quantised fraction changes (cheap).
-      const stepN = Math.round(frac * 32)
-      if (stepN !== pie.step) {
-        pie.step = stepN
-        pie.mesh.geometry.dispose()
-        pie.mesh.geometry = this._genPieGeo(frac)
-      }
-      // Small wedge tucked into the tower's bottom-right (+x/+z) top corner.
-      const c = t.box.getCenter(this._pieCenter || (this._pieCenter = new Vector2()))
-      const r = cu * 0.22 // pie radius
-      const hx = (t.box.max.x - t.box.min.x) / 2, hz = (t.box.max.y - t.box.min.y) / 2
-      pie.mesh.position.set(
-        c.x + this.gridOffsetX + (hx - r),
-        towerTopY(t, this.floorHeight) + 0.25,
-        c.y + this.gridOffsetZ + (hz - r)
-      )
-      pie.mesh.scale.setScalar(r)
-    }
-    // Drop pies for gens that vanished without expiring (demolished by the player).
-    for (const [t, pie] of seen) {
-      if (!t.visible || !isGenerator(t)) { this.scene.remove(pie.mesh); pie.mesh.geometry.dispose(); seen.delete(t); t.genLife = undefined; t.genWarned = false; t.genOnline = false }
-    }
-  }
 
   /** True if a generator is actively producing mana right now (so its lifespan
    *  should tick): needs height and to be in one of the energy system's active
@@ -1214,26 +1124,6 @@ export class City {
     if (t.numFloors < 1) return false
     const e = this.energy
     return e.connectedTowers.has(t) || e.enclosureGens.includes(t)
-  }
-
-  /** A CircleGeometry wedge covering `frac` of a full turn, starting at 12 o'clock. */
-  _genPieGeo(frac) {
-    return new CircleGeometry(1, Math.max(3, Math.ceil(32 * frac)), Math.PI / 2, Math.PI * 2 * Math.max(0, frac))
-  }
-
-  _removeGenPie(t) {
-    const pie = this._genPies?.get(t)
-    if (pie) { this.scene.remove(pie.mesh); pie.mesh.geometry.dispose(); this._genPies.delete(t) }
-  }
-
-  /** A generator reached the end of its lifespan: remove it (debris-free). */
-  expireGen(tower) {
-    tower.genLife = undefined
-    tower.genWarned = false
-    tower.genOnline = false
-    tower.genLevelsAdded = 0
-    Sounds.play('break2', 1.15, 0.15, 0.45)
-    this.demolishTower(tower)
   }
 
   /**

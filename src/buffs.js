@@ -16,7 +16,7 @@ export const Buffs = {
   wallHits: 0, // extra hits a grey wall absorbs per floor
   creepHp: 1, // multiplier on creep max hits (lower = weaker)
   genRate: 1, // multiplier on generator output
-  genLife: 0, // extra energy pulses per generator floor
+  supportReach: 0, // extra cells of support-tower reach
   shotDamage: { peg: 0, laser: 0, mortar: 0 }, // additive turret damage
   fireRate: 1, // multiplier on turret cooldowns (lower = faster)
   paletteSlots: 0, // extra palette slots
@@ -34,7 +34,7 @@ export function resetBuffs() {
   Buffs.wallHits = 0
   Buffs.creepHp = 1
   Buffs.genRate = 1
-  Buffs.genLife = 0
+  Buffs.supportReach = 0
   Buffs.shotDamage = { peg: 0, laser: 0, mortar: 0 }
   Buffs.fireRate = 1
   Buffs.paletteSlots = 0

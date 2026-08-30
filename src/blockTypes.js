@@ -104,18 +104,6 @@ export const towerArea = (tower, cellUnit, sizeScratch) => {
   return Math.max(1, Math.round((size.x / cellUnit) * (size.y / cellUnit)))
 }
 
-/** True if the tower's footprint is square (w === h in cells). */
-export const isSquareTower = (tower, cellUnit, sizeScratch) => {
-  const size = tower.box.getSize(sizeScratch)
-  return Math.round(size.x / cellUnit) === Math.round(size.y / cellUnit)
-}
-
-// Total floors a single generator will ever accept across its whole life,
-// however many times it's rebuilt. maxFloors is 5, so 10 buys two full-height
-// lives - one new, one rebuilt from the stub - before it evaporates for good.
-// Lives here rather than in City so TowerInteraction can read it without a
-// circular import.
-export const GEN_LEVEL_BUDGET = 10
 
 /** Floors the central king starts with = creep hits needed to lose the game.
  *  Shared so TowerRenderer can scale its damage feedback against it without

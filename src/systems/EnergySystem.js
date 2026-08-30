@@ -36,6 +36,12 @@ const KING_BONUS = 4
 // the COUNT instead - which is what this used to do - flattened the cadence:
 // everything at or above the cap emitted at exactly the same speed and only the
 // number on the caption changed, so big generators stopped sounding bigger.
+// What a building runs at with no support tower linked to it. Blue path
+// generators are the supply network: they still produce energy themselves, and
+// now a trail reaching a turret, area generator or shield is what brings that
+// building up to full speed.
+const SUPPORT_PENALTY = 0.5
+
 const MIN_SPAWN_GAP = 0.07 // seconds between units at full tilt
 const MAX_SPAWNS_PER_TICK = 40 // hard backstop on captions per tower per tick
 
@@ -81,6 +87,15 @@ export class EnergySystem {
     this._c = new Vector2()
   }
 
+  /**
+   * Support factor for a building: 1 when a support tower's trail reaches it,
+   * SUPPORT_PENALTY when nothing does. Turrets, area generators and shields all
+   * run through this, so an unsupported one works but at half pace.
+   */
+  support(tower) {
+    return this.supported && this.supported.has(tower) ? 1 : SUPPORT_PENALTY
+  }
+
   /** Recompute generator networks (called when a tower changes). */
   refresh() {
     this.updatePathGenerators()
@@ -97,7 +112,9 @@ export class EnergySystem {
       if (!t.visible || !claimsEnclosure(t)) continue
       const cells = t.enclosureRegionCells || 0
       if (cells <= 0 || t.numFloors < 1) { t.enclosureMana = 0; continue }
-      t.enclosureMana = Math.max(1, Math.round(cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR * Buffs.genRate))
+      t.enclosureMana = Math.max(1, Math.round(
+        cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR * Buffs.genRate * this.support(t)
+      ))
       mana += t.enclosureMana
       this.enclosureGens.push(t)
     }
@@ -170,8 +187,11 @@ export class EnergySystem {
     // gen-to-gen link). Purely cosmetic for now: these are appended after the
     // mana loop, so they light up the city without paying anything.
     const drawn = pairs.slice()
+    // Rebuilt every time the network changes, so a support tower losing height
+    // or being demolished drops everything it was carrying.
+    const supported = new Set()
     for (const a of plus) {
-      const reach = a.numFloors * 2
+      const reach = a.numFloors * 2 + Buffs.supportReach
       if (reach <= 0) continue
       a.box.getCenter(this._ca)
       for (const b of city.towers) {
@@ -181,9 +201,14 @@ export class EnergySystem {
         if (isPathGenerator(b) && b.colorIndex === a.colorIndex) continue
         b.box.getCenter(this._cb)
         const dist = this._ca.distanceTo(this._cb) / cell
-        if (dist < reach) drawn.push([a, b, dist])
+        if (dist < reach) { drawn.push([a, b, dist]); supported.add(b) }
       }
     }
+
+    // A trail from a support tower isn't only decoration any more: reaching a
+    // building is what brings it up to full speed. Same geometry, same links -
+    // the line you can see IS the supply.
+    this.supported = supported
 
     // Only rebuild trail meshes when the actual connection set changes (disposing
     // WebGPU node materials leaks, so we avoid rebuilding every tower change).
@@ -230,8 +255,7 @@ export class EnergySystem {
    * how much you're producing rather than a lump every tick.
    *
    * The generator's lifespan is charged ONCE here, not per arrival - the pulses
-   * used to be one-per-tick and genLife counts ticks, so decrementing per
-   * arrival would burn generators down eight times too fast.
+   * used to be one-per-tick, so this is where a per-tick charge would go.
    */
   scheduleIncome(tower, amt, span = GEN_INTERVAL) {
     const city = this.city
@@ -244,7 +268,6 @@ export class EnergySystem {
     const cx = c.x + city.gridOffsetX
     const cy = towerTopY(tower, city.floorHeight) + 0.5
     const cz = c.y + city.gridOffsetZ
-    if (tower.genLife !== undefined) tower.genLife -= 1
     let left = amt
     for (let i = 0; i < n; i++) {
       // Integer amounts that still sum to exactly `amt`.

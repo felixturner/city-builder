@@ -1,5 +1,6 @@
 import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three/webgpu'
 import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges } from '../blockTypes.js'
+import { Buffs } from '../buffs.js'
 
 // Solid yellow, not the palette accent: this is a hazard line, not a building.
 const SHIELD_LINE = '#ffd23f'
@@ -70,7 +71,7 @@ export class RangeVisuals {
       // CELLS - two cells per floor - so a generator's own half of that is
       // numFloors * 2 cells. Drawn at exactly that, so two rings touching is
       // precisely the moment the link forms.
-      (n) => n * 2 * city.cellUnit,
+      (n) => (n * 2 + Buffs.supportReach) * city.cellUnit,
       { thickness: 0.15, y: 0.06 }
     )
     // Shields draw a hard, solid line: a barrier is a thing with a definite

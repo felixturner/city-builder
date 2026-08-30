@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGrey, isGenerator, towerArea, towerTopY, GEN_LEVEL_BUDGET } from '../blockTypes.js'
+import { TopType, isTurret, isGrey, towerArea, towerTopY } from '../blockTypes.js'
 
 /**
  * TowerInteraction - all player input on towers (hover, build, destroy, place,
@@ -113,7 +113,6 @@ export class TowerInteraction {
   buildFloor(tower) {
     const city = this.city
     if (!this.canBuild(tower)) return
-    if (isGenerator(tower)) tower.genLevelsAdded = (tower.genLevelsAdded || 0) + 1
     tower.handleClick(city, city.floorHeight, city.maxFloors, city.debris,
       city.towers, () => city.onTowerChanged(tower), () => city.updateTowerVisuals())
   }
@@ -133,13 +132,6 @@ export class TowerInteraction {
     const city = this.city
     if (tower.numFloors >= city.maxFloors) {
       Sounds.play('error', 1.0, 0.2, 0.5) // already at max height
-      return false
-    }
-    // Generators only ever accept GEN_LEVEL_BUDGET floors across their whole
-    // life, however many times you rebuild them. Once that's spent it's a dead
-    // husk - stop taking the player's energy for a floor that won't stick.
-    if (isGenerator(tower) && (tower.genLevelsAdded || 0) >= GEN_LEVEL_BUDGET) {
-      Sounds.play('error', 1.0, 0.2, 0.5)
       return false
     }
     if (!city.mana) return true
