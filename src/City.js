@@ -172,9 +172,15 @@ export class City {
     this.centerLotX = Math.floor(this.numLotsX / 2)
     this.centerLotZ = Math.floor(this.numLotsY / 2)
 
-    // Grid offset: position mesh so center of center lot is at origin
-    this.gridOffsetX = -(this.centerLotX * this.cellSize + this.lotSize / 2)
-    this.gridOffsetZ = -(this.centerLotZ * this.cellSize + this.lotSize / 2)
+    // Grid offset: centre the WHOLE BOARD on the origin.
+    //
+    // This used to centre the centre LOT instead, which is the same thing only
+    // when the lot count is odd. At 7 lots both give -35; at 10 there is no
+    // middle lot, and centring lot 5 put the board at -55..45 with every cell
+    // boundary on an odd world coordinate while the drawn grid (centred, so
+    // even) sat 1 unit away - the half-cell offset between tiles and the floor.
+    this.gridOffsetX = -this.actualGridWidth / 2
+    this.gridOffsetZ = -this.actualGridHeight / 2
 
     // Buildable cells per lot side (5x5 grid of 1-cell slots), and the single
     // global cell grid spanning the whole city (lots are contiguous, so tiles
@@ -448,9 +454,10 @@ export class City {
    *  procedural noise height (the old generation method - mostly flat, a few
    *  tall). The intro builds them up staggered from the centre. */
   generateStartCluster(budget = 50) {
-    const lc = this.lotCells
-    const ccx = this.centerLotX * lc + Math.floor(lc / 2)
-    const ccy = this.centerLotZ * lc + Math.floor(lc / 2)
+    // Middle of the board in cells. Derived from the cell grid rather than from
+    // a "centre lot", which doesn't exist for an even lot count.
+    const ccx = Math.floor(this.gridCellsX / 2)
+    const ccy = Math.floor(this.gridCellsY / 2)
     const W = this.gridCellsX
     const cluster = new Set()
     const placed = []
@@ -488,9 +495,10 @@ export class City {
    *  random light accent colour. Losing it
    *  (creeps knock it to 0 floors) ends the game. */
   placeKing() {
-    const lc = this.lotCells
-    const ccx = this.centerLotX * lc + Math.floor(lc / 2)
-    const ccy = this.centerLotZ * lc + Math.floor(lc / 2)
+    // Middle of the board in cells. Derived from the cell grid rather than from
+    // a "centre lot", which doesn't exist for an even lot count.
+    const ccx = Math.floor(this.gridCellsX / 2)
+    const ccy = Math.floor(this.gridCellsY / 2)
     // One of the three light city accents, drawn per game, so the piece you're
     // defending isn't the same colour every run.
     const kingColor = MathUtils.randInt(0, this.accentColors.length - 1)
