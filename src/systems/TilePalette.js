@@ -63,7 +63,13 @@ export class TilePalette {
   randomTile() {
     const spec = this.city.drawTileSpec()
     const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
-    if (spec.wall) return { wall: true, shapeName: spec.shapeName, topColorIndex }
+    if (spec.wall) {
+      // Walls come out of the tray already turned, so the hand doesn't read as
+      // four copies of the same orientation. The icon draws this rotation and
+      // _beginDrag picks it up, so what you see is what you place.
+      const states = TetrominoGeometry.states[spec.shapeName].length
+      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: MathUtils.randInt(0, states - 1) }
+    }
     // Generators use their fixed type colour; turrets keep a random accent.
     const colorIndex = tileColorIndex(spec.typeTop)
     return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex, topColorIndex }
@@ -329,7 +335,8 @@ export class TilePalette {
 
   /** Grey tetromino: filled cells with per-cell outlines (rotation 0). */
   _drawTetromino(ctx, tile) {
-    const cells = TetrominoGeometry.states[tile.shapeName][0]
+    const states = TetrominoGeometry.states[tile.shapeName]
+    const cells = states[(tile.rot || 0) % states.length]
     const [w, h] = this._bbox(cells)
     const c = Math.min(CELL, (ICON - 8) / Math.max(w, h))
     const ox = (ICON - w * c) / 2
@@ -491,7 +498,11 @@ export class TilePalette {
     if (e.button !== 0) return // left button only; right-click discards
     if (!this.slots[i].tile || this.pending || this.drag) return
     e.preventDefault()
-    this.pending = { i, x: e.clientX, y: e.clientY, done: false }
+    // Remember WHICH pointer owns this drag. On touch a second finger (tapping
+    // rotate) raises its own pointerup on window, and without this check that
+    // release ended the drag and sent the tile back to the tray - which is
+    // exactly what made the rotate button look broken.
+    this.pending = { i, x: e.clientX, y: e.clientY, done: false, id: e.pointerId }
     this.pending.lpTimer = setTimeout(() => this._longPress(i), LONG_PRESS * 1000)
     window.addEventListener('pointermove', this._onMove)
     window.addEventListener('pointerup', this._onUp)
@@ -516,6 +527,8 @@ export class TilePalette {
   }
 
   _pointerMove(e) {
+    const owner = this.drag ? this.drag.pointerId : (this.pending && this.pending.id)
+    if (owner !== undefined && e.pointerId !== undefined && e.pointerId !== owner) return
     if (this.drag) { this._dragMove(e); return }
     if (!this.pending || this.pending.done) return
     if (Math.hypot(e.clientX - this.pending.x, e.clientY - this.pending.y) > DRAG_THRESH) {
@@ -532,7 +545,10 @@ export class TilePalette {
     }
   }
 
-  _pointerUp() {
+  _pointerUp(e) {
+    // Only the pointer that started the drag can end it.
+    const owner = this.drag ? this.drag.pointerId : (this.pending && this.pending.id)
+    if (e && owner !== undefined && e.pointerId !== owner) return
     if (this.pending) clearTimeout(this.pending.lpTimer)
     window.removeEventListener('pointermove', this._onMove)
     window.removeEventListener('pointerup', this._onUp)
@@ -619,7 +635,7 @@ export class TilePalette {
     if (this.demo.controls) this.demo.controls.enabled = false
     const base = this._tileColor3(tile, new Color())
     const hi = base.clone().lerp(this._white, 0.45)
-    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot: 0, lastX: null, lastY: null, lastCell: null, sticky: false }
+    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot: tile.rot || 0, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined }
     mat.color.copy(base)
   }
 

@@ -281,33 +281,19 @@ export class Demo {
     this.controls.enableDamping = true
     this.controls.dampingFactor = 0.1
     this.controls.enableRotate = true
-    // Two verbs only: orbit the city centre, and zoom. There is no panning, so
-    // the camera can never lose the city and there's nothing to re-centre.
-    this.controls.enablePan = false
-    // Right button is not a camera control at all - it's the demolish click, and
-    // having it also orbit meant every demolish nudged the view.
-    this.controls.mouseButtons = {
-      LEFT: 0,  // ROTATE
-      MIDDLE: 1, // DOLLY
-      RIGHT: null
-    }
-    // Touch: 1 finger orbits, 2 fingers pinch-zoom + orbit.
-    // TOUCH constants: ROTATE=0, PAN=1, DOLLY_PAN=2, DOLLY_ROTATE=3
-    this.controls.touches = {
-      ONE: 0,  // TOUCH.ROTATE
-      TWO: 3   // TOUCH.DOLLY_ROTATE
-    }
+    // Stock OrbitControls bindings: left orbits, middle dollies, right pans;
+    // one finger orbits, two pinch-zoom and pan. Panning is back on.
+    this.controls.enablePan = true
+    // Pan along the ground plane rather than the screen plane - the board is
+    // flat, and screen-space panning drifts the camera off it as you drag.
+    this.controls.screenSpacePanning = false
     // Zoom limits. minDistance is fixed; maxDistance is recomputed from the grid
     // size and the window aspect in updateZoomLimit().
     this.controls.minDistance = 40
     // Polar angle limits (vertical tilt) - prevent going below horizon
-    // Right-drag orbits on the up axis only: the pitch is locked to whatever the
-    // opening framing has, so rotating can't tip the city toward the horizon.
-    const pol = Math.acos(
-      this.perspCamera.position.y / this.perspCamera.position.length()
-    )
-    this.controls.minPolarAngle = pol
-    this.controls.maxPolarAngle = pol
+    // Free vertical rotation again, stopping just short of the horizon so the
+    // camera can't drop under the board.
+    this.controls.maxPolarAngle = 1.53 // ~88 degrees
     // The orbit centre is the middle of the city and stays there for good.
     this.controls.target.set(0, 0, 0)
     this.controls.update()
@@ -343,7 +329,7 @@ export class Demo {
     if (!this.controls || !this.city) return
     const cam = this.perspCamera
     const halfDiag = Math.hypot(this.city.actualGridWidth, this.city.actualGridHeight) / 2
-    const pitch = this.controls.minPolarAngle || 0
+    const pitch = this.controls.getPolarAngle ? this.controls.getPolarAngle() : 0
     const needV = halfDiag * Math.cos(pitch) + this.city.maxFloors * this.city.floorHeight * 0.5
     const needH = halfDiag
     const tan = Math.tan((cam.fov * Math.PI / 180) / 2)

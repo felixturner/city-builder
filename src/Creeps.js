@@ -319,7 +319,7 @@ export class Creeps {
       entered: false,
       baseScale: scale, // spawn size; giants shrink from this as they take hits
       baseYSpawn: baseY, // resting height at spawn size, scaled down alongside it
-      entrySound: giant || big ? 'spawn' : 'creep-warn',
+      entrySound: giant || big ? 'horn-boss' : 'creep-warn',
       entryRate: giant ? 0.4 : (big ? 0.7 : 1.0),
       // spawn.mp3 (big + giant) down 33% - fat arrivals were the loudest thing
       // on the board. Normal creeps use creep-warn and are left alone.
@@ -439,7 +439,7 @@ export class Creeps {
     if (bossNext && away <= BOSS_HORN_PREROLL && this._bossCuedWave !== next) {
       this._bossCuedWave = next
       const { rate, volume } = this.bossHornVoice(next)
-      Sounds.play('horn-boss', rate, 0.02, volume)
+      Sounds.play('spawn', rate, 0.02, volume)
     }
 
     // Wave horn on the boundary. Boss waves already have their horn running.
