@@ -261,9 +261,10 @@ export class Demo {
 
     // Set up perspective camera (closer position for FOV 30)
     // Initial camera position - same rotation but targeting origin
-    // 20% further from the origin than the framing this was authored at
-    // (-22.0998, 60, -15.012), for a wider opening shot.
-    this.perspCamera.position.set(-26.5198, 72, -18.0144)
+    // Opening framing, pulled back twice from the original (-22.0998, 60,
+    // -15.012): +20%, then +30% again. 102.5 units out, against a maxDistance
+    // that lands around 319 - so it starts wide but with plenty of room left.
+    this.perspCamera.position.set(-34.4757, 93.6, -23.4187)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 
