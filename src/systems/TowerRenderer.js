@@ -125,16 +125,29 @@ export class TowerRenderer {
   shadeStack(tower) {
     const mesh = this.city.towerMesh
     const n = tower.floorInstances.length
+    // A browned-out building reads as unpowered: drained toward dark grey rather
+    // than hidden or removed, so you can see exactly which parts of the city
+    // went dark and roughly how far the shutdown reached.
+    const dark = this.city.upkeep?.isDark(tower)
+    const base = dark ? this._darkShade(tower.baseColor) : tower.baseColor
     for (let f = 0; f < n; f++) {
-      Tower.shadeForFloor(tower.baseColor, f, n, this._shade)
+      Tower.shadeForFloor(base, f, n, this._shade)
       mesh.setColorAt(tower.floorInstances[f], this._shade)
     }
     // The roof caps the stack, so it matches the highest block UNDER it - index
     // numFloors - 1, not numFloors. A roof-only tower (0 floors) takes floor 0's
     // shade. ROOF_SHADE_BIAS then compensates for the roof mesh catching more
     // light than the wall's side faces.
-    Tower.roofShade(tower, tower.baseColor, this._shade)
+    Tower.roofShade(tower, base, this._shade)
     mesh.setColorAt(tower.roofInstance, this._shade)
+  }
+
+  /** Unpowered tint: most of the colour drained out, most of the light with it. */
+  _darkShade(color) {
+    if (!this._dark) this._dark = new Color()
+    this._dark.copy(color)
+    const grey = this._dark.r * 0.3 + this._dark.g * 0.6 + this._dark.b * 0.1
+    return this._dark.setRGB(grey, grey, grey).multiplyScalar(0.45)
   }
 
   /**

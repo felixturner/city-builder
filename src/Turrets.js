@@ -180,6 +180,7 @@ export class Turrets {
       const isPeg = tower.typeTop === Turrets.TURRET_TYPE
       const isMortar = tower.typeTop === Turrets.MORTAR_TYPE
       if (!isPeg && !isLaser && !isMortar) continue
+      if (this.city.upkeep.isDark(tower)) continue // browned out: no power, no shots
       const proto = isMortar ? this.mortarProto : isLaser ? this.laserProto : this.pegProto
       if (!proto) continue
       seen.add(tower)

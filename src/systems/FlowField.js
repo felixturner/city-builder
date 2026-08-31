@@ -18,6 +18,9 @@ export class FlowField {
   constructor(city) {
     this.city = city
     this.debugEnabled = false
+    // Bumped on every rebuild, so anything drawing the field can tell
+    // "unchanged" from "recomputed" without diffing the arrays.
+    this.version = 0
   }
 
   /** True once a field has been built at least once. */
@@ -124,6 +127,7 @@ export class FlowField {
     buildMask(false, true); bfs(genGoals, 0, this.distBig, this.dxBig, this.dzBig, this.toKingBig)
 
     this.city.flowDirty = false
+    this.version++
     this.updateDebug()
   }
 

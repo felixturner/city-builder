@@ -18,7 +18,10 @@ const FLOOR_PULSE_DECAY = 0.22
 // Mana per (enclosed cell x generator floor) for the pink area generators.
 // Cut 20% from 0.2: their output scales with enclosed AREA, so it climbs much
 // faster than the blue path generators as a city grows.
-const ENCLOSURE_RATE = 0.08 // halved: area gens were out-earning the trails they cost nothing to run
+// Cut 30% (0.08 -> 0.056). A sealed ring plus a couple of support towers was
+// enough to stop energy ever being the thing you were short of, and an economy
+// you can't run dry stops being a decision.
+const ENCLOSURE_RATE = 0.056
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
 // Volume of the per-arrival income blip. It fires several times a second at a
 // developed economy, so it sits well under the one-off cues.
@@ -130,7 +133,7 @@ export class EnergySystem {
     for (const t of this.city.towers) {
       if (!t.visible || !claimsEnclosure(t)) continue
       const cells = t.enclosureRegionCells || 0
-      if (cells <= 0 || t.numFloors < 1) { t.enclosureMana = 0; continue }
+      if (cells <= 0 || t.numFloors < 1 || this.city.upkeep.isDark(t)) { t.enclosureMana = 0; continue }
       t.enclosureMana = Math.max(1, Math.round(
         cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR * Buffs.genRate * this.support(t)
       ))
@@ -215,6 +218,7 @@ export class EnergySystem {
       a.box.getCenter(this._ca)
       for (const b of city.towers) {
         if (b === a || !b.visible || b.numFloors < 1) continue
+        if (city.upkeep.isDark(b)) continue // a dark building can't be supported
         if (isGrey(b)) continue // walls are the thing trails route AROUND
         // Same-colour gen pairs are already linked above; don't double-draw.
         if (isPathGenerator(b) && b.colorIndex === a.colorIndex) continue

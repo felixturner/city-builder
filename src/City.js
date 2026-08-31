@@ -31,6 +31,7 @@ import { EnergySystem } from './systems/EnergySystem.js'
 import { FlowField } from './systems/FlowField.js'
 import { Enclosure } from './systems/Enclosure.js'
 import { TileBag } from './systems/TileBag.js'
+import { Upkeep } from './systems/Upkeep.js'
 import { RangeVisuals } from './systems/RangeVisuals.js'
 import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
@@ -127,6 +128,8 @@ export class City {
     this.flow = new FlowField(this)
     this.enclosure = new Enclosure(this)
     this.tileBag = new TileBag()
+    this.upkeep = new Upkeep(this)
+    this.introDone = false // set when startIntroAnimation's camera move lands
 
     // The city grid: 2D array of lots (populated by initGrid).
     this.lots = []
@@ -435,12 +438,21 @@ export class City {
     const beam = this.kingBeam
     if (!beam) return
     const king = this.king
-    if (!king || !king.visible || !this.kingAlive) { beam.visible = false; return }
+    // Held back until the opening build-up finishes: the beam is a marker for a
+    // city that exists, and firing it up while the towers are still rising drew
+    // the eye away from the one animation that only plays once.
+    if (!king || !king.visible || !this.kingAlive || !this.introDone) {
+      beam.visible = false
+      return
+    }
     beam.visible = true
     const c = king.box.getCenter(this.towerCenter)
+    // Rooted at ground level rather than on the roof, so it reads as coming out
+    // of the tower rather than hovering above it - and it no longer bobs up and
+    // down as the king loses and regains floors.
     beam.position.set(
       c.x + this.gridOffsetX,
-      towerTopY(king, this.floorHeight) + this.kingBeamHeight / 2,
+      this.kingBeamHeight / 2,
       c.y + this.gridOffsetZ
     )
   }
@@ -678,7 +690,10 @@ export class City {
         camera.position.copy(target).addScaledVector(direction, animState.dist)
         controls.update()
       },
-      onComplete: () => { controls.enabled = true },
+      onComplete: () => {
+        controls.enabled = true
+        this.introDone = true
+      },
     })
   }
 
@@ -885,6 +900,9 @@ export class City {
     this.debris.update(dt)
     this.interaction.update(dt)
     this.energy.update(dt)
+    this.upkeep.update(dt)
+    this.flowView?.update()
+    this.pathPreview?.update()
     this.updateKingBeam()
   }
 

@@ -117,6 +117,7 @@ export class Soldiers {
   updateGarrisons(dt) {
     for (const t of this.city.towers) {
       if (!t.visible || !isBarracks(t) || t.numFloors < 1) continue
+      if (this.city.upkeep.isDark(t)) continue // browned out
       t.spawnTimer = (t.spawnTimer || 0) - dt
       if (t.spawnTimer > 0) continue
       t.spawnTimer = SPAWN_INTERVAL

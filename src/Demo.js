@@ -34,6 +34,9 @@ import { PowerUpScreen, resetBuffs } from './PowerUps.js'
 import { LootBoxes } from './LootBoxes.js'
 import { Turrets } from './Turrets.js'
 import { CreepTimeline } from './CreepTimeline.js'
+import { WaveArrows } from './WaveArrows.js'
+import { FlowFieldView } from './systems/FlowFieldView.js'
+import { PathPreview } from './systems/PathPreview.js'
 import { FloatingText } from './FloatingText.js'
 import { TilePalette } from './systems/TilePalette.js'
 
@@ -212,6 +215,11 @@ export class Demo {
     // Enemy creeps marching in from the map edges
     this.creeps = new Creeps(this.scene, this.city)
     this.city.creeps = this.creeps // let placement checks query creep positions
+    // Draws the creep flow field on the ground, so walls read as a maze you are
+    // authoring rather than as hit points in the way.
+    this.city.flowView = new FlowFieldView(this.city, this.creeps)
+    // ...and the single traced route for the wave that's actually next.
+    this.city.pathPreview = new PathPreview(this.city, this.creeps)
 
     // Friendly units raised by barracks tiles
     this.soldiers = new Soldiers(this.scene, this.city, this.creeps)
@@ -239,6 +247,8 @@ export class Demo {
 
     // Incoming-wave timeline strip across the top of the screen
     this.creepTimeline = new CreepTimeline(this.creeps)
+    // Screen-edge warning arrows for the side the next wave comes from.
+    this.waveArrows = new WaveArrows(this)
     // Mana was built before the strip existed, so its first layout pass found
     // nothing to avoid. Re-run it now the strip is measurable.
     this.mana.layout()
@@ -462,6 +472,7 @@ export class Demo {
     }
 
     this.creepTimeline.update()
+    this.waveArrows.update()
     this.floatingText.update(this.camera, dt)
     this.tilePalette.update(dt)
 

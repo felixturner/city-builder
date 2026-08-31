@@ -43,6 +43,7 @@ import { fxMaterial, glow } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 import { advanceHop, towerWorldCenter } from './lib/gridUnit.js'
 import { WaveAudio } from './systems/WaveAudio.js'
+import { WaveClock } from './systems/WaveClock.js'
 
 /**
  * Creeps - abstract enemy nodes. Black diamonds (cubes rotated 45deg off the
@@ -135,15 +136,18 @@ export class Creeps {
     // Toggle for new spawns (GUI). Existing creeps keep moving when off.
     this.spawnEnabled = true
 
-    // Spawn pacing: grace period, then interval ramps from slow -> fast.
-    this.elapsed = 0
-    this.graceTime = 30 // first wave starts ~30s in (build-up grace period)
+    // The wave schedule lives in WaveClock; this file owns what SPAWNS, not when.
+    this.clock = new WaveClock()
     this.spawnTimer = 0
     // The whole difficulty ramp lives in these numbers now that spawnBurst is
     // gone. minInterval is no longer a ceiling on difficulty - it's the point
     // where the curve changes shape (see spawnInterval).
-    this.startInterval = 1.6 // seconds between spawns right after grace
-    this.minInterval = 0.22 // cadence at the end of the opening ramp
+    // Roughly 40% fewer creeps than before (1.6 / 0.22). A wave used to arrive as
+    // a wall of diamonds you couldn't read - you knew you were losing, not what
+    // was happening. Each one hits correspondingly harder, so the pressure is
+    // unchanged; what changed is that you can now follow an individual creep.
+    this.startInterval = 2.7 // seconds between spawns right after grace
+    this.minInterval = 0.37 // cadence at the end of the opening ramp
     // The ramp is measured in WAVES, not seconds. It used to be 420s/420s,
     // which was exactly 7 wave cycles at the old 60s period - so lengthening
     // the build phase silently made every wave land further along the curve.
@@ -153,12 +157,9 @@ export class Creeps {
     this.halvingWaves = 7 // after the ramp, the gap halves every this many waves
     this.absoluteMinInterval = 0.05 // engine backstop, not a design limit
 
-    // Waves run on a fixed clock: spawn for waveActive secs, then the rest of
-    // wavePeriod is the build phase. Creeps left alive past the spawn window
-    // eat into that quiet - the next wave still lands on schedule - so a slow
-    // clear costs you build time rather than delaying anything.
-    this.wavePeriod = 80 // 20s spawn + 60s build
-    this.waveActive = 20 // seconds each wave spawns for
+    // Creeps left alive past the spawn window eat into the next build phase -
+    // the following wave still lands on schedule - so a slow clear costs you
+    // build time rather than delaying anything.
     this._lastWave = -1 // last wave index seen (for boss-wave edge detection)
 
     // Wave audio: a ticking clock fills the breather, then a horn lands on the
@@ -168,11 +169,9 @@ export class Creeps {
     // on the spawn inside that window: ~5.5s of riser over the tail of a normal
     // wave's 10s ticker, ~10.7s over a boss's 15s one. The build phase is 60s,
     // so there's still plenty of quiet breather to build in.
-    this.countdownLead = 10
     // Boss waves keep the longer lead on purpose: their riser peaks at ~10.7s,
     // so a 10s lead would start the swell before the clock and leave no
     // ticker-only phase at all on the biggest moment of the run.
-    this.bossCountdownLead = 15
     // Everything about what a wave SOUNDS like lives in WaveAudio; this file
     // owns the clock it reads.
     this.audio = new WaveAudio(this)
@@ -223,7 +222,9 @@ export class Creeps {
 
     this.knockInterval = 0.45 // seconds between knocks
     this.knocksPerFloor = 3
-    this.hitsToKill = 4 // turret sphere hits needed to destroy a creep
+    // Up from 4, to pay back the thinner spawn rate: fewer creeps, each of them
+    // something you have to commit fire to rather than something that pops.
+    this.hitsToKill = 7 // turret sphere hits needed to destroy a creep
 
     /**
      * Difficulty ramp. Waves already arrive thicker over time (spawnInterval
@@ -237,14 +238,19 @@ export class Creeps {
     // Uncapped on purpose: creeps keep getting tougher until they kill you.
     // These used to stop at 3x, which combined with a spawn-rate floor meant
     // the game reached a steady state you could hold forever.
-    this.hpPerWave = 0.12 // +12% health per wave, no ceiling
-    this.attackPerWave = 0.10 // +10% floors knocked per hit, no ceiling
+    this.hpPerWave = 0.16 // +16% health per wave, no ceiling
+    this.attackPerWave = 0.14 // +14% floors knocked per hit, no ceiling
 
-    // Ammo boxes: a dying creep leaves one 20% of the time. At 5 a box that's
-    // 1.0 ammo per kill on average, which is what Turrets.SHOT_COST is priced
-    // against - see the table there.
+    // Ammo boxes: a dying creep leaves one 20% of the time.
+    //
+    // This was priced to break even exactly - 5 a box is 1.0 ammo per kill, and
+    // a 4-hit creep cost 4 peg shots at 0.25. Raising hitsToKill to 7 pushed the
+    // cost to 1.75 a kill, so at 5 a box turrets would simply run dry and stay
+    // dry. 8 pays 1.6, deliberately just under: sustained turret fire now bleeds
+    // ammo slowly instead of funding itself, and the shortfall has to come from
+    // kills you didn't pay for - soldiers, shield burns, creeps dying on walls.
     this.ammoDropChance = 0.2
-    this.ammoDropAmount = 5
+    this.ammoDropAmount = 8
     this.ammoBoxGeo = new BoxGeometry(1.1, 1.1, 1.1)
     this.ammoBoxMat = new MeshStandardNodeMaterial({
       color: new Color(AMMO_COLOR),
@@ -268,20 +274,17 @@ export class Creeps {
     })
   }
 
-  /** Waves elapsed, 0 during the opening grace period. Drives the stat ramp. */
-  get waveNumber() {
-    return Math.floor(this.waveProgress)
-  }
-
-  /**
-   * Waves elapsed as a FRACTION - 2.5 is halfway through wave 2. The spawn
-   * cadence reads this rather than waveNumber so it keeps sliding smoothly
-   * inside a wave instead of stepping once per cycle.
-   */
-  get waveProgress() {
-    if (this.elapsed < this.graceTime) return 0
-    return (this.elapsed - this.graceTime) / this.wavePeriod
-  }
+  // --- wave schedule: all of it lives in this.clock -------------------------
+  get elapsed() { return this.clock.elapsed }
+  set elapsed(v) { this.clock.elapsed = v }
+  get wavePeriod() { return this.clock.wavePeriod }
+  get waveActive() { return this.clock.waveActive }
+  get waveNumber() { return this.clock.waveNumber }
+  get waveProgress() { return this.clock.progress }
+  get isSpawning() { return this.clock.isSpawning }
+  isBossWave(n) { return this.clock.isBossWave(n) }
+  bossOrdinal(n) { return this.clock.bossOrdinal(n) }
+  waveEdges(n) { return this.clock.waveEdges(n) }
 
   /** Health and attack multipliers for a creep spawning right now. */
   rampMul() {
@@ -323,7 +326,6 @@ export class Creeps {
   snap(v) {
     return Math.round(v / this.cell) * this.cell
   }
-
 
   /**
    * Spawn a ground creep. opts.giant -> a 5x5 boss; opts.forceShooter -> a shooter
@@ -369,7 +371,7 @@ export class Creeps {
     // Pick a point along one of the four map edges (forced for boss groups).
     const r = this.reach
     const t = this.snap((Math.random() * 2 - 1) * r)
-    const edge = opts.edge ?? Math.floor(Math.random() * 4)
+    const edge = opts.edge ?? this.currentWaveEdge()
     let x, z
     if (edge === 0) { x = -r; z = t }
     else if (edge === 1) { x = r; z = t }
@@ -438,16 +440,17 @@ export class Creeps {
    */
   spawnBossWave(waveIdx) {
     const o = this.bossOrdinal(waveIdx)
-    const edge = Math.floor(Math.random() * 4) // all come in from the same side
+    const edge = this.waveEdges(waveIdx)[0] // all come in from the same side
     const escort = 3 + 4 * o
     for (let i = 0; i < o; i++) this.spawn({ giant: true, edge, bossTier: o })
     for (let i = 0; i < escort; i++) this.spawn({ forceShooter: true, edge })
   }
 
-  /** Every 5th wave (1-based) is a boss wave. */
-  isBossWave(waveIdx) { return waveIdx >= 0 && (waveIdx + 1) % 4 === 0 }
-  /** Which boss wave this is (1, 2, 3, ...) = giant count. */
-  bossOrdinal(waveIdx) { return (waveIdx + 1) / 4 }
+  /** An edge for a creep spawning in the wave now in progress. */
+  currentWaveEdge() {
+    const edges = this.waveEdges(this.waveNumber)
+    return edges[Math.floor(Math.random() * edges.length)]
+  }
 
   /**
    * Voice for a boss wave. Each tier gets its own reading of the same low horn:
@@ -503,7 +506,7 @@ export class Creeps {
     const cu = city.cellUnit
     for (const t of city.towers) {
       if (!t.visible || !isShield(t) || t.numFloors < 1) continue
-      if (shieldCharges(t) <= 0) continue
+      if (shieldCharges(t) <= 0 || city.upkeep.isDark(t)) continue
       const c = t.box.getCenter(this._shieldC || (this._shieldC = new Vector2()))
       const sx = c.x + city.gridOffsetX, sz = c.y + city.gridOffsetZ
       const r = shieldRadiusCells(t.numFloors) * cu
@@ -719,7 +722,6 @@ export class Creeps {
     return this._planStepGreedy(c)
   }
 
-
   /**
    * Pick the next cell to step into, given the flow field.
    *
@@ -753,8 +755,8 @@ export class Creeps {
     // Nothing better adjacent (shouldn't happen while dist >= 1): trust the field.
     if (closer.length === 0) return [fdx[i], fdz[i]]
     const pool = (worse.length && Math.random() < MISSTEP_CHANCE) ? worse : closer
-    const d = pool[Math.floor(Math.random() * pool.length)]
-    return [STEP_DX[d], STEP_DZ[d]]
+    const pick = pool[Math.floor(Math.random() * pool.length)]
+    return [STEP_DX[pick], STEP_DZ[pick]]
   }
 
   /** Greedy beeline toward the king, smashing through whatever's in the way (one
@@ -973,7 +975,7 @@ export class Creeps {
   /** Begin spawning (called when the player starts the game). */
   start() {
     this.started = true
-    this.elapsed = 0
+    this.clock.reset()
     this.spawnTimer = 0
     this._lastWave = -1
     this._quietTimer = 0
@@ -981,32 +983,26 @@ export class Creeps {
   }
 
   /**
-   * Advance the wave clock by `dt` and run the spawn schedule. Waves: after the
-   * grace period, spawn only during the first `waveActive` seconds of each
-   * `wavePeriod`-second cycle; the rest is a breather.
+   * Advance the wave clock by `dt` and run the spawn schedule: build for
+   * buildTime seconds, then spawn for the remaining waveActive.
    */
   advanceSpawns(dt) {
-    this.elapsed += dt
-    if (this.spawnEnabled && this.elapsed >= this.graceTime) {
-      // At each new wave boundary, fire a boss group if it's a boss wave.
-      const waveIdx = Math.floor((this.elapsed - this.graceTime) / this.wavePeriod)
-      if (waveIdx !== this._lastWave) {
-        this._lastWave = waveIdx
-        if (this.isBossWave(waveIdx)) this.spawnBossWave(waveIdx)
-      }
-      const phase = (this.elapsed - this.graceTime) % this.wavePeriod
-      if (phase < this.waveActive) {
-        this.spawnTimer += dt
-        if (this.spawnTimer >= this.spawnInterval) {
-          this.spawnTimer -= this.spawnInterval
-          this.spawn()
-        }
-      } else {
-        this.spawnTimer = 0
-      }
+    this.clock.advance(dt)
+    if (!this.spawnEnabled) return
+    if (!this.isSpawning) { this.spawnTimer = 0; return }
+
+    // First frame of this cycle's attack phase: a boss wave drops its group.
+    const waveIdx = this.waveNumber
+    if (waveIdx !== this._lastWave) {
+      this._lastWave = waveIdx
+      if (this.isBossWave(waveIdx)) this.spawnBossWave(waveIdx)
+    }
+    this.spawnTimer += dt
+    if (this.spawnTimer >= this.spawnInterval) {
+      this.spawnTimer -= this.spawnInterval
+      this.spawn()
     }
   }
-
 
   /**
    * Fast-forward: replay the spawn schedule across `seconds` in fine steps, so

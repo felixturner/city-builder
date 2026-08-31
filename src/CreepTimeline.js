@@ -1,9 +1,10 @@
 /**
  * CreepTimeline - a horizontal "incoming waves" strip across the top of the
- * screen (50% width). The LEFT edge is the current moment ("now"); time scrolls
- * leftward as the game advances. Red bars mark the creep wave-active windows for
+ * screen (50% width). The LEFT edge of the track IS the current moment; time
+ * scrolls leftward as the game advances, so a bar reaching the left edge is a
+ * wave landing. Red bars mark the creep wave-active windows for
  * the next `windowSeconds` (3 minutes) of gameplay, derived from the Creeps
- * wave schedule (graceTime + n*wavePeriod, each lasting waveActive seconds).
+ * wave schedule (Creeps.waveStart(n), each lasting waveActive seconds).
  */
 import gsap from 'gsap'
 
@@ -47,19 +48,6 @@ export class CreepTimeline {
     })
     wrap.appendChild(track)
 
-    // "Now" marker pinned to the left edge.
-    const now = document.createElement('div')
-    Object.assign(now.style, {
-      position: 'absolute',
-      left: '0',
-      top: '0',
-      bottom: '0',
-      width: '2px',
-      background: '#ffffff',
-      boxShadow: '0 0 4px rgba(255,255,255,0.8)',
-    })
-    track.appendChild(now)
-
     // Pool of reusable wave bars (window/period + slack).
     for (let i = 0; i < 8; i++) {
       const bar = document.createElement('div')
@@ -101,16 +89,16 @@ export class CreepTimeline {
     if (!this._tweening) this.displayNow = c.elapsed
     const now = this.displayNow
     const win = this.windowSeconds
-    const grace = c.graceTime
-    const period = c.wavePeriod
-    const active = c.waveActive
+    const clock = c.clock
+    const period = clock.wavePeriod
+    const active = clock.waveActive
 
     // First wave index whose active window could still be visible.
-    let n = Math.max(0, Math.floor((now - grace) / period))
+    let n = Math.max(0, Math.floor(now / period))
     let used = 0
     while (used < this.bars.length) {
       const waveIdx = n
-      const start = grace + n * period
+      const start = clock.waveStart(n) // build phase first, then the attack window
       if (start >= now + win) break // beyond the visible window
       const end = start + active
       n++
@@ -126,7 +114,7 @@ export class CreepTimeline {
       bar.style.left = `${left}%`
       bar.style.width = `${Math.max(0.5, width)}%`
       // Boss waves read red; normal waves white.
-      const boss = c.isBossWave && c.isBossWave(waveIdx)
+      const boss = clock.isBossWave(waveIdx)
       bar.style.background = boss ? 'rgba(255,55,55,0.95)' : 'rgba(255,255,255,0.85)'
       bar.style.display = 'block'
     }

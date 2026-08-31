@@ -56,6 +56,8 @@ export class GUIManager {
       aoBlur: 0.3,
       aoIntensity: 0.95,
       vignette: true,
+      creepFlow: true,
+      creepPath: true,
       bloom: true,
       bloomStrength: 0.77,
       bloomRadius: 0.49,
@@ -112,6 +114,13 @@ export class GUIManager {
     const viewMap = { final: 0, color: 1, depth: 2, normal: 3, ao: 4, glow: 5, bloom: 6 }
     viewFolder.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
       demo.debugView.value = viewMap[v]
+    })
+
+    viewFolder.add(allParams.fx, 'creepFlow').name('Creep Flow').onChange((v) => {
+      if (demo.city.flowView) demo.city.flowView.enabled = v
+    })
+    viewFolder.add(allParams.fx, 'creepPath').name('Creep Path').onChange((v) => {
+      if (demo.city.pathPreview) demo.city.pathPreview.enabled = v
     })
 
     // Visual toggles at top level

@@ -41,20 +41,20 @@ export class BeamPool {
   fire(from, to, color) {
     // Pool exhausted: steal the oldest rather than allocate. A ninth beam in a
     // 0.16s window is not something anyone can follow anyway.
-    const b = this.beams.find(x => !x.active) || this.beams[0]
-    b.active = true
-    b.life = 0
-    const m = b.mesh
-    m.material.color.copy(color)
-    m.material.opacity = 1
-    m.visible = true
+    const beam = this.beams.find(b => !b.active) || this.beams[0]
+    beam.active = true
+    beam.life = 0
+    const mesh = beam.mesh
+    mesh.material.color.copy(color)
+    mesh.material.opacity = 1
+    mesh.visible = true
     this._dir.copy(to).sub(from)
     const len = this._dir.length() || 0.001
-    m.position.copy(from).addScaledVector(this._dir, 0.5)
+    mesh.position.copy(from).addScaledVector(this._dir, 0.5)
     this._dir.divideScalar(len)
     this._q.setFromUnitVectors(this._up, this._dir)
-    m.quaternion.copy(this._q)
-    m.scale.set(1, len, 1)
+    mesh.quaternion.copy(this._q)
+    mesh.scale.set(1, len, 1)
   }
 
   /** Fade out and retire active flashes. */

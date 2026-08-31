@@ -17,7 +17,7 @@ export class WaveAudio {
   constructor(creeps) {
     /** Called with the wave index when the board goes quiet after a round. */
     this.onRoundCleared = null
-    this.c = creeps
+    this.creeps = creeps
     // Latches: "have I already fired this for wave N?" _activeNow tracks whether
     // the board is hot, which is what picks the music bed.
     this.reset()
@@ -52,23 +52,23 @@ export class WaveAudio {
    *    T     wave horn + spawns
    */
   update(dt) {
-    if (!this.c.spawnEnabled) return
-    const t = this.c.elapsed
+    if (!this.creeps.spawnEnabled) return
 
-    // The wave now in progress (or -1 during the opening grace period).
-    const current = t < this.c.graceTime
-      ? -1 : Math.floor((t - this.c.graceTime) / this.c.wavePeriod)
-    // ...and the next one to arrive.
-    const next = current + 1
-    const away = (this.c.graceTime + next * this.c.wavePeriod) - t
-    const bossNext = this.c.isBossWave(next)
+    // One cycle = build then attack, so a single index covers both halves: the
+    // wave being counted down while you build, and the wave on the board once
+    // it lands.
+    const clock = this.creeps.clock
+    const wave = clock.waveNumber
+    const away = clock.timeToWave // <= 0 once this cycle's wave has landed
+    const bossNext = clock.isBossWave(wave)
+    const spawning = clock.isSpawning
 
     // Countdown bed, seeked so the final tick lands on the spawn. A mechanical
     // clock rather than a digital alarm - it fills the breather with tension
     // instead of nagging - with a soft riser layered over it for the build.
-    const lead = bossNext ? this.c.bossCountdownLead : this.c.countdownLead
-    if (away <= lead && this._cuedWave !== next) {
-      this._cuedWave = next
+    const lead = clock.leadFor(wave)
+    if (away <= lead && this._cuedWave !== wave) {
+      this._cuedWave = wave
       // No stab ahead of the clock - the ticker starting IS the "incoming" cue,
       // and a horn in front of it just stepped on the build-up.
       if (bossNext) Sounds.countdown('tick-fast', away, 0.28, 0.92)
@@ -78,8 +78,8 @@ export class WaveAudio {
     // Riser: armed early (its pre-roll is up to ~11s, longer than the tick
     // lead) and fired when its own measured peak lines up with the spawn, so
     // the swell tops out on the horn rather than after it.
-    if (away <= MAX_RISER_PREROLL + 1 && this._riserWave !== next) {
-      this._riserWave = next
+    if (away <= MAX_RISER_PREROLL + 1 && this._riserWave !== wave) {
+      this._riserWave = wave
       this._riser = Sounds.pickRiser(bossNext)
     }
     if (this._riser && away <= this._riser.peak) {
@@ -89,24 +89,24 @@ export class WaveAudio {
     }
 
     // Boss horn pre-roll: start early so the swell peaks as the giants land.
-    if (bossNext && away <= BOSS_HORN_PREROLL && this._bossCuedWave !== next) {
-      this._bossCuedWave = next
-      const { rate, volume } = this.c.bossHornVoice(next)
+    if (bossNext && away <= BOSS_HORN_PREROLL && this._bossCuedWave !== wave) {
+      this._bossCuedWave = wave
+      const { rate, volume } = this.creeps.bossHornVoice(wave)
       Sounds.play('horn-boss', rate, 0.02, volume)
     }
 
     // Wave horn on the boundary. Boss waves already have their horn running.
-    if (current >= 0 && current !== this._audioWave) {
-      this._audioWave = current
-      if (!this.c.isBossWave(current)) Sounds.play('horn', 1.0, 0.06, 0.55)
+    if (spawning && wave !== this._audioWave) {
+      this._audioWave = wave
+      if (!clock.isBossWave(wave)) Sounds.play('horn', 1.0, 0.06, 0.55)
     }
 
     // A round is not over when the spawns stop - it's over when the last creep
     // of it is dead. Dropping to the build bed at the end of the spawn window
     // put calm music over a field still full of creeps, so combat holds until
     // the board is actually clear.
-    const spawning = current >= 0 && ((t - this.c.graceTime) % this.c.wavePeriod) < this.c.waveActive
-    const inCombat = spawning || this.c.creeps.length > 0
+    const creepsOnBoard = this.creeps.creeps.length > 0
+    const inCombat = spawning || creepsOnBoard
     if (inCombat !== this._activeNow) {
       this._activeNow = inCombat
       // The stab marks the real end of the round, so it moves with it.
@@ -114,19 +114,19 @@ export class WaveAudio {
         // 5.5s fanfare peaking at 1.3s - it plays out across the quiet gap and
         // has decayed by the time the build bed eases back in.
         Sounds.play('level-complete', 1.0, 0, 0.7)
-        this.c._quietTimer = this.c.roundEndQuiet
-        // `current` is the wave that just finished - 0-based, so the first boss
-        // round (level 4) is index 3. Demo hangs the upgrade screen off this.
-        if (current >= 0) this.onRoundCleared?.(current)
+        this.creeps._quietTimer = this.creeps.roundEndQuiet
+        // The wave that just finished - 0-based, so the first boss round
+        // (level 4) is index 3. Demo hangs the upgrade screen off this.
+        this.onRoundCleared?.(this._audioWave)
       }
     }
 
     // Background music follows the same state: calm while you build, a fight
     // track (drawn from the bucket, so it varies round to round) while the
     // board is hot, and the boss bed on boss rounds.
-    if (this.c._quietTimer > 0) this.c._quietTimer -= dt
-    const quiet = !inCombat && this.c._quietTimer > 0
-    const mode = inCombat ? (this.c.isBossWave(current) ? 'boss' : 'fight')
+    if (this.creeps._quietTimer > 0) this.creeps._quietTimer -= dt
+    const quiet = !inCombat && this.creeps._quietTimer > 0
+    const mode = inCombat ? (clock.isBossWave(this._audioWave) ? 'boss' : 'fight')
       : (quiet ? 'quiet' : 'build')
     // Drop to silence quickly so the sting is exposed; ease back in slowly.
     Sounds.setBedMode(mode, inCombat ? 1.5 : (quiet ? 0.9 : 2.5))
