@@ -133,7 +133,7 @@ export class TowerInteraction {
     if (tower.numFloors >= city.maxFloors) {
       // Same cue as "can't afford it": both are "that click did nothing", and
       // two different blips for the same non-event just read as inconsistency.
-      Sounds.play('no-money', 1.0, 0.06, 0.9) // already at max height
+      Sounds.play('error', 1.0, 0.06, 0.35) // already at max height
       return false
     }
     if (!city.mana) return true
@@ -143,7 +143,7 @@ export class TowerInteraction {
       (isGrey(tower) ? 1 : 2) * towerArea(tower, city.cellUnit, city.towerSize) * Buffs.buildCost
     ))
     if (!city.freeClicks && !city.mana.spend(cost)) {
-      Sounds.play('no-money', 1.0, 0.06, 0.9) // can't afford this build
+      Sounds.play('error', 1.0, 0.06, 0.35) // can't afford this build
       return false
     }
     // Floating "-cost" caption rising off the tower (like a placement / gen pulse).

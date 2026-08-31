@@ -148,7 +148,7 @@ const VOICES = {
  */
 const CORE = new Set([
   'intro', 'reveal', 'pop', 'tick', 'pluck', 'roll', 'good', 'dink', 'energy',
-  'snap', 'error', 'no-money', 'success',
+  'snap', 'error', 'success',
   'stone-01', 'stone-02', 'stone-03', 'stone-04', 'stone-05',
   'clink01', 'clink02', 'clink03', 'clink04', 'clink05', 'clink06', 'clink07', 'clink08',
 ])
@@ -167,7 +167,7 @@ const SIMPLE = [
   'mortar-shoot', 'mortar-hit', 'warning1', 'success',
   // long-form event sounds
   'horn-boss', 'countdown', 'tick-fast', 'gen-online', 'sting',
-  'creep-warn', 'flyer-warn', 'snap', 'no-money', 'game-over', 'king-hit', 'level-complete', 'card-reveal',
+  'creep-warn', 'flyer-warn', 'snap', 'game-over', 'king-hit', 'level-complete', 'card-reveal',
   // short alert blips, addressed individually so each threat type is learnable
   'alert1', 'alert2', 'alert3',
 ]
@@ -197,6 +197,9 @@ const GROUPS = {
 /** Minimum seconds between repeats, for sounds that would otherwise stack up
  *  when many entities fire the same event in one frame. */
 const COOLDOWN = {
+  // Fires on every dud click (max height, can't afford); spamming a wall you
+  // can't build on shouldn't stutter.
+  error: 0.35,
   'gen-warn': 0.6,
   horn: 1.0,
   'horn-boss': 1.0,
@@ -216,7 +219,6 @@ const COOLDOWN = {
   // Creep arrivals cluster at the start of a wave; one per creep is a swarm.
   'creep-warn': 0.1,
   snap: 0.04, // fast drags cross cells quickly; just enough to stop a buzz
-  'no-money': 0.35, // click-spamming a wall you can't afford shouldn't stutter
 
   spawn: 0.25, // now only big/giant, which are rare - it can breathe
   'flyer-warn': 1.2,

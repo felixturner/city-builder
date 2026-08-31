@@ -259,7 +259,7 @@ export class TilePalette {
    *  refill-ring timer, same as discarding them all. */
   _rerollAll() {
     if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
-      Sounds.play('no-money', 1.0, 0.06, 0.9)
+      Sounds.play('error', 1.0, 0.06, 0.35)
       return
     }
     Sounds.play('roll', 1.0, 0.15)
@@ -567,7 +567,7 @@ export class TilePalette {
   _discard(i) {
     if (this.drag || !this.slots[i].tile) return
     if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
-      Sounds.play('no-money', 1.0, 0.06, 0.9)
+      Sounds.play('error', 1.0, 0.06, 0.35)
       return
     }
     this._consume(i)
@@ -586,7 +586,7 @@ export class TilePalette {
         // Too expensive to even pick up. Same cue as any other "you can't
         // afford that" - error is for a move that's wrong, not one you're
         // merely too poor to make.
-        Sounds.play('no-money', 1.0, 0.06, 0.9)
+        Sounds.play('error', 1.0, 0.06, 0.35)
         this.pending.done = true
         return
       }

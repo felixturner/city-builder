@@ -96,7 +96,7 @@ export class LotGrowth {
 
     // Each click costs 1 mana; out of mana - block and signal (consume click).
     if (!city.freeClicks && city.mana && !city.mana.spend(1)) {
-      Sounds.play('no-money', 1.0, 0.06, 0.9)
+      Sounds.play('error', 1.0, 0.06, 0.35)
       return true
     }
     if (!city.freeClicks && city.floatingText) city.floatingText.spawn(worldX, 1.5, worldZ, '-1', ENERGY_COLOR, 0, null)
