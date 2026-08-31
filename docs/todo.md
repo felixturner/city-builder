@@ -1,10 +1,16 @@
 # TODO
 
+more threat warnings when king is exposed attacked
+smaller bag?
+too easy
+needs more strategy??/
+more variety - game is monolithic all feels the same???
+attack is overwhelming no idea whats happening - less creeps? creeps come from one side?
+ammo never runs out?
+
 
 make the big trails do more. 
 	hurt bad guys?
-	need trails to power everyhting?
-	guns / barracks / enegy gens?
 
 needs more strtegy for tile placement
 	closed walls are stronger?
@@ -20,7 +26,6 @@ shield tiles - protect other tiles.
 power up tiles - boost guns and other tiles
 after x waves, expand play field? (would need panning)
 later waves - send stronger creeps not just more creeps.
-show energy /ammo bnoxes with little crates that explode?
 
 - make completing wall rings more important. buff walls that are completed x2 def.
 - add wildcards bonuses buffs etc.
