@@ -41,6 +41,8 @@ const KING_BONUS = 4
 // now a trail reaching a turret, area generator or shield is what brings that
 // building up to full speed.
 const SUPPORT_PENALTY = 0.5
+// Path generators are blue; the connect burst reads as coming from them.
+const SUPPORT_ACCENT = 2
 
 const MIN_SPAWN_GAP = 0.07 // seconds between units at full tilt
 const MAX_SPAWNS_PER_TICK = 40 // hard backstop on captions per tower per tick
@@ -85,6 +87,20 @@ export class EnergySystem {
     this._cb = new Vector2()
     this._size = new Vector2()
     this._c = new Vector2()
+  }
+
+  /** A building just came under a support tower: ring out from it and label the
+   *  speed it just gained. */
+  announceSupport(t) {
+    const city = this.city
+    const c = t.box.getCenter(this._c)
+    const x = c.x + city.gridOffsetX, z = c.y + city.gridOffsetZ
+    const color = city.accentColors[SUPPORT_ACCENT]
+    city.spawnSupportRing?.(x, z, color)
+    city.floatingText?.spawn(
+      x, towerTopY(t, city.floorHeight) + 1.0, z,
+      `x${Math.round(1 / SUPPORT_PENALTY)}`, `#${color.getHexString()}`, 0, 'gen-online'
+    )
   }
 
   /**
@@ -208,7 +224,18 @@ export class EnergySystem {
     // A trail from a support tower isn't only decoration any more: reaching a
     // building is what brings it up to full speed. Same geometry, same links -
     // the line you can see IS the supply.
+    //
+    // Announce the ones that just came online. Diffed against the previous set
+    // rather than fired per link, so re-running the network (which happens on
+    // every tower change) doesn't re-announce buildings that were already
+    // supported.
+    const prev = this.supported
     this.supported = supported
+    if (prev) {
+      for (const t of supported) {
+        if (!prev.has(t)) this.announceSupport(t)
+      }
+    }
 
     // Only rebuild trail meshes when the actual connection set changes (disposing
     // WebGPU node materials leaks, so we avoid rebuilding every tower change).

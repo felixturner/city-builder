@@ -1071,6 +1071,39 @@ export class City {
   }
 
 
+  /**
+   * Ring that bursts out of a building the moment a support tower reaches it.
+   *
+   * Expo-out so it snaps wide immediately and eases to a stop, fading bright to
+   * nothing - the point is to say "this just changed" at a glance across a board
+   * that may have a hundred creeps on it.
+   */
+  spawnSupportRing(x, z, color) {
+    if (!this._supportRingGeo) {
+      // Unit disc, scaled per burst. Flat on the ground, drawn over it.
+      this._supportRingGeo = new CircleGeometry(1, 40)
+      this._supportRingGeo.rotateX(-Math.PI / 2)
+    }
+    const mat = new MeshBasicNodeMaterial({
+      color: color.clone(), transparent: true, opacity: 0.85,
+      depthWrite: false, depthTest: false,
+    })
+    mat.mrtNode = mrt({ output: output, normal: vec3(0, 1, 0) }) // flat: skip AO
+    const mesh = new Mesh(this._supportRingGeo, mat)
+    mesh.position.set(x, 0.09, z)
+    mesh.scale.setScalar(0.01)
+    mesh.renderOrder = 5
+    this.scene.add(mesh)
+    gsap.to(mesh.scale, {
+      x: this.cellUnit * 3.2, y: 1, z: this.cellUnit * 3.2,
+      duration: 0.75, ease: 'expo.out',
+    })
+    gsap.to(mat, {
+      opacity: 0, duration: 0.75, ease: 'expo.out',
+      onComplete: () => { this.scene.remove(mesh); mat.dispose() },
+    })
+  }
+
   /** Set every instance color of a tower to a single color. */
   setTowerColor(tower, color) {
     const mesh = this.towerMesh
