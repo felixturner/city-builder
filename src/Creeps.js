@@ -128,12 +128,14 @@ export class Creeps {
     this.elapsed = 0
     this.graceTime = 30 // first wave starts ~30s in (build-up grace period)
     this.spawnTimer = 0
-    // The whole difficulty ramp lives in these three numbers now that
-    // spawnBurst is gone. minInterval is well under the old 0.45 because it no
-    // longer gets multiplied by a burst of 3.
+    // The whole difficulty ramp lives in these numbers now that spawnBurst is
+    // gone. minInterval is no longer a ceiling on difficulty - it's the point
+    // where the curve changes shape (see spawnInterval).
     this.startInterval = 1.6 // seconds between spawns right after grace
-    this.minInterval = 0.22 // fastest spawn cadence late game
+    this.minInterval = 0.22 // cadence at the end of the opening ramp
     this.rampDuration = 420 // seconds to go from start -> min
+    this.halvingPeriod = 420 // after the ramp, the gap halves every this many secs
+    this.absoluteMinInterval = 0.05 // engine backstop, not a design limit
 
     // Waves run on a fixed clock: spawn for waveActive secs, then the rest of
     // wavePeriod is the build phase. Creeps left alive past the spawn window
@@ -213,9 +215,11 @@ export class Creeps {
      * Both curves are capped: uncapped, a giant at 10x base HP times an
      * unbounded multiplier stops being a fight and becomes a wall.
      */
-    this.hpPerWave = 0.12 // +12% health per wave
-    this.attackPerWave = 0.10 // +10% floors knocked per hit
-    this.maxRampMul = 3.0 // both curves stop here (~wave 17-20)
+    // Uncapped on purpose: creeps keep getting tougher until they kill you.
+    // These used to stop at 3x, which combined with a spawn-rate floor meant
+    // the game reached a steady state you could hold forever.
+    this.hpPerWave = 0.12 // +12% health per wave, no ceiling
+    this.attackPerWave = 0.10 // +10% floors knocked per hit, no ceiling
 
     // Ammo boxes: a dying creep leaves one 20% of the time. At 5 a box that's
     // 1.0 ammo per kill on average, which is what Turrets.SHOT_COST is priced
@@ -255,8 +259,8 @@ export class Creeps {
   rampMul() {
     const w = this.waveNumber
     return {
-      hp: Math.min(this.maxRampMul, 1 + w * this.hpPerWave),
-      atk: Math.min(this.maxRampMul, 1 + w * this.attackPerWave),
+      hp: 1 + w * this.hpPerWave,
+      atk: 1 + w * this.attackPerWave,
     }
   }
 
@@ -273,8 +277,19 @@ export class Creeps {
    */
   get spawnInterval() {
     const since = Math.max(0, this.elapsed - this.graceTime)
-    const t = Math.min(1, since / this.rampDuration)
-    return this.startInterval + (this.minInterval - this.startInterval) * t
+    // Opening ramp: linear down to minInterval. Unchanged - this stretch is
+    // tuned and the shape of the first seven waves depends on it.
+    if (since <= this.rampDuration) {
+      return this.startInterval
+        + (this.minInterval - this.startInterval) * (since / this.rampDuration)
+    }
+    // Past it, keep going: the gap halves every halvingPeriod, so creep counts
+    // rise without bound. minInterval used to be a hard floor, which meant wave
+    // counts flatlined at 91 from wave 7 on and the only thing still growing
+    // was per-creep health. absoluteMinInterval is a backstop so the spawner
+    // can't melt the frame rate, not a difficulty ceiling.
+    const beyond = (since - this.rampDuration) / this.halvingPeriod
+    return Math.max(this.absoluteMinInterval, this.minInterval * Math.pow(0.5, beyond))
   }
 
   snap(v) {
@@ -304,6 +319,8 @@ export class Creeps {
     // gives one warning rather than five.
     if (bomber) { this.spawnBomber(); return }
     const ramp = this.rampMul()
+    // Later bosses field tougher giants, not just more of them.
+    const bossMul = opts.bossTier ? 1 + 0.4 * (opts.bossTier - 1) : 1
     const scale = giant ? 3 : (big ? 1.4 : 0.7)
     const baseY = giant ? 3 : (big ? 1.5 : 0.8)
 
@@ -374,20 +391,27 @@ export class Creeps {
       baseY,
       maxHits: Math.max(1, Math.round(
         (giant ? this.hitsToKill * 10 : (big ? this.hitsToKill * 2 : this.hitsToKill))
-        * Buffs.creepHp * ramp.hp
+        * Buffs.creepHp * ramp.hp * bossMul
       )),
       knockFloors: Math.max(1, Math.round((giant ? 4 : (big ? 2 : 1)) * ramp.atk)),
-      stepMul: giant ? 2.2 : 1, // giants lumber slower
+      stepMul: giant ? 1.8 : 1, // giants lumber slower (was 2.2 - turrets got too long on them)
       kingSeeker,
     })
   }
 
   /** Boss wave: a same-side group of `bossOrdinal` giants + 5 shooter buddies. */
+  /**
+   * Boss group. The escort and the giants' toughness both scale with the boss
+   * ordinal, because a FIXED group stops being a spike: normal waves grow from
+   * 12 creeps to hundreds, so 1-3 giants plus 5 shooters went from a serious
+   * threat to noise. Boss 1 used to be easier than the ordinary wave two later.
+   */
   spawnBossWave(waveIdx) {
-    const giants = this.bossOrdinal(waveIdx)
+    const o = this.bossOrdinal(waveIdx)
     const edge = Math.floor(Math.random() * 4) // all come in from the same side
-    for (let i = 0; i < giants; i++) this.spawn({ giant: true, edge })
-    for (let i = 0; i < 5; i++) this.spawn({ forceShooter: true, edge })
+    const escort = 3 + 4 * o
+    for (let i = 0; i < o; i++) this.spawn({ giant: true, edge, bossTier: o })
+    for (let i = 0; i < escort; i++) this.spawn({ forceShooter: true, edge })
   }
 
   /** Every 5th wave (1-based) is a boss wave. */
