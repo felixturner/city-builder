@@ -2,6 +2,7 @@ import { Mesh, BoxGeometry, MeshStandardNodeMaterial, Vector3, Color } from 'thr
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ACCENT_COLORS } from './palette.js'
+import { glow, NO_AO_MRT } from './fx.js'
 
 /**
  * LootBoxes - six crates scattered over the board that pay out an upgrade when
@@ -17,7 +18,13 @@ import { ACCENT_COLORS } from './palette.js'
  */
 
 const COUNT = 8 // one per angular slice, so they can't all cluster on one side
-const SIZE = 1.5 // world units across
+const SIZE = 0.735 // world units across (1.5 -> 1.05 -> another 30% off)
+// Stand the cube on a vertex so it reads as a gem rather than a crate: 45deg
+// about Z stands it on an EDGE, then atan(1/sqrt2) about X tips that edge onto
+// a point. The mesh uses YXZ order so the Z tilt and the X tip both land before
+// the Y spin, which then turns it about world up instead of tumbling it.
+const CORNER_TILT_Z = Math.PI / 4
+const CORNER_TILT_X = -Math.atan(1 / Math.SQRT2) // ~-35.26deg
 const MIN_R = 0.30 // placement band, as a fraction of the grid half-extent...
 const MAX_R = 0.90 // ...keeping crates off the king and inside the buildable area
 const BOB_HEIGHT = 0.35
@@ -80,13 +87,23 @@ export class LootBoxes {
   spawn(x, z) {
     const colorIndex = Math.floor(Math.random() * ACCENT_COLORS.length)
     const accent = ACCENT_COLORS[colorIndex]
+    // Emissive is back to a sane level now that glow is opt-in by layer: the
+    // crate no longer has to out-shine the whole board to be picked out by a
+    // luminance threshold, it just has to be on the layer.
     const mat = new MeshStandardNodeMaterial({
       color: new Color(accent),
-      emissive: new Color(accent).multiplyScalar(0.35),
+      emissive: new Color(accent).multiplyScalar(0.5),
       roughness: 0.35,
       metalness: 0.1,
     })
-    const mesh = new Mesh(this.geo, mat)
+    // Every material that reaches the glow pass has to declare the same two MRT
+    // outputs as the target's attachments, so the crate carries the flat-normal
+    // node too. Side benefit: a floating gem gets no ambient occlusion, which is
+    // what you'd want anyway.
+    mat.mrtNode = NO_AO_MRT()
+    const mesh = glow(new Mesh(this.geo, mat))
+    mesh.rotation.order = 'YXZ' // spin about world up, not the tilted axis
+    mesh.rotation.set(CORNER_TILT_X, Math.random() * Math.PI * 2, CORNER_TILT_Z)
     mesh.position.set(x, HOVER_Y, z)
     mesh.castShadow = true
     this.scene.add(mesh)

@@ -15,13 +15,26 @@ import { AMMO_COLOR } from './Mana.js'
 import { isShield, shieldCharges, shieldRadiusCells } from './blockTypes.js'
 import { SHIELD_LINE } from './palette.js'
 
+// Distance from the city centre at which creeps appear, in world units.
+//
+// This used to be derived (actualGridWidth / 2 + 14), which meant a bigger board
+// pushed spawns further out and quietly made every wave slower to arrive. Fixed
+// now: 59 is what that formula produced on the 9-lot board. On an 11-lot board
+// (half-extent 55) that leaves only 4 units - two cells - of run-up outside the
+// buildable area, so creeps arrive at an edge wall almost immediately.
+const SPAWN_RING = 59
+
+// Flyers read as smaller than ground creeps - they are further from the camera
+// and not a thing you can wall against, so they should not loom.
+const BOMBER_SCALE = 0.7
+
 // Damage a shield perimeter does to a creep crossing it (halved when the shield
 // has no support tower reaching it - see updateShieldBarriers).
 const SHIELD_DAMAGE = 2
 // Seconds a creep glows shield-yellow after a barrier burns it.
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
-import { fxMaterial } from './fx.js'
+import { fxMaterial, glow } from './fx.js'
 
 /**
  * Creeps - abstract enemy nodes. Black diamonds (cubes rotated 45deg off the
@@ -63,7 +76,7 @@ export class Creeps {
     this.beams = []
     for (let i = 0; i < 8; i++) {
       const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
-      const mesh = new Mesh(this.beamGeo, mat)
+      const mesh = glow(new Mesh(this.beamGeo, mat))
       mesh.visible = false
       this.scene.add(mesh)
       this.beams.push({ mesh, life: 0, active: false })
@@ -202,9 +215,15 @@ export class Creeps {
 
     this.stepDuration = 0.30 // seconds to move one cell
     this.hopHeight = 0.6
-    // Spawn ring, always outside the board: hardcoded to 49 for the old 7-lot
-    // city, which would now sit INSIDE a 10-lot one and drop creeps mid-city.
-    this.reach = city.actualGridWidth / 2 + 14
+    // Spawn ring, always outside the board. It is a SQUARE ring (creeps appear
+    // at x = +/-reach or z = +/-reach), so it only has to clear the board's
+    // half-extent, not its corner distance.
+    //
+    // Held at the absolute value it had on the old 9-lot board rather than
+    // tracking the board size, so growing the city does not also lengthen every
+    // creep's walk in. The margin outside the buildable area is now thin - see
+    // SPAWN_RING - which is the deliberate trade.
+    this.reach = SPAWN_RING
     // Half-extent of the buildable grid. Creeps spawn at `reach`, i.e. well
     // outside this, and only count as having arrived once they cross it.
     this.fieldHalf = city.actualGridWidth / 2
@@ -617,7 +636,7 @@ export class Creeps {
     const r = this.reach
     const mesh = new Mesh(this.geo, this.bomberMat)
     mesh.castShadow = true
-    mesh.scale.setScalar(1.0)
+    mesh.scale.setScalar(BOMBER_SCALE)
 
     // Fly along one axis, crossing the map. The cross-axis offset stays within
     // the center lot (world origin) so the path always passes over the middle.

@@ -291,6 +291,12 @@ export class EnergySystem {
     const n = Math.max(1, Math.min(amt, Math.floor(span / MIN_SPAWN_GAP), MAX_SPAWNS_PER_TICK))
     const per = amt / n
     const gap = span / n
+    // Every generator's tick is driven off the SAME shared manaTimer, so without
+    // this they all opened their stream on the same frame and the board flashed
+    // in unison - one loud chord instead of a rhythm. A stable per-tower phase
+    // decorrelates them while keeping each generator's own beat steady.
+    if (tower.incomePhase === undefined) tower.incomePhase = Math.random()
+    const phase = tower.incomePhase * span
     const c = tower.box.getCenter(this._c)
     const cx = c.x + city.gridOffsetX
     const cy = towerTopY(tower, city.floorHeight) + 0.5
@@ -301,7 +307,7 @@ export class EnergySystem {
       const give = i === n - 1 ? left : Math.max(1, Math.round(per))
       left -= give
       this.pulseEvents.push({
-        members: [tower], t: i * gap, amt: give, sound: 'dink',
+        members: [tower], t: phase + i * gap, amt: give, sound: 'dink',
         color: ENERGY_COLOR, cx, cy, cz,
       })
     }
@@ -346,7 +352,10 @@ export class EnergySystem {
         // The energy lands at the moment its caption pops, not up front, so the
         // bar climbs in step with the bleeps.
         city.mana.add(e.amt)
-        this.spawnTextAt(e.cx, e.cy, e.cz, `+${e.amt}`, e.color, e.sound)
+        // No "+N" caption here any more: the flying box and the bar climbing
+        // already say it, and at full income the board was carpeted in them.
+        // The sound the caption used to carry fires on its own.
+        if (e.sound) Sounds.play(e.sound)
         // ...and a little yellow box flies from the generator up to the meter.
         city.resourceFly?.spawn(e.cx, e.cy, e.cz, city.camera, city.mana.energyBar, ENERGY_COLOR)
         this.pulseEvents.splice(i, 1)

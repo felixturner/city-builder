@@ -2,7 +2,7 @@ import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three
 import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges } from '../blockTypes.js'
 import { Buffs } from '../buffs.js'
 import { SHIELD_LINE } from '../palette.js'
-import { fxMaterial } from '../fx.js'
+import { fxMaterial, glow } from '../fx.js'
 
 
 /**
@@ -38,7 +38,7 @@ class RingLayer {
     if (!m || m.geometry !== geo) {
       const mat = m ? m.material : this.makeMaterial()
       if (m) this.scene.remove(m)
-      m = new Mesh(geo, mat)
+      m = glow(new Mesh(geo, mat))
       m.rotation.x = -Math.PI / 2
       m.renderOrder = -1
       this.scene.add(m)

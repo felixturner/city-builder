@@ -5,6 +5,8 @@ import {
   Vector3,
   Object3D,
   BatchedMesh,
+  CylinderGeometry,
+  DoubleSide,
   MeshPhysicalNodeMaterial,
   Color,
   GridHelper,
@@ -21,7 +23,7 @@ import {
 import { Line2 } from 'three/examples/jsm/lines/webgpu/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import gsap from 'gsap'
-import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, attribute, output } from 'three/tsl'
+import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, attribute, output, positionLocal, smoothstep } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
@@ -37,7 +39,7 @@ import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS } from './palette.js'
 import { Buffs } from './buffs.js'
 import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, tileColorIndex, shieldRadiusCells, KING_HEALTH } from './blockTypes.js'
-import { fxMaterial } from './fx.js'
+import { fxMaterial, glow } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
 // A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
@@ -69,7 +71,7 @@ export class City {
   //
   // Everything downstream derives from this - creep spawn ring, shadow bounds
   // and the zoom-out cap all read actualGridWidth rather than hardcoding it.
-  static CITY_SIZE_LOTS = 9
+  static CITY_SIZE_LOTS = 11
 
   constructor(scene, params) {
     this.scene = scene
@@ -294,7 +296,7 @@ export class City {
     t.placed = true
     t.visible = true
     t.numFloors = 0
-    t.rotation = 0
+    t.rotation = opts.rotation || 0 // corner-shaped roofs (shield/barracks) have a facing
     t.skipFactor = 2 // always passes visibility
     t.colorIndex = opts.colorIndex
     t.typeTop = opts.typeTop
@@ -517,6 +519,58 @@ export class City {
     this.updateTowerMatrices(t)
     this.king = t
     this.kingAlive = true
+    this.createKingBeam()
+  }
+
+  /**
+   * A shaft of light standing on the king and running straight up out of the
+   * board, in whatever accent the king drew this run.
+   *
+   * The king is a single 1x1 tile in the middle of a city that fills the screen,
+   * and once walls go up around it there is nothing to say where it is. The beam
+   * is readable from any camera angle and at any zoom, which a marker on the
+   * ground is not.
+   *
+   * Additive and AO-free like every other coloured effect (see fx.js), and depth
+   * tested, so towers in front of it occlude it rather than it hanging over the
+   * whole city.
+   */
+  createKingBeam() {
+    if (!this.king) return
+    const H = 160 // tall enough to leave frame at every zoom level
+    // Open-ended: the caps would read as bright discs from a high camera.
+    const geo = new CylinderGeometry(0.16, 0.16, H, 12, 1, true)
+    const mat = fxMaterial(new MeshBasicNodeMaterial({
+      color: this.accentColors[this.king.colorIndex].clone(),
+      side: DoubleSide, // an open tube shows its inside wall from most angles
+    }))
+    // Solid where it leaves the roof, gone by the top - a hard cut in the sky
+    // would read as a cylinder rather than a beam. positionLocal.y runs
+    // -H/2..H/2, so this is just that remapped and flipped.
+    const tY = positionLocal.y.div(H).add(0.5)
+    mat.opacityNode = smoothstep(1.0, 0.0, tY).mul(0.55)
+    const mesh = glow(new Mesh(geo, mat))
+    mesh.frustumCulled = false // it is taller than its own bounding sphere suggests
+    mesh.renderOrder = 4
+    this.scene.add(mesh)
+    this.kingBeam = mesh
+    this.kingBeamHeight = H
+    this.updateKingBeam()
+  }
+
+  /** Keep the beam standing on the king's roof as the king loses floors. */
+  updateKingBeam() {
+    const beam = this.kingBeam
+    if (!beam) return
+    const king = this.king
+    if (!king || !king.visible || !this.kingAlive) { beam.visible = false; return }
+    beam.visible = true
+    const c = king.box.getCenter(this.towerCenter)
+    beam.position.set(
+      c.x + this.gridOffsetX,
+      towerTopY(king, this.floorHeight) + this.kingBeamHeight / 2,
+      c.y + this.gridOffsetZ
+    )
   }
 
   /** Fire the game-over hook once (the king died). */
@@ -1088,7 +1142,7 @@ export class City {
     const mat = fxMaterial(new MeshBasicNodeMaterial({
       color: color.clone(), opacity: 0.85,
     }))
-    const mesh = new Mesh(this._supportRingGeo, mat)
+    const mesh = glow(new Mesh(this._supportRingGeo, mat))
     mesh.position.set(x, 0.09, z)
     mesh.scale.setScalar(0.01)
     mesh.renderOrder = 5
@@ -1115,6 +1169,7 @@ export class City {
     this.debris.update(dt)
     this.interaction.update(dt)
     this.energy.update(dt)
+    this.updateKingBeam()
   }
 
   /** Count currently-placed generators (for the MAX_GENS cap). */

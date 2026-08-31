@@ -51,7 +51,7 @@ export class Demo {
   static MAX_DT = 1 / 20
 
   // Seconds between a crate bursting and the upgrade cards flying out of it.
-  static CARD_DELAY = 0.55
+  static CARD_DELAY = 1.55 // long enough for the crate's confetti to settle
 
   // Seconds between the king dying and the game freezing behind the score panel,
   // so you get to watch the creeps finish the job instead of cutting to a
@@ -176,10 +176,21 @@ export class Demo {
       [this.city.towerMesh],
       {
         onHover: (intersection) => this.city.interaction.onHover(intersection),
-        onPointerDown: (intersection, x, y, isTouch) => this.city.interaction.onPointerDown(intersection, x, y, isTouch),
-        onPointerUp: (isTouch, touchIntersection) => this.city.interaction.onPointerUp(isTouch, touchIntersection),
+        // Building is gated here rather than inside TowerInteraction because
+        // Demo is what owns `paused` - and the power-up screen sets the same
+        // flag, so the card menu blocks the board for free. Hover and move stay
+        // live so nothing gets stuck highlighted when you pause mid-gesture.
+        onPointerDown: (intersection, x, y, isTouch) => this.buildLocked
+          ? false : this.city.interaction.onPointerDown(intersection, x, y, isTouch),
+        onPointerUp: (isTouch, touchIntersection) => {
+          if (this.buildLocked) return
+          this.city.interaction.onPointerUp(isTouch, touchIntersection)
+        },
         onPointerMove: (x, y) => this.city.interaction.onPointerMove(x, y),
-        onRightClick: (intersection) => this.city.interaction.onRightClick(intersection),
+        onRightClick: (intersection) => {
+          if (this.buildLocked) return
+          this.city.interaction.onRightClick(intersection)
+        },
         // Bounding-box picking so plus-block holes are still clickable
         pick: (ray) => this.city.interaction.pickTowerBox(ray)
       }
@@ -392,6 +403,8 @@ export class Demo {
     this.aoBlurAmount = this.postFX.aoBlurAmount
     this.aoIntensity = this.postFX.aoIntensity
     this.aoPass = this.postFX.aoPass
+    this.bloomEnabled = this.postFX.bloomEnabled
+    this.bloomPass = this.postFX.bloomPass
   }
 
   initStats() {
@@ -469,6 +482,11 @@ export class Demo {
     this.lootBoxes.update(dt)
     this.soldiers.update(dt)
     this.turrets.update(dt)
+  }
+
+  /** True while the board should ignore build/destroy input. */
+  get buildLocked() {
+    return this.paused || this.isGameOver || this.kingDead
   }
 
   /** Floating play/pause button at the bottom-center of the screen. */

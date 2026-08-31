@@ -18,7 +18,7 @@ import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { roofGeomIndex } from './blockTypes.js'
-import { fxMaterial, NO_AO_MRT } from './fx.js'
+import { fxMaterial, NO_AO_MRT, glow } from './fx.js'
 
 // Write a fake "up" normal to the MRT so GTAO treats the FX as flat and barely
 // darkens them - keeps beams/projectiles/explosions AO-free while staying in the
@@ -86,7 +86,7 @@ export class Turrets {
     this.beams = []
     for (let i = 0; i < 8; i++) {
       const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
-      const mesh = new Mesh(this.beamGeo, mat)
+      const mesh = glow(new Mesh(this.beamGeo, mat))
       mesh.visible = false
       this.scene.add(mesh)
       this.beams.push({ mesh, life: 0, active: false })
@@ -159,6 +159,12 @@ export class Turrets {
     const inner = new Group()
     for (const p of parts) {
       if (!p.geometry.attributes.normal) p.geometry.computeVertexNormals()
+      // turrets.glb ships the 'Blosm' material with an emissive factor of
+      // (1, 0.74, 0). That was harmless before, but with bloom in the pipeline
+      // every turret on the board flares. Only the loot crate is meant to glow.
+      for (const mat of Array.isArray(p.material) ? p.material : [p.material]) {
+        if (mat && mat.emissive) mat.emissive.setScalar(0)
+      }
       inner.attach(p)
     }
     const box = new Box3().setFromObject(inner)
@@ -522,7 +528,7 @@ export class Turrets {
     const mat = fxMaterial(new MeshBasicNodeMaterial({
       color: this._explodeColor.clone(), opacity: 0.6,
     }))
-    const mesh = new Mesh(this.explosionGeo, mat)
+    const mesh = glow(new Mesh(this.explosionGeo, mat))
     mesh.position.set(x, 0, z)
     mesh.scale.setScalar(0.001)
     this.scene.add(mesh)

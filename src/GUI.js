@@ -56,6 +56,12 @@ export class GUIManager {
       aoBlur: 0.3,
       aoIntensity: 0.95,
       vignette: true,
+      bloom: true,
+      bloomStrength: 1.1,
+      bloomRadius: 0.7,
+      // 0 on purpose: the glow LAYER is the selection now, not brightness.
+      // Raising this just dims the dimmest FX rather than excluding anything.
+      bloomThreshold: 0,
       trails: true,
       dots: true,
       debris: true,
@@ -103,7 +109,7 @@ export class GUIManager {
     })
 
     // Debug view
-    const viewMap = { final: 0, color: 1, depth: 2, normal: 3, ao: 4 }
+    const viewMap = { final: 0, color: 1, depth: 2, normal: 3, ao: 4, glow: 5, bloom: 6 }
     viewFolder.add(allParams.debug, 'view', Object.keys(viewMap)).name('Debug View').onChange((v) => {
       demo.debugView.value = viewMap[v]
     })
@@ -299,6 +305,18 @@ export class GUIManager {
     fxFolder.add(allParams.fx, 'vignette').name('Vignette').onChange((v) => {
       demo.vignetteEnabled.value = v ? 1 : 0
     })
+    fxFolder.add(allParams.fx, 'bloom').name('Bloom').onChange((v) => {
+      demo.bloomEnabled.value = v ? 1 : 0
+    })
+    fxFolder.add(allParams.fx, 'bloomStrength', 0, 3, 0.05).name('Bloom Strength').onChange((v) => {
+      if (demo.bloomPass) demo.bloomPass.strength.value = v
+    })
+    fxFolder.add(allParams.fx, 'bloomRadius', 0, 1, 0.01).name('Bloom Radius').onChange((v) => {
+      if (demo.bloomPass) demo.bloomPass.radius.value = v
+    })
+    fxFolder.add(allParams.fx, 'bloomThreshold', 0, 2, 0.01).name('Bloom Threshold').onChange((v) => {
+      if (demo.bloomPass) demo.bloomPass.threshold.value = v
+    })
 
     return allParams
   }
@@ -347,6 +365,12 @@ export class GUIManager {
     if (demo.aoBlurAmount) demo.aoBlurAmount.value = params.fx.aoBlur
     demo.aoIntensity.value = params.fx.aoIntensity
     demo.vignetteEnabled.value = params.fx.vignette ? 1 : 0
+    demo.bloomEnabled.value = params.fx.bloom ? 1 : 0
+    if (demo.bloomPass) {
+      demo.bloomPass.strength.value = params.fx.bloomStrength
+      demo.bloomPass.radius.value = params.fx.bloomRadius
+      demo.bloomPass.threshold.value = params.fx.bloomThreshold
+    }
 
     // Camera
     demo.perspCamera.fov = params.camera.fov

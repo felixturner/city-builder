@@ -237,8 +237,15 @@ export class TowerRenderer {
       }
       return tower.numFloors
     }
-    // The king is never demolished - knocking its last floor ends the game.
-    if (tower.king) { city.triggerGameOver(); return 0 }
+    // Level 0 is a thin roof, not immortality: EVERY type goes to nothing from
+    // here - walls, generators, turrets and the king alike. The king used to be
+    // exempt, so once its last floor went it sat on the board as an
+    // indestructible roof tile for the rest of the run.
+    //
+    // triggerGameOver is idempotent (it checks kingAlive), so firing it again
+    // here is harmless - the real trigger already happened when the king's last
+    // floor came off, above.
+    if (tower.king) city.triggerGameOver()
     // Destroyed at level 0: free its cell(s) and remove it (debris already spawned).
     city.demolishTower(tower)
     return 0

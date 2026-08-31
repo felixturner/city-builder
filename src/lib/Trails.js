@@ -10,6 +10,7 @@ import {
   MeshBasicNodeMaterial,
 } from 'three/webgpu'
 import { uniform, uv, smoothstep, mix, vec3, float, fract, abs, min, max, clamp, select, Fn, mrt, output } from 'three/tsl'
+import { glow } from '../fx.js'
 
 // World units of phase shift between consecutive trails, so their gradients
 // don't march in lockstep. Baked into the geometry's uv.y ramp (createPathMesh)
@@ -565,7 +566,7 @@ export class Trails {
     // Create glowing animated material
     const material = this.createGlowMaterial(colorIndex)
 
-    const mesh = new Mesh(geometry, material)
+    const mesh = glow(new Mesh(geometry, material))
     mesh.frustumCulled = false
     mesh.renderOrder = 1 // Render above dots (which have default renderOrder 0)
     this.scene.add(mesh)

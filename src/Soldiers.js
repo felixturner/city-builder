@@ -3,6 +3,7 @@ import { Sounds } from './lib/Sounds.js'
 import { isBarracks, BARRACKS_COLOR } from './blockTypes.js'
 import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
+import { Tower } from './Tower.js'
 
 /**
  * Soldiers - the little friendly cubes a barracks puts out.
@@ -52,10 +53,14 @@ export class Soldiers {
     this.soldiers = []
 
     this.geo = new BoxGeometry(2, 2, 2) // same unit cube as a creep, scaled down
-    const accent = city.accentColors[BARRACKS_COLOR]
+    // The same grey the walls are built from, so a soldier reads as a piece of
+    // your city that got up and walked - and, more usefully, so the only
+    // coloured things moving on the board are creeps.
+    //
+    // No emissive: with bloom in the pipeline anything emissive smears, and the
+    // loot crate is the only thing meant to.
     this.mat = new MeshStandardNodeMaterial({
-      color: new Color(accent),
-      emissive: new Color(accent).multiplyScalar(0.18),
+      color: Tower.BASE_COLOR.clone(),
       roughness: 0.5,
       metalness: 0,
     })

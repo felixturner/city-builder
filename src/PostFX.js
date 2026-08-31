@@ -24,6 +24,8 @@ import {
   texture,
 } from 'three/tsl'
 import { ao } from 'three/addons/tsl/display/GTAONode.js'
+import { bloom } from 'three/addons/tsl/display/BloomNode.js'
+import { FX_GLOW_LAYER } from './fx.js'
 import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js'
 
 // Objects on this camera layer (laser beams, projectiles) skip the main scene
@@ -42,6 +44,7 @@ export class PostFX {
     // Effect toggle uniforms
     this.aoEnabled = uniform(1)
     this.vignetteEnabled = uniform(1)
+    this.bloomEnabled = uniform(1)
 
     // Debug view: 0=final, 1=color, 2=depth, 3=normal, 4=AO
     this.debugView = uniform(0)
@@ -94,6 +97,42 @@ export class PostFX {
     const fw = window.innerWidth * dpr, fh = window.innerHeight * dpr
     this.overlayTarget = new RenderTarget(fw, fh, { samples: 1 })
     this.overlayTarget.texture.format = RGBAFormat
+
+    // Half-res target holding ONLY the glow-layer objects. Half res because its
+    // whole purpose is to be blurred into a halo - the mip chain throws that
+    // detail away regardless, so rendering it sharp would be wasted work.
+    //
+    // TWO attachments, not one. Every FX material carries an mrtNode declaring
+    // {output, normal} (see fx.js), and a material's MRT struct has to match the
+    // attachments it is rendering into. Against a single-attachment target the
+    // struct came out with zero members, which is invalid WGSL - and one invalid
+    // pipeline invalidates the whole command buffer, so the entire pass, crates
+    // included, silently rendered nothing. The second attachment is written and
+    // never read; it exists to make the layouts agree.
+    this.glowTarget = new RenderTarget(Math.ceil(fw / 2), Math.ceil(fh / 2), { samples: 1, count: 2 })
+    for (const t of this.glowTarget.textures) t.format = RGBAFormat
+    // These NAMES are load-bearing, not documentation. MRTNode.setup() resolves
+    // each of a material's outputs to an attachment by matching texture.name
+    // (see getTextureIndex), and an unnamed attachment matches nothing - so
+    // every output was dropped and the struct was emitted with zero members,
+    // which WGSL rejects. PassNode names its own targets exactly this way.
+    this.glowTarget.textures[0].name = 'output'
+    this.glowTarget.textures[1].name = 'normal'
+  }
+
+  /**
+   * Depth-only stand-in used to prime the glow target's depth buffer.
+   *
+   * colorWrite off, so it lays depth and contributes no colour. It still needs a
+   * valid MRT struct - the shader is compiled either way - hence the mrtNode.
+   */
+  _glowDepthMaterial() {
+    if (!this._glowDepthMat) {
+      const m = new MeshBasicNodeMaterial({ colorWrite: false })
+      m.mrtNode = mrt({ output: output, normal: vec3(0, 1, 0) })
+      this._glowDepthMat = m
+    }
+    return this._glowDepthMat
   }
 
   _growMaskPool(n) {
@@ -168,12 +207,20 @@ export class PostFX {
     const overlayTex = texture(this.overlayTarget.texture)
     const withOverlay = withAO.mul(float(1).sub(overlayTex.a)).add(overlayTex.rgb)
 
+    // Bloom, fed ONLY the glow layer (see fx.js). Thresholding the whole scene
+    // meant anything bright glowed whether or not it was meant to; this way a
+    // thing glows because it was put on the layer, and material brightness has
+    // nothing to do with it. Hence threshold 0 - the layer IS the selection.
+    const glowTex = texture(this.glowTarget.textures[0]) // [1] is the unused normal attachment
+    this.bloomPass = bloom(glowTex, 1.1, 0.7, 0)
+    const withBloom = withOverlay.add(this.bloomPass.rgb.mul(this.bloomEnabled))
+
     // Vignette: darken edges toward black
     const vignetteFactor = float(1).sub(
       clamp(viewportUV.sub(0.5).length().mul(1.4), 0.0, 1.0).pow(1.5)
     )
     const vignetteMultiplier = mix(float(1), vignetteFactor, this.vignetteEnabled)
-    const withVignette = mix(vec3(0, 0, 0), withOverlay, vignetteMultiplier)
+    const withVignette = mix(vec3(0, 0, 0), withBloom, vignetteMultiplier)
 
     // Turret coverage glow: sample the union-of-circles mask (rendered to its
     // own RT in render()), blur it, and take (hard - blurred). That isolates a
@@ -197,6 +244,11 @@ export class PostFX {
     const depthViz = vec3(scenePassDepth)
     const normalViz = scenePassNormal.mul(0.5).add(0.5)
     const aoViz = vec3(blurredAO)
+    // 5 = what the glow pass actually captured, 6 = what bloom makes of it.
+    // Between them these say whether a missing glow is the LAYER (nothing in 5)
+    // or the composite (something in 5, nothing in 6).
+    const glowViz = glowTex.rgb
+    const bloomViz = this.bloomPass.rgb
 
     // Select output based on debug view
     const debugOutput = select(
@@ -208,7 +260,15 @@ export class PostFX {
         select(
           this.debugView.lessThan(2.5),
           depthViz,
-          select(this.debugView.lessThan(3.5), normalViz, aoViz)
+          select(
+            this.debugView.lessThan(3.5),
+            normalViz,
+            select(
+              this.debugView.lessThan(4.5),
+              aoViz,
+              select(this.debugView.lessThan(5.5), glowViz, bloomViz)
+            )
+          )
         )
       )
     )
@@ -229,6 +289,10 @@ export class PostFX {
     const h = Math.ceil((window.innerHeight * dpr) / 4)
     this.maskTarget.setSize(w, h)
     this.overlayTarget.setSize(window.innerWidth * dpr, window.innerHeight * dpr)
+    this.glowTarget.setSize(
+      Math.ceil((window.innerWidth * dpr) / 2),
+      Math.ceil((window.innerHeight * dpr) / 2)
+    )
   }
 
   render() {
@@ -253,6 +317,52 @@ export class PostFX {
     renderer.setClearColor(0x000000, 0)
     renderer.clear()
     renderer.render(scene, camera)
+    // Glow pass, in two steps.
+    //
+    // The target has its own depth buffer, and an empty one means nothing can
+    // occlude the glow - trails and the king's beam shine straight through the
+    // city. So first PRIME that depth with the solid geometry, then draw the
+    // glow objects against it with the depth test doing the masking for us.
+    //
+    // The scene pass's depth would be the obvious thing to borrow, but it is
+    // written later in this same frame (inside postProcessing.render below), so
+    // it would always be one frame stale and would crawl at silhouette edges
+    // whenever the camera moved.
+    //
+    // Occluders are the opaque, non-glowing meshes. Glow objects are held out so
+    // they cannot occlude each other - overlapping trail segments would
+    // otherwise cut into one another, which is the very thing their
+    // depthWrite:false avoids in the main pass. Transparent meshes are held out
+    // for the same reason: a sheet of additive floor is not something you want
+    // hiding the trail lying on top of it.
+    const hidden = []
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.visible) return
+      const m = o.material
+      const isTransparent = Array.isArray(m) ? m.some(x => x && x.transparent) : m && m.transparent
+      if (o.layers.isEnabled(FX_GLOW_LAYER) || isTransparent) {
+        o.visible = false
+        hidden.push(o)
+      }
+    })
+
+    renderer.setRenderTarget(this.glowTarget)
+    renderer.setClearColor(0x000000, 0)
+    renderer.clear()
+    camera.layers.mask = savedMask // occluders live on the ordinary layer
+    scene.overrideMaterial = this._glowDepthMaterial()
+    renderer.render(scene, camera)
+    scene.overrideMaterial = null
+
+    for (const o of hidden) o.visible = true
+
+    // Now the glow objects themselves, keeping the depth we just laid down.
+    const savedAutoClear = renderer.autoClear
+    renderer.autoClear = false
+    camera.layers.set(FX_GLOW_LAYER)
+    renderer.render(scene, camera)
+    renderer.autoClear = savedAutoClear
+
     camera.layers.mask = savedMask
     scene.background = savedBg
 

@@ -34,3 +34,25 @@ export function fxMaterial(material) {
   material.mrtNode = NO_AO_MRT()
   return material
 }
+
+/**
+ * Camera layer for objects that should BLOOM.
+ *
+ * Bloom used to run a luminance high-pass over the whole scene, which meant a
+ * thing glowed because it happened to be bright - so the soldiers and the
+ * emissive material inside turrets.glb flared without anyone asking, and the
+ * only control was a threshold that traded one wrong answer for another.
+ *
+ * Now glow is opt-in: these objects are rendered a second time into their own
+ * target and only THAT is bloomed. Objects stay on layer 0 as well, so this
+ * costs them nothing in the main pass - it is an extra pass over a handful of
+ * meshes, not a replacement.
+ */
+export const FX_GLOW_LAYER = 2
+
+/** Opt an object (and its children) into the bloom pass. */
+export function glow(object) {
+  object.layers.enable(FX_GLOW_LAYER)
+  if (object.children) for (const c of object.children) glow(c)
+  return object
+}

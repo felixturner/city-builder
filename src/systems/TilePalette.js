@@ -1,4 +1,4 @@
-import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color, MathUtils, AxesHelper } from 'three/webgpu'
+import { Mesh, MeshBasicNodeMaterial, Raycaster, Plane, Vector2, Vector3, Color, MathUtils } from 'three/webgpu'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
@@ -14,6 +14,10 @@ const CELL = 20 // px per footprint cell (rects); tetrominoes shrink to fit
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
 const REROLL_COST = 5 // mana to discard/reroll a palette tile
+// Flat base prices, NOT per cell - a wall tile costs the same whichever
+// tetromino it happens to be.
+const WALL_BASE_COST = 4
+const UTILITY_BASE_COST = 8 // generators and turrets
 const COST_GROWTH = 1.2 // gens/turrets: each placed tower of a bucket makes the next 20% pricier
 const WALL_COST_GROWTH = 1.01 // walls are one bucket drawn ~58% of the time (fills ~18x faster
 // than a gen bucket), so they need a tiny ~1% ramp to climb at a comparable pace
@@ -117,11 +121,16 @@ export class TilePalette {
     return `turret${tile.typeTop}`
   }
 
-  /** Energy cost to place this tile: base (cells x wall?1:2) x COST_GROWTH^(cumulative
+  /** Energy cost to place this tile: a FLAT base per kind x COST_GROWTH^(cumulative
    *  count of that bucket the player has placed). Everything escalates now, so
-   *  prices keep climbing even as gens expire and you replace them. */
+   *  prices keep climbing even as gens expire and you replace them.
+   *
+   *  The base used to be priced per cell, which quietly made walls the dearest
+   *  thing in the tray: a tetromino is always 4 cells, so the cheapest wall came
+   *  out at 5 against a 1-cell generator's 3 - and walls are 66% of the bag and
+   *  the thing you place most. Per-kind flat pricing says what it means. */
   _tileCost(tile) {
-    const base = this._cells(tile, 0).length * (tile.wall ? 4 / 3 : 8 / 3)
+    const base = tile.wall ? WALL_BASE_COST : UTILITY_BASE_COST
     const count = this.city.placedCount(this._typeKey(tile))
     const growth = tile.wall ? WALL_COST_GROWTH : COST_GROWTH
     // Global income factor on top of per-bucket escalation: the stronger your
@@ -162,13 +171,13 @@ export class TilePalette {
     reroll.textContent = '×'
     reroll.title = `Reroll all tiles (${REROLL_COST})`
     Object.assign(reroll.style, {
-      position: 'absolute', top: '-9px', right: '-9px',
-      width: '22px', height: '22px', borderRadius: '50%', padding: '0',
+      position: 'absolute', top: '-18px', right: '-18px',
+      width: '44px', height: '44px', borderRadius: '50%', padding: '0',
       background: 'rgba(40,40,52,0.95)', color: '#fff', border: '1px solid rgba(255,255,255,0.45)',
-      font: '700 15px ui-monospace, monospace', lineHeight: '1', cursor: 'pointer',
+      font: '700 30px ui-monospace, monospace', lineHeight: '1', cursor: 'pointer',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '1',
     })
-    reroll.addEventListener('click', () => this._rerollAll())
+    reroll.addEventListener('click', () => { if (!this.demo.buildLocked) this._rerollAll() })
     wrap.appendChild(reroll)
     document.body.appendChild(wrap)
     this.el = wrap
@@ -246,6 +255,9 @@ export class TilePalette {
     if (!this.drag) return
     this.drag.rot = (this.drag.rot + 1) % 4
     this._setGhostGeom() // tetrominoes use a distinct geometry per rotation
+    // Corner roofs reuse one geometry, so _setGhostGeom bails and the turn has
+    // to be applied to the mesh directly.
+    this.drag.ghost.rotation.y = this._roofRotation(this.drag.tile, this.drag.rot)
     // Rotating changes the footprint, so the re-pick below often lands on a new
     // cell and would fire its own tick. Suppress that one and play the rotate
     // tick instead - a turn is one action, not two.
@@ -309,7 +321,10 @@ export class TilePalette {
     el.appendChild(costEl)
     const idx = this.slots.length
     el.addEventListener('pointerdown', (e) => this._pointerDown(e, idx))
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); this._discard(idx) })
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      if (!this.demo.buildLocked) this._discard(idx)
+    })
     // The reroll button is appended last, so insert before it to keep it in the
     // corner rather than stranded mid-tray.
     if (this.rerollBtn) this.wrap.insertBefore(el, this.rerollBtn)
@@ -350,51 +365,8 @@ export class TilePalette {
     ctx.strokeStyle = 'rgba(0,0,0,0.28)'
     ctx.lineWidth = 1
     for (const [cx, cy] of cells) ctx.strokeRect(ox + cx * c + 0.5, oy + cy * c + 0.5, c - 1, c - 1)
-    // Orientation marker, on the centroid cell so it sits ON the shape.
-    const [ax, ay] = TetrominoGeometry.anchor(cells)
-    this._drawAxes2D(ctx, ox + (ax + 0.5) * c, oy + (ay + 0.5) * c, c)
   }
 
-  /**
-   * A 2D axes helper on the icon, colour-matched to the 3D AxesHelper on the
-   * ghost so the two can be compared directly - same colour, same world axis.
-   *
-   * placeOrient maps icon-up (0,-1) to world +X and icon-right (1,0) to world
-   * +Z, so the icon draws RED up and BLUE right. Read it as: the icon's red
-   * should point the same way on screen as the ghost's red, and likewise blue.
-   * If they don't, the camera compensation in placeOrient is what's wrong, not
-   * the rotation logic. (Green is skipped - it's world +Y, straight up out of
-   * the ground, which a flat icon has nowhere to put.)
-   */
-  _drawAxes2D(ctx, cx, cy, size) {
-    const r = size * 0.62
-    const head = size * 0.16
-    ctx.save()
-    ctx.lineWidth = Math.max(1.5, size * 0.09)
-    ctx.lineCap = 'round'
-
-    // Blue = world +Z, which placeOrient puts along canvas +x (right).
-    ctx.strokeStyle = '#4488ff'
-    ctx.fillStyle = '#4488ff'
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + r, cy); ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(cx + r + head * 0.6, cy)
-    ctx.lineTo(cx + r - head * 0.2, cy - head * 0.55)
-    ctx.lineTo(cx + r - head * 0.2, cy + head * 0.55)
-    ctx.closePath(); ctx.fill()
-
-    // Red = world +X, which placeOrient puts along canvas -y (up).
-    ctx.strokeStyle = '#ff4444'
-    ctx.fillStyle = '#ff4444'
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - r); ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(cx, cy - r - head * 0.6)
-    ctx.lineTo(cx - head * 0.55, cy - r + head * 0.2)
-    ctx.lineTo(cx + head * 0.55, cy - r + head * 0.2)
-    ctx.closePath(); ctx.fill()
-
-    ctx.restore()
-  }
 
   /**
    * Draw a tile whose ROOF SHAPE is the tile: the shield's triangle and the
@@ -405,24 +377,42 @@ export class TilePalette {
    * turrets keep the glyph-in-a-square treatment, because a turret genuinely is
    * a square block with a gun on top.
    */
-  _drawRoofShape(ctx, tile, ox, oy, fw, fh) {
+  /**
+   * Shield (Tri_Top) and barracks (Quart_Top) drawn as they sit on the board.
+   *
+   * Both are the same unit square cut across the same diagonal - one straight,
+   * one curved - and in the GLB both keep their corner at (-X, +Z). Under the
+   * opening camera that corner reads as the BOTTOM-RIGHT of the icon, so that
+   * is where it goes. (The triangle used to be isoceles with its apex at the
+   * top CENTRE, which is not a shape the game contains at all.)
+   *
+   * Drawn about the centre of the footprint so it stays centred in its cell at
+   * every rotation - `turns` is the same quarter-turn count the placed tile
+   * gets, so icon and board agree however the tile or the camera is turned.
+   */
+  _drawRoofShape(ctx, tile, ox, oy, fw, fh, turns = 0) {
+    const h = Math.min(fw, fh) / 2
+    ctx.save()
+    ctx.translate(ox + fw / 2, oy + fh / 2)
+    // Canvas y points down, so a positive angle here turns the same way a
+    // positive tile rotation turns the footprint on the board.
+    ctx.rotate((turns % 4) * Math.PI / 2)
     ctx.fillStyle = this.tileColor(tile)
     ctx.beginPath()
     if (tile.typeTop === TopType.SHIELD) {
-      // Triangle (Tri_Top) filling the tile.
-      ctx.moveTo(ox + fw / 2, oy)
-      ctx.lineTo(ox + fw, oy + fh)
-      ctx.lineTo(ox, oy + fh)
+      ctx.moveTo(h, h) // the right angle
+      ctx.lineTo(-h, h)
+      ctx.lineTo(h, -h)
     } else {
-      // Quarter circle (Quart_Top), corner at the bottom-left of the footprint.
-      ctx.moveTo(ox, oy + fh)
-      ctx.arc(ox, oy + fh, Math.min(fw, fh), -Math.PI / 2, 0)
+      ctx.moveTo(h, h) // centre of the quarter disc
+      ctx.arc(h, h, h * 2, Math.PI, Math.PI * 1.5)
     }
     ctx.closePath()
     ctx.fill()
     ctx.strokeStyle = 'rgba(0,0,0,0.35)'
     ctx.lineWidth = 1.5
     ctx.stroke()
+    ctx.restore()
   }
 
   _drawRectTile(ctx, tile) {
@@ -440,7 +430,7 @@ export class TilePalette {
     // tile size. Everything else is a square footprint with a glyph on it, so
     // those get the square first and the glyph on top.
     if (tile.typeTop === TopType.SHIELD || tile.typeTop === TopType.BARRACKS) {
-      this._drawRoofShape(ctx, tile, ox, oy, fw, fh)
+      this._drawRoofShape(ctx, tile, ox, oy, fw, fh, tile.rot || 0)
       return
     }
 
@@ -544,6 +534,7 @@ export class TilePalette {
 
   _pointerDown(e, i) {
     if (e.button !== 0) return // left button only; right-click discards
+    if (this.demo.buildLocked) return // paused / game over: the tray is inert
     if (!this.slots[i].tile || this.pending || this.drag) return
     e.preventDefault()
     // Remember WHICH pointer owns this drag. On touch a second finger (tapping
@@ -646,17 +637,25 @@ export class TilePalette {
     const { slot, ghost } = this.drag
     this._endSticky()
     this.city.scene.remove(ghost)
-    if (this.dragArrow) {
-      this.city.scene.remove(this.dragArrow)
-      this.dragArrow.geometry.dispose()
-      this.dragArrow.material.dispose()
-      this.dragArrow = null
-    }
     if (this.demo.controls) this.demo.controls.enabled = true
     this.slots[slot].el.style.cursor = 'grab'
     this._drawTile(this.slots[slot])
     this.drag = null
     Sounds.play('clink', 0.9, 0.1, 0.3)
+  }
+
+  /**
+   * World Y rotation for a non-wall tile's roof, in radians.
+   *
+   * Only the two corner-shaped roofs have a facing worth turning - shield
+   * (triangle) and barracks (quarter circle). It is NEGATIVE because a tile's
+   * quarter turns run the opposite way to three.js's Y rotation: the tetromino
+   * states step +X -> +Z, whereas rotation.y = +90deg sends +X -> -Z.
+   */
+  _roofRotation(tile, rot) {
+    if (tile.typeTop !== TopType.SHIELD && tile.typeTop !== TopType.BARRACKS) return 0
+    const turns = ((rot % 4) + 4) % 4
+    return -turns * (Math.PI / 2)
   }
 
   /** Ghost geometry for a tile at a rotation (tetromino body / scaled block). */
@@ -679,24 +678,6 @@ export class TilePalette {
     this.drag.ghost = ghost
   }
 
-  /**
-   * Axes at the dragged tile's centroid: red +X, green +Y, blue +Z. Shows both
-   * ground axes rather than just an "up", so the icon's orientation and the
-   * board's can be compared directly - icon-up should read as +X (red), since
-   * that's where placeOrient sends it.
-   *
-   * Its own object rather than a child of the ghost: the ghost carries
-   * non-uniform scale (0.3 in Y for walls, footprint size for rects) that would
-   * skew the axes. depthTest off so blocks don't bury it.
-   */
-  _makeGhostAxes() {
-    const helper = new AxesHelper(this.city.cellUnit * 1.2)
-    helper.material.depthTest = false
-    helper.material.transparent = true
-    helper.material.opacity = 0.95
-    helper.renderOrder = 6 // above the ghost
-    return helper
-  }
 
 
   /**
@@ -739,11 +720,9 @@ export class TilePalette {
     // the camera has to be consulted.
     const rot = (tile.rot || 0) + this.camQuarterTurns
     const ghost = new Mesh(this._ghostGeomFor(tile, rot), mat)
+    ghost.rotation.y = this._roofRotation(tile, rot)
     ghost.renderOrder = 5
     this.city.scene.add(ghost)
-    const arrow = this._makeGhostAxes()
-    this.city.scene.add(arrow)
-    this.dragArrow = arrow
     // Hide the icon in its slot while it's being dragged.
     this.slots[i].canvas.getContext('2d').clearRect(0, 0, ICON, ICON)
     this.slots[i].el.style.cursor = 'grabbing'
@@ -834,12 +813,11 @@ export class TilePalette {
       if (overPal) this._drawTile(this.slots[slot])
       else this._clearCanvas(this.slots[slot])
     }
-    if (overPal) { ghost.visible = false; if (this.dragArrow) this.dragArrow.visible = false; this.drag.target = null; return }
+    if (overPal) { ghost.visible = false; this.drag.target = null; return }
     const t = this._pickTarget(e.clientX, e.clientY)
     this.drag.target = t
     if (!t) {
       ghost.visible = false
-      if (this.dragArrow) this.dragArrow.visible = false
       this.drag.lastCell = null
       return
     }
@@ -868,19 +846,8 @@ export class TilePalette {
         t.gy * cu + (t.h * cu) / 2 + city.gridOffsetZ
       )
       ghost.scale.set(t.w * cu, 1, t.h * cu)
-    }
-    // Arrow rides on the shape's centroid cell, matching the icon.
-    if (this.dragArrow) {
-      const [ax, ay] = TetrominoGeometry.anchor(t.cells)
-      this.dragArrow.visible = true
-      // Centre of the centroid CELL - which is also the cell under the cursor,
-      // since _pickTarget anchors the centroid there. So the axes sit exactly
-      // where you're pointing, and the tile turns about them.
-      this.dragArrow.position.set(
-        (t.gx + ax + 0.5) * cu + city.gridOffsetX,
-        0.35,
-        (t.gy + ay + 0.5) * cu + city.gridOffsetZ
-      )
+      // Corner-shaped roofs have a facing; the symmetric ones don't care.
+      ghost.rotation.y = this._roofRotation(tile, this.drag.rot)
     }
     if (t.valid) { mat.color.copy(this.drag.hi); mat.opacity = 0.92 }
     else { mat.color.copy(this.drag.base); mat.opacity = 0.5 }
@@ -892,12 +859,6 @@ export class TilePalette {
     const finish = () => {
       this._endSticky()
       city.scene.remove(ghost)
-      if (this.dragArrow) {
-        city.scene.remove(this.dragArrow)
-        this.dragArrow.geometry.dispose()
-        this.dragArrow.material.dispose()
-        this.dragArrow = null
-      }
       if (this.demo.controls) this.demo.controls.enabled = true
       this.slots[slot].el.style.cursor = 'grab'
       this.drag = null
@@ -916,7 +877,10 @@ export class TilePalette {
           tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
           typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex: tile.topColorIndex,
         }
-        : { typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex }
+        : {
+          typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex,
+          rotation: this._roofRotation(tile, rot),
+        }
       const placed = city.placeTileFree(target.gx, target.gy, target.cells, opts)
       if (placed) {
         finish()
