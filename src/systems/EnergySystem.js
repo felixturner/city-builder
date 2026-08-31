@@ -20,6 +20,9 @@ const FLOOR_PULSE_DECAY = 0.22
 // faster than the blue path generators as a city grows.
 const ENCLOSURE_RATE = 0.08 // halved: area gens were out-earning the trails they cost nothing to run
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
+// Volume of the per-arrival income blip. It fires several times a second at a
+// developed economy, so it sits well under the one-off cues.
+const INCOME_BLIP_VOLUME = 0.67
 // Global generator-production scale. Raised from 0.2 (+30%) when grey walls
 // stopped generating: generators are now the only thing producing energy besides
 // the king's trickle, so they carry the income walls used to supply.
@@ -355,7 +358,7 @@ export class EnergySystem {
         // No "+N" caption here any more: the flying box and the bar climbing
         // already say it, and at full income the board was carpeted in them.
         // The sound the caption used to carry fires on its own.
-        if (e.sound) Sounds.play(e.sound)
+        if (e.sound) Sounds.play(e.sound, undefined, undefined, INCOME_BLIP_VOLUME)
         // ...and a little yellow box flies from the generator up to the meter.
         city.resourceFly?.spawn(e.cx, e.cy, e.cz, city.camera, city.mana.energyBar, ENERGY_COLOR)
         this.pulseEvents.splice(i, 1)
@@ -387,10 +390,10 @@ export class EnergySystem {
     // earns too. Swings much wider than before - each +1 arrival should visibly
     // flash the sealed area, not just nudge it.
     this.floorPulse = Math.max(0, this.floorPulse - dt / FLOOR_PULSE_DECAY)
-    if (city.enclosureOpacity) {
+    if (city.enclosure.opacity) {
       const p = this.floorPulse
-      city.enclosureOpacity.value = p * 0.16
-      if (city.enclosureBright) city.enclosureBright.value = p * 0.25
+      city.enclosure.opacity.value = p * 0.16
+      if (city.enclosure.bright) city.enclosure.bright.value = p * 0.25
     }
   }
 

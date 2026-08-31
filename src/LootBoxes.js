@@ -1,18 +1,19 @@
-import { Mesh, BoxGeometry, MeshStandardNodeMaterial, Vector3, Color } from 'three/webgpu'
+import { Mesh, BoxGeometry, MeshStandardNodeMaterial, Color } from 'three/webgpu'
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ACCENT_COLORS } from './palette.js'
+import { ENERGY_COLOR, AMMO_COLOR } from './Mana.js'
 import { glow, NO_AO_MRT } from './fx.js'
 
 /**
- * LootBoxes - six crates scattered over the board that pay out an upgrade when
+ * LootBoxes - crates scattered over the board that pay out energy or ammo when
  * you WALL THEM IN.
  *
- * This replaces upgrades-on-a-timer. A card every N waves arrived whether or not
- * you'd done anything; a crate is a thing you have to notice, reach and enclose,
- * so the reward is spent on the same walls you were already building.
+ * A crate is a thing you have to notice, reach and enclose, so the reward is
+ * spent on the same walls you were already building. It used to hand out upgrade
+ * cards; those went back to boss rounds, and the crate pays resources instead.
  *
- * Enclosure is read from city.enclosedCells, the mask the flood-fill already
+ * Enclosure is read from city.enclosure.enclosedCells, the mask the flood-fill already
  * computes each time the city changes - a crate needs no collision of its own,
  * it just asks whether its cell ended up sealed.
  */
@@ -33,6 +34,8 @@ const SPIN_SPEED = 0.9 // radians/sec about Y (upright spin, like a pickup)
 const HOVER_Y = 1.6 // resting height above the ground
 const SHAKE_TIME = 0.75 // seconds of rattling before it bursts
 const CONFETTI_PER_COLOUR = 14
+// Base payout for walling in a crate, multiplied by the current level.
+const CRATE_REWARD = 20
 
 export class LootBoxes {
   constructor(scene, city, demo) {
@@ -41,7 +44,6 @@ export class LootBoxes {
     this.demo = demo
     this.boxes = []
     this.geo = new BoxGeometry(SIZE, SIZE, SIZE)
-    this._v = new Vector3()
     this.elapsed = 0
   }
 
@@ -128,8 +130,9 @@ export class LootBoxes {
   /** True if the crate's cell has ended up inside a sealed region. */
   isEnclosed(b) {
     const cell = this.city.worldToCell(b.x, b.z)
-    if (!cell || !this.city.enclosedCells) return false
-    return !!this.city.enclosedCells[cell.gy * this.city.gridCellsX + cell.gx]
+    const mask = this.city.enclosure.enclosedCells
+    if (!cell || !mask) return false
+    return !!mask[cell.gy * this.city.gridCellsX + cell.gx]
   }
 
   update(dt) {
@@ -182,21 +185,36 @@ export class LootBoxes {
       }
     }
     Sounds.play('level-complete', 1.15, 0.02, 0.5)
-
-    // Hand the screen position over so the cards can fly out of the crate.
-    const screen = this.toScreen(b.x, HOVER_Y, b.z)
-    this.onOpened?.(screen)
+    this.payOut(b)
   }
 
-  /** Project a world point to screen pixels, for the card fly-out origin. */
-  toScreen(x, y, z) {
-    const cam = this.demo.camera
-    if (!cam) return null
-    this._v.set(x, y, z).project(cam)
-    if (this._v.z > 1) return null // behind the camera
-    return {
-      x: (this._v.x * 0.5 + 0.5) * window.innerWidth,
-      y: (-this._v.y * 0.5 + 0.5) * window.innerHeight,
-    }
+  /**
+   * A crate pays energy or ammo, one or the other, at random.
+   *
+   * Upgrade cards moved back onto boss rounds, so a crate is a resource pickup
+   * now - which suits what it costs: walling one in is a deliberate detour off
+   * whatever you were building, and the payout lands in the same currency you
+   * spent getting there.
+   *
+   * Scaled by level because a flat 20 stops being worth the detour once your
+   * income is in the hundreds - the crate has to keep pace with the economy or
+   * it quietly becomes scenery.
+   */
+  payOut(b) {
+    const mana = this.city.mana
+    if (!mana) return
+    const level = (this.demo.creeps?.waveNumber ?? 0) + 1
+    const amount = CRATE_REWARD * level
+    const ammo = Math.random() < 0.5
+
+    if (ammo) mana.addAmmo(amount)
+    else mana.add(amount)
+
+    this.city.floatingText?.spawn(
+      b.x, HOVER_Y + 1.2, b.z,
+      `+${amount} ${ammo ? 'ammo' : 'energy'}`,
+      ammo ? AMMO_COLOR : ENERGY_COLOR,
+      0, null
+    )
   }
 }

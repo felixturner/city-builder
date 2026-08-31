@@ -212,7 +212,7 @@ export class PostFX {
     // thing glows because it was put on the layer, and material brightness has
     // nothing to do with it. Hence threshold 0 - the layer IS the selection.
     const glowTex = texture(this.glowTarget.textures[0]) // [1] is the unused normal attachment
-    this.bloomPass = bloom(glowTex, 1.1, 0.7, 0)
+    this.bloomPass = bloom(glowTex, 0.77, 0.49, 0)
     const withBloom = withOverlay.add(this.bloomPass.rgb.mul(this.bloomEnabled))
 
     // Vignette: darken edges toward black

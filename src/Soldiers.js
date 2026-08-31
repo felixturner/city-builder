@@ -4,6 +4,7 @@ import { isBarracks, BARRACKS_COLOR } from './blockTypes.js'
 import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
 import { Tower } from './Tower.js'
+import { advanceHop, snapToCell, towerWorldCenter } from './lib/gridUnit.js'
 
 /**
  * Soldiers - the little friendly cubes a barracks puts out.
@@ -72,17 +73,13 @@ export class Soldiers {
 
   /** World-space centre of a tower. */
   towerWorld(tower, out) {
-    const c = tower.box.getCenter(this._c)
-    out.x = c.x + this.city.gridOffsetX
-    out.y = c.y + this.city.gridOffsetZ
-    return out
+    return towerWorldCenter(tower, this.city, out)
   }
 
   /** World centre of the cell containing a world point, so every soldier sits
    *  on the same lattice the buildings do. */
   snap(v, offset) {
-    const g = Math.floor((v - offset) / this.cell)
-    return g * this.cell + this.cell / 2 + offset
+    return snapToCell(v, this.cell, offset)
   }
 
   /** True if a world point sits in a cell a soldier can't enter: a building, or
@@ -272,12 +269,11 @@ export class Soldiers {
       // Advance the hop. Same smoothstep + arc the creeps use, so friend and foe
       // read as the same kind of thing moving on the same grid.
       if (s.t < 1) {
-        s.t = Math.min(1, s.t + dt / (s.target ? STEP_CHASE : STEP_WANDER))
-        const e = s.t * s.t * (3 - 2 * s.t)
-        s.mesh.position.x = s.fromX + (s.toX - s.fromX) * e
-        s.mesh.position.z = s.fromZ + (s.toZ - s.fromZ) * e
-        s.mesh.position.y = this.baseY + Math.sin(s.t * Math.PI) * HOP_HEIGHT
-        s.mesh.rotation.y = Math.PI / 4 + s.t * (Math.PI / 2) // quarter-turn per hop
+        advanceHop(s, dt, {
+          duration: s.target ? STEP_CHASE : STEP_WANDER,
+          baseY: this.baseY,
+          hopHeight: HOP_HEIGHT,
+        })
       } else {
         s.mesh.position.set(s.toX, this.baseY, s.toZ)
       }

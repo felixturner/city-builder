@@ -164,7 +164,7 @@ const CORE = new Set([
 const SIMPLE = [
   'pop', 'tick', 'roll', 'good', 'intro', 'error', 'pluck',
   'energy', 'power-down', 'spawn', 'step1', 'step2', 'break2', 'hit', 'dink',
-  'mortar-shoot', 'mortar-hit', 'warning1', 'success',
+  'mortar-shoot', 'mortar-hit', 'warning1', 'success', 'shield-hit',
   // long-form event sounds
   'horn-boss', 'countdown', 'tick-fast', 'gen-online', 'sting',
   'creep-warn', 'flyer-warn', 'snap', 'game-over', 'king-hit', 'level-complete', 'card-reveal',

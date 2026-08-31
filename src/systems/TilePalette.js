@@ -5,12 +5,11 @@ import { Sounds } from '../lib/Sounds.js'
 import { Buffs } from '../buffs.js'
 import { ENERGY_COLOR, AMMO_COLOR } from '../palette.js'
 import { Tower } from '../Tower.js'
+import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex, BARRACKS_COLOR } from '../blockTypes.js'
 
 const SLOTS = 4
 const REFILL_TIME = 1.33 // seconds for a used/discarded palette slot to refill
-const ICON = 72 // palette icon canvas size (px)
-const CELL = 20 // px per footprint cell (rects); tetrominoes shrink to fit
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
 const REROLL_COST = 5 // mana to discard/reroll a palette tile
@@ -92,12 +91,6 @@ export class TilePalette {
     return cells
   }
 
-  _bbox(cells) {
-    let w = 0, h = 0
-    for (const [x, y] of cells) { w = Math.max(w, x + 1); h = Math.max(h, y + 1) }
-    return [w, h]
-  }
-
   /** The tile's block colour as a THREE.Color (matches its palette icon). */
   _tileColor3(tile, out) {
     if (tile.wall) { out.copy(Tower.COLORS[tile.topColorIndex]); return out }
@@ -143,14 +136,6 @@ export class TilePalette {
   /** Can the player currently afford to place this tile? */
   _affordable(tile) {
     return !this.city.mana || this.city.mana.current >= this._tileCost(tile)
-  }
-
-  /** CSS colour for the 2D icon. */
-  tileColor(tile) {
-    if (tile.wall) return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
-    if (isGenerator(tile)) return `#${this.city.accentColors[tile.colorIndex].getHexString()}`
-    if (isTurret(tile)) return '#9aa0aa'
-    return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
   }
 
   // ---- DOM --------------------------------------------------------------------
@@ -284,7 +269,7 @@ export class TilePalette {
     slot.refill = 0
     slot.pending = null
     slot.el.style.cursor = 'grab'
-    this._drawTile(slot)
+    drawTile(slot, this.city.accentColors)
     this._updateCostLabel(slot)
   }
 
@@ -339,167 +324,6 @@ export class TilePalette {
     this._setTile(i, this.randomTile())
   }
 
-  _drawTile(slot) {
-    const ctx = slot.canvas.getContext('2d')
-    ctx.clearRect(0, 0, ICON, ICON)
-    const tile = slot.tile
-    if (!tile) return
-    if (tile.wall) { this._drawTetromino(ctx, tile); return }
-    this._drawRectTile(ctx, tile)
-  }
-
-  /** Grey tetromino: filled cells with per-cell outlines (rotation 0). */
-  _drawTetromino(ctx, tile) {
-    const states = TetrominoGeometry.states[tile.shapeName]
-    // RAW state, deliberately not placeCells(). placeOrient's 90deg turn exists
-    // to cancel how the isometric camera maps world axes to the screen, so the
-    // board reads the same as this flat icon. Applying it here too double-counts
-    // it and the placed tile comes out a quarter turn off.
-    const cells = states[(tile.rot || 0) % states.length]
-    const [w, h] = this._bbox(cells)
-    const c = Math.min(CELL, (ICON - 8) / Math.max(w, h))
-    const ox = (ICON - w * c) / 2
-    const oy = (ICON - h * c) / 2
-    ctx.fillStyle = this.tileColor(tile)
-    for (const [cx, cy] of cells) ctx.fillRect(ox + cx * c, oy + cy * c, c, c)
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)'
-    ctx.lineWidth = 1
-    for (const [cx, cy] of cells) ctx.strokeRect(ox + cx * c + 0.5, oy + cy * c + 0.5, c - 1, c - 1)
-  }
-
-
-  /**
-   * Draw a tile whose ROOF SHAPE is the tile: the shield's triangle and the
-   * barracks' quarter circle, filling the same footprint a square tile would.
-   *
-   * These used to be small glyphs floating inside a coloured square, which made
-   * them read as a different class of thing from the walls and generators. Only
-   * turrets keep the glyph-in-a-square treatment, because a turret genuinely is
-   * a square block with a gun on top.
-   */
-  /**
-   * Shield (Tri_Top) and barracks (Quart_Top) drawn as they sit on the board.
-   *
-   * Both are the same unit square cut across the same diagonal - one straight,
-   * one curved - and in the GLB both keep their corner at (-X, +Z). Under the
-   * opening camera that corner reads as the BOTTOM-RIGHT of the icon, so that
-   * is where it goes. (The triangle used to be isoceles with its apex at the
-   * top CENTRE, which is not a shape the game contains at all.)
-   *
-   * Drawn about the centre of the footprint so it stays centred in its cell at
-   * every rotation - `turns` is the same quarter-turn count the placed tile
-   * gets, so icon and board agree however the tile or the camera is turned.
-   */
-  _drawRoofShape(ctx, tile, ox, oy, fw, fh, turns = 0) {
-    const h = Math.min(fw, fh) / 2
-    ctx.save()
-    ctx.translate(ox + fw / 2, oy + fh / 2)
-    // Canvas y points down, so a positive angle here turns the same way a
-    // positive tile rotation turns the footprint on the board.
-    ctx.rotate((turns % 4) * Math.PI / 2)
-    ctx.fillStyle = this.tileColor(tile)
-    ctx.beginPath()
-    if (tile.typeTop === TopType.SHIELD) {
-      ctx.moveTo(h, h) // the right angle
-      ctx.lineTo(-h, h)
-      ctx.lineTo(h, -h)
-    } else {
-      ctx.moveTo(h, h) // centre of the quarter disc
-      ctx.arc(h, h, h * 2, Math.PI, Math.PI * 1.5)
-    }
-    ctx.closePath()
-    ctx.fill()
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)'
-    ctx.lineWidth = 1.5
-    ctx.stroke()
-    ctx.restore()
-  }
-
-  _drawRectTile(ctx, tile) {
-    const fw = tile.w * CELL
-    const fh = tile.h * CELL
-    const ox = (ICON - fw) / 2
-    const oy = (ICON - fh) / 2
-    const cx = ICON / 2
-    const cy = ICON / 2
-    const m = Math.min(fw, fh)
-    const raised = 'rgba(255,255,255,0.32)'
-    const recess = 'rgba(0,0,0,0.3)'
-
-    // Shield and barracks ARE their roof shape seen from above, drawn at full
-    // tile size. Everything else is a square footprint with a glyph on it, so
-    // those get the square first and the glyph on top.
-    if (tile.typeTop === TopType.SHIELD || tile.typeTop === TopType.BARRACKS) {
-      this._drawRoofShape(ctx, tile, ox, oy, fw, fh, tile.rot || 0)
-      return
-    }
-
-    ctx.fillStyle = this.tileColor(tile)
-    ctx.fillRect(ox, oy, fw, fh)
-
-    if (tile.typeTop === TopType.PATH_GENERATOR) {
-      const pe = m * 0.28, pt = m * 0.1
-      ctx.fillStyle = recess
-      ctx.fillRect(cx - pe, cy - pt, pe * 2, pt * 2)
-      ctx.fillRect(cx - pt, cy - pe, pt * 2, pe * 2)
-    } else if (tile.typeTop === TopType.PEG_TURRET || tile.typeTop === TopType.DIVOT_TURRET || tile.typeTop === TopType.MORTAR_TURRET) {
-      const r = m * 0.26
-      ctx.fillStyle = tile.typeTop === TopType.PEG_TURRET ? raised : recess
-      ctx.beginPath()
-      ctx.moveTo(cx, cy - r)
-      ctx.lineTo(cx + r * 0.87, cy + r * 0.5)
-      ctx.lineTo(cx - r * 0.87, cy + r * 0.5)
-      ctx.closePath()
-      ctx.fill()
-      // Mortar: a lobbed shell dot above the barrel.
-      if (tile.typeTop === TopType.MORTAR_TURRET) {
-        ctx.fillStyle = recess
-        ctx.beginPath(); ctx.arc(cx, cy - r * 0.9, m * 0.1, 0, Math.PI * 2); ctx.fill()
-      }
-    } else if (tile.typeTop === TopType.ENCLOSURE_GENERATOR) {
-      // Peg disc reads purely via its drop shadow (same colour as the tile).
-      ctx.save()
-      ctx.shadowColor = 'rgba(0,0,0,0.8)'
-      ctx.shadowBlur = m * 0.16
-      ctx.shadowOffsetY = m * 0.07
-      ctx.fillStyle = this.tileColor(tile)
-      ctx.beginPath(); ctx.arc(cx, cy, m * 0.24, 0, Math.PI * 2); ctx.fill()
-      ctx.restore()
-    }
-
-    if ((tile.w > 1 || tile.h > 1) && tile.typeTop !== TopType.PATH_GENERATOR) {
-      ctx.strokeStyle = 'rgba(0,0,0,0.28)'
-      ctx.lineWidth = 1
-      for (let i = 1; i < tile.w; i++) {
-        ctx.beginPath(); ctx.moveTo(ox + i * CELL, oy); ctx.lineTo(ox + i * CELL, oy + fh); ctx.stroke()
-      }
-      for (let j = 1; j < tile.h; j++) {
-        ctx.beginPath(); ctx.moveTo(ox, oy + j * CELL); ctx.lineTo(ox + fw, oy + j * CELL); ctx.stroke()
-      }
-    }
-  }
-
-  /** Clockwise ring timer on the slot canvas (matches the build-wheel). */
-  _drawRing(slot, p) {
-    const ctx = slot.canvas.getContext('2d')
-    ctx.clearRect(0, 0, ICON, ICON)
-    const cx = ICON / 2, cy = ICON / 2
-    const rO = ICON * 0.32, rI = ICON * 0.21
-    const start = -Math.PI / 2
-    ctx.beginPath()
-    ctx.arc(cx, cy, rO, 0, Math.PI * 2)
-    ctx.arc(cx, cy, rI, Math.PI * 2, 0, true)
-    ctx.fillStyle = 'rgba(255,255,255,0.08)'
-    ctx.fill('evenodd')
-    const end = start + Math.max(0.0001, p) * Math.PI * 2
-    ctx.beginPath()
-    ctx.arc(cx, cy, rO, start, end, false)
-    ctx.arc(cx, cy, rI, end, start, true)
-    ctx.closePath()
-    ctx.fillStyle = 'rgba(255,255,255,0.6)'
-    ctx.fill()
-  }
-
   // ---- per-frame: refill timers ----------------------------------------------
 
   update(dt) {
@@ -511,7 +335,7 @@ export class TilePalette {
       // Always show the refilled tile; if it's unaffordable its cost reads red and
       // it can't be dragged (no more holding slots empty until affordable).
       if (slot.refill <= 0) this._setTile(i, this.randomTile())
-      else this._drawRing(slot, 1 - slot.refill / (REFILL_TIME * Buffs.refillRate))
+      else drawRing(slot, 1 - slot.refill / (REFILL_TIME * Buffs.refillRate))
     }
   }
 
@@ -526,7 +350,7 @@ export class TilePalette {
     slot.pending = null
     slot.refill = REFILL_TIME * Buffs.refillRate
     slot.el.style.cursor = 'default'
-    this._drawRing(slot, 0)
+    drawRing(slot, 0)
     if (slot.costEl) slot.costEl.textContent = ''
   }
 
@@ -639,7 +463,7 @@ export class TilePalette {
     this.city.scene.remove(ghost)
     if (this.demo.controls) this.demo.controls.enabled = true
     this.slots[slot].el.style.cursor = 'grab'
-    this._drawTile(this.slots[slot])
+    drawTile(this.slots[slot], this.city.accentColors)
     this.drag = null
     Sounds.play('clink', 0.9, 0.1, 0.3)
   }
@@ -746,7 +570,7 @@ export class TilePalette {
     if (!c) return null
     const tile = this.drag.tile
     const cells = this._cells(tile, this.drag.rot)
-    const [w, h] = this._bbox(cells)
+    const [w, h] = cellBounds(cells)
     // Anchor the SHAPE's centroid under the cursor, not the bounding box's
     // centre. For a T the bbox centre isn't even on the piece, so rotating
     // about it threw the tile sideways; about the centroid it turns in place.
@@ -759,9 +583,9 @@ export class TilePalette {
     // One enclosure generator per enclosure: block placing into an already-claimed area.
     // One claimant per enclosure - and the king counts, so you can't drop a hole
     // block into the region the king is already earning from.
-    if (valid && tile.typeTop === TopType.ENCLOSURE_GENERATOR && city.cellClaim) {
+    if (valid && tile.typeTop === TopType.ENCLOSURE_GENERATOR && city.enclosure.cellClaim) {
       for (const [dx, dy] of cells) {
-        if (city.cellClaim[(gy + dy) * city.gridCellsX + (gx + dx)] >= 0) { valid = false; break }
+        if (city.enclosure.cellClaim[(gy + dy) * city.gridCellsX + (gx + dx)] >= 0) { valid = false; break }
       }
     }
     // Can't build on a loot crate - see LootBoxes.occupiesCell.
@@ -810,7 +634,7 @@ export class TilePalette {
     const overPal = this._overUI(e.clientX, e.clientY)
     if (overPal !== this.drag.overPal) {
       this.drag.overPal = overPal
-      if (overPal) this._drawTile(this.slots[slot])
+      if (overPal) drawTile(this.slots[slot], this.city.accentColors)
       else this._clearCanvas(this.slots[slot])
     }
     if (overPal) { ghost.visible = false; this.drag.target = null; return }
@@ -863,7 +687,7 @@ export class TilePalette {
       this.slots[slot].el.style.cursor = 'grab'
       this.drag = null
     }
-    const restore = () => { finish(); this._drawTile(this.slots[slot]) }
+    const restore = () => { finish(); drawTile(this.slots[slot], this.city.accentColors) }
     // Released over the palette: drop it back in its slot (no place, no error).
     // Released over our own chrome (tray or rotate button): put it back rather
     // than trying to resolve a board cell underneath it.

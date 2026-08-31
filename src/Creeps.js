@@ -2,12 +2,10 @@ import {
   Mesh,
   BoxGeometry,
   SphereGeometry,
-  CylinderGeometry,
   MeshStandardNodeMaterial,
   MeshBasicNodeMaterial,
   Vector2,
   Vector3,
-  Quaternion,
   Color,
 } from 'three/webgpu'
 import { Sounds, BOSS_HORN_PREROLL, MAX_RISER_PREROLL } from './lib/Sounds.js'
@@ -28,6 +26,13 @@ const SPAWN_RING = 59
 // and not a thing you can wall against, so they should not loom.
 const BOMBER_SCALE = 0.7
 
+// Cell-neighbour offsets, in the same order for both axes (right, left, down, up).
+const STEP_DX = [1, -1, 0, 0]
+const STEP_DZ = [0, 0, 1, -1]
+// How often a creep takes a step that doesn't get it closer. Small on purpose:
+// it should read as a wander, not as broken pathfinding.
+const MISSTEP_CHANCE = 0.12
+
 // Damage a shield perimeter does to a creep crossing it (halved when the shield
 // has no support tower reaching it - see updateShieldBarriers).
 const SHIELD_DAMAGE = 2
@@ -35,6 +40,9 @@ const SHIELD_DAMAGE = 2
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
 import { fxMaterial, glow } from './fx.js'
+import { BeamPool } from './lib/BeamPool.js'
+import { advanceHop, towerWorldCenter } from './lib/gridUnit.js'
+import { WaveAudio } from './systems/WaveAudio.js'
 
 /**
  * Creeps - abstract enemy nodes. Black diamonds (cubes rotated 45deg off the
@@ -71,21 +79,9 @@ export class Creeps {
     this.laserMat = new MeshStandardNodeMaterial({ color: new Color(0xb01f4a), roughness: 0.4, metalness: 0.15 })
     this.creepLaserColor = new Color(0xff2e5e) // the beam colour
     this.laserDamage = 1
-    this.beamDuration = 0.16 // seconds a beam flash lingers
-    this.beamGeo = new CylinderGeometry(0.16, 0.16, 1, 8) // unit length along Y
-    this.beams = []
-    for (let i = 0; i < 8; i++) {
-      const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
-      const mesh = glow(new Mesh(this.beamGeo, mat))
-      mesh.visible = false
-      this.scene.add(mesh)
-      this.beams.push({ mesh, life: 0, active: false })
-    }
+    this.beamPool = new BeamPool(scene, { radius: 0.16, duration: 0.16 })
     this._beamFrom = new Vector3()
     this._beamTo = new Vector3()
-    this._beamDir = new Vector3()
-    this._beamUp = new Vector3(0, 1, 0)
-    this._beamQ = new Quaternion()
     // Shooter creeps read deep orange so they're distinguishable from marchers;
     // gen-seeker shooters are a lighter orange (matching the body lightness rule).
     this.shooterMat = new MeshStandardNodeMaterial({
@@ -177,12 +173,9 @@ export class Creeps {
     // so a 10s lead would start the swell before the clock and leave no
     // ticker-only phase at all on the biggest moment of the run.
     this.bossCountdownLead = 15
-    this._audioWave = -1 // last wave index whose horn fired
-    this._cuedWave = -1 // last wave index whose countdown started
-    this._bossCuedWave = -1 // last boss wave whose horn was pre-rolled
-    this._waveActiveNow = false // in combat? (spawning, or creeps still alive)
-    this._riser = null // riser armed for the next wave, fired at its own peak
-    this._riserWave = -1
+    // Everything about what a wave SOUNDS like lives in WaveAudio; this file
+    // owns the clock it reads.
+    this.audio = new WaveAudio(this)
     // Seconds of near-silence after the last creep of a round dies, before the
     // build bed comes back. The round-clear sting needs somewhere to land, and
     // the upgrade screen (if one is due) opens inside this gap.
@@ -331,6 +324,7 @@ export class Creeps {
     return Math.round(v / this.cell) * this.cell
   }
 
+
   /**
    * Spawn a ground creep. opts.giant -> a 5x5 boss; opts.forceShooter -> a shooter
    * regardless of unlock/roll; opts.edge -> force the spawn edge (so a boss group
@@ -393,7 +387,7 @@ export class Creeps {
     typeDot.position.set(0, 2.6, 0)
     typeDot.scale.setScalar(1 / scale)
     typeDot.renderOrder = 11
-    typeDot.visible = !!this.city.flowDebugEnabled
+    typeDot.visible = !!this.city.flow.debugEnabled
     mesh.add(typeDot)
 
     this.creeps.push({
@@ -495,97 +489,6 @@ export class Creeps {
   }
 
   /**
-   * Schedule the audio around wave boundaries. Called once per frame from
-   * update() - deliberately NOT from advanceSpawns(), which skipAhead() runs in
-   * a tight loop (that would fire a horn per simulated step).
-   *
-   * Timeline for a wave that starts at T:
-   *    T-10  boss clock + riser begin (ticks pitched down) [boss waves]
-   *    T-6   normal clock + riser begin                  [normal waves]
-   *    T-2.5 boss horn starts, so its 2.5s swell peaks at T
-   *    T     wave horn + spawns
-   */
-  updateWaveAudio(dt) {
-    if (!this.spawnEnabled) return
-    const t = this.elapsed
-
-    // The wave now in progress (or -1 during the opening grace period).
-    const current = t < this.graceTime
-      ? -1 : Math.floor((t - this.graceTime) / this.wavePeriod)
-    // ...and the next one to arrive.
-    const next = current + 1
-    const away = (this.graceTime + next * this.wavePeriod) - t
-    const bossNext = this.isBossWave(next)
-
-    // Countdown bed, seeked so the final tick lands on the spawn. A mechanical
-    // clock rather than a digital alarm - it fills the breather with tension
-    // instead of nagging - with a soft riser layered over it for the build.
-    const lead = bossNext ? this.bossCountdownLead : this.countdownLead
-    if (away <= lead && this._cuedWave !== next) {
-      this._cuedWave = next
-      // No stab ahead of the clock - the ticker starting IS the "incoming" cue,
-      // and a horn in front of it just stepped on the build-up.
-      if (bossNext) Sounds.countdown('tick-fast', away, 0.28, 0.92)
-      else Sounds.countdown('tick-fast', away, 0.22)
-    }
-
-    // Riser: armed early (its pre-roll is up to ~11s, longer than the tick
-    // lead) and fired when its own measured peak lines up with the spawn, so
-    // the swell tops out on the horn rather than after it.
-    if (away <= MAX_RISER_PREROLL + 1 && this._riserWave !== next) {
-      this._riserWave = next
-      this._riser = Sounds.pickRiser(bossNext)
-    }
-    if (this._riser && away <= this._riser.peak) {
-      const r = this._riser
-      this._riser = null
-      Sounds.play(r.name, 1.0, 0, r.volume * (bossNext ? 1.25 : 1.0))
-    }
-
-    // Boss horn pre-roll: start early so the swell peaks as the giants land.
-    if (bossNext && away <= BOSS_HORN_PREROLL && this._bossCuedWave !== next) {
-      this._bossCuedWave = next
-      const { rate, volume } = this.bossHornVoice(next)
-      Sounds.play('horn-boss', rate, 0.02, volume)
-    }
-
-    // Wave horn on the boundary. Boss waves already have their horn running.
-    if (current >= 0 && current !== this._audioWave) {
-      this._audioWave = current
-      if (!this.isBossWave(current)) Sounds.play('horn', 1.0, 0.06, 0.55)
-    }
-
-    // A round is not over when the spawns stop - it's over when the last creep
-    // of it is dead. Dropping to the build bed at the end of the spawn window
-    // put calm music over a field still full of creeps, so combat holds until
-    // the board is actually clear.
-    const spawning = current >= 0 && ((t - this.graceTime) % this.wavePeriod) < this.waveActive
-    const inCombat = spawning || this.creeps.length > 0
-    if (inCombat !== this._waveActiveNow) {
-      this._waveActiveNow = inCombat
-      // The stab marks the real end of the round, so it moves with it.
-      if (!inCombat) {
-        // 5.5s fanfare peaking at 1.3s - it plays out across the quiet gap and
-        // has decayed by the time the build bed eases back in.
-        Sounds.play('level-complete', 1.0, 0, 0.7)
-        this._quietTimer = this.roundEndQuiet
-        // `current` is the wave that just finished; 0-based, so wave 3 is idx 2.
-        if (current >= 0) this.onRoundCleared?.(current)
-      }
-    }
-
-    // Background music follows the same state: calm while you build, a fight
-    // track (drawn from the bucket, so it varies round to round) while the
-    // board is hot, and the boss bed on boss rounds.
-    if (this._quietTimer > 0) this._quietTimer -= dt
-    const quiet = !inCombat && this._quietTimer > 0
-    const mode = inCombat ? (this.isBossWave(current) ? 'boss' : 'fight')
-      : (quiet ? 'quiet' : 'build')
-    // Drop to silence quickly so the sting is exposed; ease back in slowly.
-    Sounds.setBedMode(mode, inCombat ? 1.5 : (quiet ? 0.9 : 2.5))
-  }
-
-  /**
    * Shield barriers: a creep that crosses a shield's perimeter is burned for
    * SHIELD_DAMAGE and spends one of the shield's charges. An unsupported shield
    * burns for half that - see EnergySystem.support().
@@ -617,7 +520,10 @@ export class Creeps {
         if (!inside || was !== false) continue
 
         t.shieldUsed = (t.shieldUsed || 0) + 1
-        Sounds.play('alert3', 1.5, 0.08, 0.3)
+        // Its own sound, not the generic alert blip: a barrier burn was the one
+        // damage source with no audible identity of its own - hit() plays the
+        // same stone thunk for it as for a bullet.
+        Sounds.play('shield-hit', 1.0, 0.08, 0.8)
         this.burnFlash(cr)
         // Charges are spent either way; only the burn is weaker unsupported.
         this.hit(cr, SHIELD_DAMAGE * city.energy.support(t))
@@ -721,10 +627,7 @@ export class Creeps {
 
   /** World position of a tower's footprint center. */
   towerWorld(tower, out) {
-    tower.box.getCenter(out)
-    out.x += this.city.gridOffsetX
-    out.y += this.city.gridOffsetZ // Vector2.y == world z
-    return out
+    return towerWorldCenter(tower, this.city, out)
   }
 
   /** Distance (world units) from a world point to a tower's footprint edge. */
@@ -794,19 +697,17 @@ export class Creeps {
     // Giants are too big for gaps: they bulldoze straight toward the king.
     if (c.giant) return this._planStepGreedy(c)
     const cell = city.worldToCell(c.toX, c.toZ)
-    if (cell && city.flowDist) {
+    if (cell && city.flow.ready) {
       const i = cell.gy * city.gridCellsX + cell.gx
-      // Big creeps use the wide-corridor field (1-cell gaps closed off).
-      const dist = c.big ? city.flowDistBig : city.flowDist
-      const fdx = c.big ? city.flowDXBig : city.flowDX
-      const fdz = c.big ? city.flowDZBig : city.flowDZ
-      const ftk = c.big ? city.flowToKingBig : city.flowToKing
+      // Big creeps get the wide-corridor field (1-cell gaps closed off).
+      const { dist, dx: fdx, dz: fdz, toKing: ftk } = city.flow.fields(c.big)
       // King-seekers ignore gen flow (they'd rather smash toward the king); others
       // follow whatever flow exists (king if reachable, else nearest gen).
       const followFlow = dist[i] >= 1 && (ftk[i] || !c.kingSeeker)
       if (followFlow) {
-        const nx = c.toX + fdx[i] * this.cell
-        const nz = c.toZ + fdz[i] * this.cell
+        const step = this.pickFlowStep(cell, i, dist, fdx, fdz)
+        const nx = c.toX + step[0] * this.cell
+        const nz = c.toZ + step[1] * this.cell
         for (const tower of city.towers) {
           if (!tower.visible) continue
           if (this.towerDist(tower, nx, nz) < this.attackStandoff(c)) { c.target = tower; return 'attack' }
@@ -816,6 +717,44 @@ export class Creeps {
       }
     }
     return this._planStepGreedy(c)
+  }
+
+
+  /**
+   * Pick the next cell to step into, given the flow field.
+   *
+   * The field stores ONE step per cell and its BFS breaks ties in a fixed
+   * neighbour order, so every creep crossing a region inherits the same turn.
+   * That is what makes them file onto the board's centre axes and march up in a
+   * column: anywhere a creep is diagonal from the goal there are TWO neighbours
+   * genuinely closer to it, and the field always names the same one, so the path
+   * comes out as a long leg along X then a long leg along Z.
+   *
+   * Choosing between those equally-good neighbours at random turns the same
+   * column into a spread of staircases, for free - every step still strictly
+   * reduces the distance to the goal, so nothing gets slower or dumber.
+   *
+   * On top of that, MISSTEP_CHANCE occasionally takes a step that does NOT
+   * improve the distance. That is the part that reads as a crowd rather than a
+   * queue: it breaks the lockstep that sets in once several creeps do share a
+   * corridor. They are walking, not pathfinding, and it costs one cell.
+   */
+  pickFlowStep(cell, i, dist, fdx, fdz) {
+    const W = this.city.gridCellsX, H = this.city.gridCellsY
+    const here = dist[i]
+    const closer = [], worse = []
+    for (let d = 0; d < 4; d++) {
+      const nx = cell.gx + STEP_DX[d], ny = cell.gy + STEP_DZ[d]
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
+      const nd = dist[ny * W + nx]
+      if (nd < 0) continue // wall, or no path from there
+      ;(nd < here ? closer : worse).push(d)
+    }
+    // Nothing better adjacent (shouldn't happen while dist >= 1): trust the field.
+    if (closer.length === 0) return [fdx[i], fdz[i]]
+    const pool = (worse.length && Math.random() < MISSTEP_CHANCE) ? worse : closer
+    const d = pool[Math.floor(Math.random() * pool.length)]
+    return [STEP_DX[d], STEP_DZ[d]]
   }
 
   /** Greedy beeline toward the king, smashing through whatever's in the way (one
@@ -984,39 +923,12 @@ export class Creeps {
     this.towerWorld(target, this._sv)
     const ty = Math.max(0.5, target.numFloors * 0.5) * this.city.floorHeight
     this._beamTo.set(this._sv.x, ty, this._sv.y)
-    this.spawnBeam(this._beamFrom, this._beamTo, this.creepLaserColor)
+    this.beamPool.fire(this._beamFrom, this._beamTo, this.creepLaserColor)
     for (let n = 0; n < this.laserDamage; n++) this.city.renderer.damageTower(target)
     Sounds.play('shoot', 0.6, 0.2, 0.3)
   }
 
   /** Light up a pooled beam cylinder stretched from `from` to `to`. */
-  spawnBeam(from, to, color) {
-    const b = this.beams.find(x => !x.active) || this.beams[0]
-    b.active = true
-    b.life = 0
-    const m = b.mesh
-    m.material.color.copy(color)
-    m.material.opacity = 1
-    m.visible = true
-    this._beamDir.copy(to).sub(from)
-    const len = this._beamDir.length() || 0.001
-    m.position.copy(from).addScaledVector(this._beamDir, 0.5)
-    this._beamDir.divideScalar(len)
-    this._beamQ.setFromUnitVectors(this._beamUp, this._beamDir)
-    m.quaternion.copy(this._beamQ)
-    m.scale.set(1, len, 1)
-  }
-
-  /** Fade out / retire active beam flashes. */
-  updateBeams(dt) {
-    for (const b of this.beams) {
-      if (!b.active) continue
-      b.life += dt
-      if (b.life >= this.beamDuration) { b.active = false; b.mesh.visible = false }
-      else b.mesh.material.opacity = 1 - b.life / this.beamDuration
-    }
-  }
-
   /** Advance shooter projectiles; knock a tower floor on contact. */
   updateShots(dt) {
     const fh = this.city.floorHeight
@@ -1064,13 +976,8 @@ export class Creeps {
     this.elapsed = 0
     this.spawnTimer = 0
     this._lastWave = -1
-    this._audioWave = -1
-    this._cuedWave = -1
-    this._bossCuedWave = -1
-    this._waveActiveNow = false
-    this._riser = null
-    this._riserWave = -1
     this._quietTimer = 0
+    this.audio.reset()
   }
 
   /**
@@ -1120,16 +1027,16 @@ export class Creeps {
   update(dt) {
     if (!this.started) return
     // Rebuild the creep flow field when the city changed (cheap, shared by all).
-    if (!this.city.flowDist || this.city.flowDirty) this.city.computeFlowField()
+    if (!this.city.flow.ready || this.city.flowDirty) this.city.flow.compute()
     this.advanceSpawns(dt)
-    this.updateWaveAudio(dt)
+    this.audio.update(dt)
     this.updateEntries()
 
     this.updateShieldBarriers()
     this.updateShots(dt)
     this.updateAmmoBoxes(dt)
     this.updateBombs(dt)
-    this.updateBeams(dt)
+    this.beamPool.update(dt)
 
     // King-proximity siren: warn while any creep is within 3 tiles of the king.
     let kingWX = 0, kingWZ = 0, kingHere = false
@@ -1140,7 +1047,7 @@ export class Creeps {
     const warnR2 = (3 * this.cell) * (3 * this.cell)
     let creepNearKing = false
 
-    const showTypeArrows = !!this.city.flowDebugEnabled
+    const showTypeArrows = !!this.city.flow.debugEnabled
     for (let i = this.creeps.length - 1; i >= 0; i--) {
       const c = this.creeps[i]
       if (c.typeDot) c.typeDot.visible = showTypeArrows
@@ -1272,12 +1179,12 @@ export class Creeps {
         Sounds.play(Math.random() < 0.5 ? 'step1' : 'step2', 1.0, 0.2, 0.4)
       }
 
-      c.t = Math.min(1, c.t + dt / (this.stepDuration * (c.stepMul || 1)))
-      const e = c.t * c.t * (3 - 2 * c.t) // smoothstep ease
-      c.mesh.position.x = c.fromX + (c.toX - c.fromX) * e
-      c.mesh.position.z = c.fromZ + (c.toZ - c.fromZ) * e
-      c.mesh.position.y = c.baseY + Math.sin(c.t * Math.PI) * this.hopHeight
-      if (!c.giant) c.mesh.rotation.y = Math.PI / 4 + c.t * (Math.PI / 2) // quarter-turn per hop (giants spin slowly instead)
+      advanceHop(c, dt, {
+        duration: this.stepDuration * (c.stepMul || 1),
+        baseY: c.baseY,
+        hopHeight: this.hopHeight,
+        spin: !c.giant, // giants spin slowly on their own instead
+      })
     }
 
     // Re-arm / fire the king-proximity siren on a cooldown.

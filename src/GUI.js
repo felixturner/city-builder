@@ -57,8 +57,8 @@ export class GUIManager {
       aoIntensity: 0.95,
       vignette: true,
       bloom: true,
-      bloomStrength: 1.1,
-      bloomRadius: 0.7,
+      bloomStrength: 0.77,
+      bloomRadius: 0.49,
       // 0 on purpose: the glow LAYER is the selection now, not brightness.
       // Raising this just dims the dimmest FX rather than excluding anything.
       bloomThreshold: 0,

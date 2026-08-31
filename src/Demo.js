@@ -51,7 +51,7 @@ export class Demo {
   static MAX_DT = 1 / 20
 
   // Seconds between a crate bursting and the upgrade cards flying out of it.
-  static CARD_DELAY = 1.55 // long enough for the crate's confetti to settle
+  static CARD_DELAY = 1.55 // lets the round-clear fanfare land before the menu
 
   // Seconds between the king dying and the game freezing behind the score panel,
   // so you get to watch the creeps finish the job instead of cutting to a
@@ -130,7 +130,7 @@ export class Demo {
     // Press F to toggle the creep flow-field debug overlay.
     window.addEventListener('keydown', (e) => {
       if ((e.key === 'f' || e.key === 'F') && this.city) {
-        this.city.flowDebugEnabled = !this.city.flowDebugEnabled
+        this.city.flow.debugEnabled = !this.city.flow.debugEnabled
         this.city.computeFlowField()
       }
     })
@@ -217,19 +217,23 @@ export class Demo {
     this.soldiers = new Soldiers(this.scene, this.city, this.creeps)
     this.city.soldiers = this.soldiers
 
-    // Pick-one-of-four upgrade screen, paid out by walling in a loot crate
-    // rather than by surviving N waves.
+    // Pick-one-of-four upgrade screen, paid out by clearing a boss round.
+    // Crates used to hand these out; they pay resources now (see LootBoxes).
     resetBuffs()
     this.powerUps = new PowerUpScreen(this)
     this.lootBoxes = new LootBoxes(this.scene, this.city, this)
     this.city.lootBoxes = this.lootBoxes // placement checks read it
     this.lootBoxes.place()
-    this.lootBoxes.onOpened = (screenPos) => {
+    // Cards come from surviving a boss round, not from crates. It fires when the
+    // board actually goes quiet - not when the spawn window shuts - so the menu
+    // never opens over a field still full of creeps.
+    this.creeps.audio.onRoundCleared = (waveIdx) => {
+      if (!this.creeps.isBossWave(waveIdx)) return
       if (this.isGameOver || this.kingDead) return
-      // A short beat after the burst so the confetti reads before the menu.
+      // A beat after the round-clear fanfare so it isn't stepped on.
       this._cardTimer = setTimeout(() => {
         this._cardTimer = null
-        if (!this.isGameOver && !this.kingDead) this.powerUps.show(screenPos)
+        if (!this.isGameOver && !this.kingDead) this.powerUps.show()
       }, Demo.CARD_DELAY * 1000)
     }
 
@@ -531,11 +535,7 @@ export class Demo {
     if (paused) {
       Sounds.stop('tick-fast')
       Sounds.fadeOut('horn-boss', 0.3)
-      if (this.creeps) {
-        this.creeps._cuedWave = -1
-        this.creeps._riserWave = -1
-        this.creeps._riser = null
-      }
+      this.creeps?.audio.resetCues()
       Sounds.holdBeds(true)
       // Fade the master bus out so one-shots already in flight go quiet too,
       // not just the beds.

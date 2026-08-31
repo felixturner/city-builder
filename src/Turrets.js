@@ -1,12 +1,10 @@
 import {
   Mesh,
   SphereGeometry,
-  CylinderGeometry,
   MeshStandardNodeMaterial,
   MeshBasicNodeMaterial,
   Vector2,
   Vector3,
-  Quaternion,
   Color,
   Group,
   Box3,
@@ -19,6 +17,7 @@ import { Buffs } from './buffs.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { roofGeomIndex } from './blockTypes.js'
 import { fxMaterial, NO_AO_MRT, glow } from './fx.js'
+import { BeamPool } from './lib/BeamPool.js'
 
 // Write a fake "up" normal to the MRT so GTAO treats the FX as flat and barely
 // darkens them - keeps beams/projectiles/explosions AO-free while staying in the
@@ -81,16 +80,7 @@ export class Turrets {
     // Laser turret config + a small pool of reusable beam cylinders.
     this.laserCooldown = 0.9 // fires less often than the peg turret
     this.laserDamage = 2
-    this.beamDuration = 0.16 // seconds the beam flash lingers
-    this.beamGeo = new CylinderGeometry(0.28, 0.28, 1, 8) // unit length along Y
-    this.beams = []
-    for (let i = 0; i < 8; i++) {
-      const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
-      const mesh = glow(new Mesh(this.beamGeo, mat))
-      mesh.visible = false
-      this.scene.add(mesh)
-      this.beams.push({ mesh, life: 0, active: false })
-    }
+    this.beamPool = new BeamPool(scene, { radius: 0.28, duration: 0.16 })
 
     // Mortar turret: lobs an arcing shell that explodes in an AoE.
     this.mortarCooldown = 4.0 // slow fire
@@ -117,8 +107,6 @@ export class Turrets {
     this.turretModels = new Map() // tower -> placed model clone
 
     this._tc = new Vector2()
-    this._q = new Quaternion()
-    this._up = new Vector3(0, 1, 0)
     this._from = new Vector3()
     this._to = new Vector3()
     this._dir = new Vector3()
@@ -353,43 +341,14 @@ export class Turrets {
     if (!this.payForShot('laser')) return false
 
     this._to.copy(target.mesh.position)
-    this.spawnBeam(muzzle, this._to, tower.laserColor || this._white)
+    this.beamPool.fire(muzzle, this._to, tower.laserColor || this._white)
     this.creeps.hit(target, this.laserDamage + Buffs.shotDamage.laser)
     Sounds.play('shoot', 0.65, 0.2, 0.34)
     return true
   }
 
-  /** Light up a pooled beam cylinder stretched from `from` to `to`. */
-  spawnBeam(from, to, color) {
-    const b = this.beams.find(x => !x.active) || this.beams[0]
-    b.active = true
-    b.life = 0
-    const m = b.mesh
-    m.material.color.copy(color)
-    m.material.opacity = 1
-    m.visible = true
-
-    this._dir.copy(to).sub(from)
-    const len = this._dir.length() || 0.001
-    m.position.copy(from).addScaledVector(this._dir, 0.5)
-    this._dir.divideScalar(len)
-    this._q.setFromUnitVectors(this._up, this._dir)
-    m.quaternion.copy(this._q)
-    m.scale.set(1, len, 1)
-  }
-
   update(dt) {
-    // Fade out / retire active beam flashes.
-    for (const b of this.beams) {
-      if (!b.active) continue
-      b.life += dt
-      if (b.life >= this.beamDuration) {
-        b.active = false
-        b.mesh.visible = false
-      } else {
-        b.mesh.material.opacity = 1 - b.life / this.beamDuration
-      }
-    }
+    this.beamPool.update(dt)
 
     // Blast domes: pop scale to max fast (~0.12s ease-out), fade over ~0.45s.
     for (let i = this.explosions.length - 1; i >= 0; i--) {

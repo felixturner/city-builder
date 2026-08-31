@@ -187,6 +187,58 @@ export class Tower {
     })
   }
 
+
+  /**
+   * Land any in-flight roof animation in its FINISHED state, immediately.
+   *
+   * kill() on its own stops a tween where it stands: the tilt keeps whatever
+   * value the bounce had reached, roofAnimating stays true, and since
+   * City.updateTowerMatrices deliberately skips the roof while that flag is set,
+   * nothing ever corrects either one. That is both reported bug - the roof left
+   * permanently tilted, and (on a tower recycled through the pool with the flag
+   * still stuck) the roof left at some previous tile's footprint scale, which
+   * reads as a roof several times too big.
+   *
+   * progress(1, true) fast-forwards the timeline to its end values while
+   * suppressing callbacks, so an interrupted pop does not fire its landing
+   * thunk. The explicit zeroing then guarantees a clean rest state even if the
+   * timeline is swapped out mid-build.
+   */
+  settleRoof() {
+    if (this.roofTween) {
+      this.roofTween.progress(1, true)
+      this.roofTween.kill()
+      this.roofTween = null
+    }
+    this.roofAnim.tiltX = 0
+    this.roofAnim.tiltY = 0
+    this.roofAnim.tiltZ = 0
+    this.roofAnimating = false
+  }
+
+  /** Same idea for the floor timeline: finish it rather than freeze it. */
+  settleFloors() {
+    if (this.floorTween) {
+      this.floorTween.progress(1, true)
+      this.floorTween.kill()
+      this.floorTween = null
+    }
+  }
+
+  /**
+   * Full animation reset, for a tower going back to the pool.
+   *
+   * roofAnim.y is included because animateAddFloor only seeds it when it reads
+   * 0 - a recycled tower carrying a stale height would start its first pop from
+   * the wrong place.
+   */
+  resetAnimation() {
+    this.settleRoof()
+    this.settleFloors()
+    if (this.hoverTween) { this.hoverTween.kill(); this.hoverTween = null }
+    this.roofAnim.y = 0
+  }
+
   /**
    * Animate tower vertical offset (for press down effect)
    * @param {BatchedMesh} mesh - The batched mesh
@@ -248,7 +300,7 @@ export class Tower {
     const ex = this.tetro ? 1 : size.x
     const ez = this.tetro ? 1 : size.y
 
-    if (this.floorTween?.isActive()) this.floorTween.kill()
+    this.settleFloors()
 
     const floorHalfHeight = floorHeight / 2
     const roofHalfHeight = this.tetro ? TetrominoGeometry.roofHalf : BlockGeometry.halfHeights[roofGeomIndex(this.typeTop)]
@@ -334,7 +386,7 @@ export class Tower {
    * Animate roof pop-off (separate from floor timeline for fast-click support)
    */
   startRoofAnimation(mesh, center, size, floorHeight, finalRoofY) {
-    if (this.roofTween) this.roofTween.kill()
+    this.settleRoof()
     this.roofAnimating = true
 
     const ex = this.tetro ? 1 : size.x
@@ -387,8 +439,8 @@ export class Tower {
    * Pop off roof, stagger-delete floors top-down, drop roof back
    */
   animateDelete(mesh, floorHeight, numFloors, onComplete) {
-    if (this.floorTween?.isActive()) this.floorTween.kill()
-    if (this.roofTween) this.roofTween.kill()
+    this.settleFloors()
+    this.settleRoof()
 
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
