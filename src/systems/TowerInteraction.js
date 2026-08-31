@@ -4,6 +4,7 @@ import { ENERGY_COLOR } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TopType, isTurret, isGrey, towerArea, towerTopY } from '../blockTypes.js'
+import { fxMaterial } from '../fx.js'
 
 /**
  * TowerInteraction - all player input on towers (hover, build, destroy, place,
@@ -180,12 +181,10 @@ export class TowerInteraction {
     city.onTowerChanged(tower)
 
     const center = tower.box.getCenter(city.towerCenter)
-    const mat = new MeshBasicNodeMaterial({
+    const mat = fxMaterial(new MeshBasicNodeMaterial({
       color: city.accentColors[tower.colorIndex].clone(),
-      transparent: true,
       opacity: 0.85,
-      depthTest: false,
-    })
+    }))
     const ring = new Mesh(this.rerollRingGeoFor(0), mat)
     ring.rotation.x = -Math.PI / 2
     ring.position.set(center.x + city.gridOffsetX, 0.12, center.y + city.gridOffsetZ)

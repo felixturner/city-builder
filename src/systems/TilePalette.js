@@ -698,6 +698,34 @@ export class TilePalette {
     return helper
   }
 
+
+  /**
+   * Quarter turns to add to a dragged tile so it lands on the board looking the
+   * way it does in its tray icon.
+   *
+   * The icon and the placed geometry were lined up by hand for the OPENING
+   * camera - that is the whole job of the fixed quarter turn in
+   * TetrominoGeometry.placeOrient. Orbit away from that angle and the two drift
+   * apart: drag an L out after a quarter turn of the camera and a differently
+   * oriented L arrives on the board.
+   *
+   * Rotating the camera is a whole-board turn, and the board is square, so the
+   * fix is to snap the orbit to the nearest quarter turn and pre-turn the tile
+   * by that much. The sign is negative because the two turn opposite ways:
+   * orbiting the camera +90deg makes a fixed world axis sweep -90deg across the
+   * screen, so the tile has to turn the other way to appear to hold still.
+   *
+   * Note the opening camera is not itself axis-aligned (it sits ~34deg off),
+   * which is exactly why this rounds rather than divides - the tile matches its
+   * icon at the four orbit positions a player actually rests at.
+   */
+  get camQuarterTurns() {
+    const { controls, baseAzimuth } = this.demo
+    if (!controls || baseAzimuth === undefined) return 0
+    const turns = Math.round((controls.getAzimuthalAngle() - baseAzimuth) / (Math.PI / 2))
+    return ((-turns) % 4 + 4) % 4
+  }
+
   _beginDrag(i) {
     const tile = this.slots[i].tile
     const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0.55, depthTest: false })
@@ -705,7 +733,12 @@ export class TilePalette {
     // and hardcoding 0 here built the ghost mesh for one rotation while
     // _pickTarget sized and placed the footprint for another - which is the
     // half-cell offset between the ghost and where the tile actually landed.
-    const ghost = new Mesh(this._ghostGeomFor(tile, tile.rot || 0), mat)
+    // Pre-turned to the camera, so the ghost, the footprint and the tile that
+    // finally lands all agree with the tray icon whichever way the board is
+    // facing. Everything downstream reads drag.rot, so this is the only place
+    // the camera has to be consulted.
+    const rot = (tile.rot || 0) + this.camQuarterTurns
+    const ghost = new Mesh(this._ghostGeomFor(tile, rot), mat)
     ghost.renderOrder = 5
     this.city.scene.add(ghost)
     const arrow = this._makeGhostAxes()
@@ -717,7 +750,7 @@ export class TilePalette {
     if (this.demo.controls) this.demo.controls.enabled = false
     const base = this._tileColor3(tile, new Color())
     const hi = base.clone().lerp(this._white, 0.45)
-    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot: tile.rot || 0, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined }
+    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined }
     mat.color.copy(base)
   }
 

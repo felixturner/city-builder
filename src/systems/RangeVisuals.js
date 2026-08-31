@@ -2,6 +2,7 @@ import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three
 import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges } from '../blockTypes.js'
 import { Buffs } from '../buffs.js'
 import { SHIELD_LINE } from '../palette.js'
+import { fxMaterial } from '../fx.js'
 
 
 /**
@@ -64,7 +65,7 @@ export class RangeVisuals {
 
     this.zoc = new RingLayer(
       city.scene,
-      () => new MeshBasicNodeMaterial({ transparent: true, opacity: 0.6, depthWrite: false }),
+      () => fxMaterial(new MeshBasicNodeMaterial({ opacity: 0.6 })),
       // Link reach, in world units. Two path generators connect when the gap
       // between their centres is less than (a.numFloors + b.numFloors) * 2
       // CELLS - two cells per floor - so a generator's own half of that is
@@ -78,16 +79,15 @@ export class RangeVisuals {
     // replaced said "area of influence", which is the wrong idea entirely.
     this.shield = new RingLayer(
       city.scene,
-      () => new MeshBasicNodeMaterial({
-        color: new Color(SHIELD_LINE),
-        transparent: true, opacity: 0.95, depthWrite: false,
-      }),
+      () => fxMaterial(new MeshBasicNodeMaterial({
+        color: new Color(SHIELD_LINE), opacity: 0.95,
+      })),
       (n) => shieldRadiusCells(n) * city.cellUnit,
       { thickness: 0.16, y: 0.05 }
     )
     this.range = new RingLayer(
       city.scene,
-      () => new MeshBasicNodeMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false }),
+      () => fxMaterial(new MeshBasicNodeMaterial({ color: 0xffffff, opacity: 0.4 })),
       (n) => (n * 2 + 1) * city.cellUnit,
       { thickness: 0.12, y: 0.07 }
     )

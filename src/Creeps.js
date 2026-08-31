@@ -15,11 +15,13 @@ import { AMMO_COLOR } from './Mana.js'
 import { isShield, shieldCharges, shieldRadiusCells } from './blockTypes.js'
 import { SHIELD_LINE } from './palette.js'
 
-// Damage a shield perimeter does to a creep crossing it.
-const SHIELD_DAMAGE = 1
+// Damage a shield perimeter does to a creep crossing it (halved when the shield
+// has no support tower reaching it - see updateShieldBarriers).
+const SHIELD_DAMAGE = 2
 // Seconds a creep glows shield-yellow after a barrier burns it.
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
+import { fxMaterial } from './fx.js'
 
 /**
  * Creeps - abstract enemy nodes. Black diamonds (cubes rotated 45deg off the
@@ -60,7 +62,7 @@ export class Creeps {
     this.beamGeo = new CylinderGeometry(0.16, 0.16, 1, 8) // unit length along Y
     this.beams = []
     for (let i = 0; i < 8; i++) {
-      const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0, depthWrite: false })
+      const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
       const mesh = new Mesh(this.beamGeo, mat)
       mesh.visible = false
       this.scene.add(mesh)
@@ -133,15 +135,20 @@ export class Creeps {
     // where the curve changes shape (see spawnInterval).
     this.startInterval = 1.6 // seconds between spawns right after grace
     this.minInterval = 0.22 // cadence at the end of the opening ramp
-    this.rampDuration = 420 // seconds to go from start -> min
-    this.halvingPeriod = 420 // after the ramp, the gap halves every this many secs
+    // The ramp is measured in WAVES, not seconds. It used to be 420s/420s,
+    // which was exactly 7 wave cycles at the old 60s period - so lengthening
+    // the build phase silently made every wave land further along the curve.
+    // Levels are what the player sees and what the stat ramp already used;
+    // pacing now reads off the same clock.
+    this.rampWaves = 7 // waves to go from startInterval -> minInterval
+    this.halvingWaves = 7 // after the ramp, the gap halves every this many waves
     this.absoluteMinInterval = 0.05 // engine backstop, not a design limit
 
     // Waves run on a fixed clock: spawn for waveActive secs, then the rest of
     // wavePeriod is the build phase. Creeps left alive past the spawn window
     // eat into that quiet - the next wave still lands on schedule - so a slow
     // clear costs you build time rather than delaying anything.
-    this.wavePeriod = 60 // 20s spawn + 40s build
+    this.wavePeriod = 80 // 20s spawn + 60s build
     this.waveActive = 20 // seconds each wave spawns for
     this._lastWave = -1 // last wave index seen (for boss-wave edge detection)
 
@@ -150,7 +157,7 @@ export class Creeps {
     // seeked so its last tick falls on zero (see Sounds.countdown).
     // The clock runs for this long before a wave, and the riser lands its peak
     // on the spawn inside that window: ~5.5s of riser over the tail of a normal
-    // wave's 10s ticker, ~10.7s over a boss's 15s one. The build phase is 30s,
+    // wave's 10s ticker, ~10.7s over a boss's 15s one. The build phase is 60s,
     // so there's still plenty of quiet breather to build in.
     this.countdownLead = 10
     // Boss waves keep the longer lead on purpose: their riser peaks at ~10.7s,
@@ -169,22 +176,22 @@ export class Creeps {
     this.roundEndQuiet = 2.2
     this._quietTimer = 0
     this.bigChance = 0.1 // fraction of creeps that are big (once they unlock)
-    this.bigUnlockTime = 90 // no big creeps until this many seconds in
+    this.bigUnlockWave = 1 // no big creeps before this wave (level 2)
     // Fraction of creeps that doggedly smash toward the king (ignoring gens) when
     // it's walled off, rather than diverting to a reachable gen.
     this.kingSeekerChance = 0.5
 
     // Shooter creeps: stop at range and lob little blocks at towers.
     this.shooterChance = 0.1 // fraction of creeps that are shooters
-    this.shooterUnlockTime = 150 // grace + 3 wave cycles; shooters from wave 4
+    this.shooterUnlockWave = 3 // shooters from level 4
 
     // Laser creeps: stop at range and fire a turret-style beam at towers.
     this.laserChance = 0.1
-    this.laserUnlockTime = 150
+    this.laserUnlockWave = 3 // same level as shooters
 
     // Bomber creeps: fly across the map at altitude and carpet-drop bombs.
     this.bomberChance = 0.1 // fraction of creeps that fly in as bombers
-    this.bomberUnlockTime = 120 // no bombers until this many seconds in
+    this.bomberUnlockWave = 2 // bombers from level 3, between bigs and shooters
     this.bomberY = 14 // flight altitude (world units)
     this.flySpeed = 16 // horizontal flight speed (world units/sec)
     this.bombInterval = 1.3 // seconds between bomb drops
@@ -251,8 +258,17 @@ export class Creeps {
 
   /** Waves elapsed, 0 during the opening grace period. Drives the stat ramp. */
   get waveNumber() {
+    return Math.floor(this.waveProgress)
+  }
+
+  /**
+   * Waves elapsed as a FRACTION - 2.5 is halfway through wave 2. The spawn
+   * cadence reads this rather than waveNumber so it keeps sliding smoothly
+   * inside a wave instead of stepping once per cycle.
+   */
+  get waveProgress() {
     if (this.elapsed < this.graceTime) return 0
-    return Math.floor((this.elapsed - this.graceTime) / this.wavePeriod)
+    return (this.elapsed - this.graceTime) / this.wavePeriod
   }
 
   /** Health and attack multipliers for a creep spawning right now. */
@@ -266,7 +282,7 @@ export class Creeps {
 
   /**
    * Current seconds-between-spawns. LINEAR from startInterval to minInterval
-   * across rampDuration, and the only thing that grows wave size.
+   * across rampWaves, and the only thing that grows wave size.
    *
    * It used to ease in quadratically, which spends a quarter of the effect in
    * the first half of the ramp - so the opening five waves each needed well
@@ -276,19 +292,19 @@ export class Creeps {
    * One continuous dial instead of two, one of them a step function.
    */
   get spawnInterval() {
-    const since = Math.max(0, this.elapsed - this.graceTime)
+    const waves = this.waveProgress
     // Opening ramp: linear down to minInterval. Unchanged - this stretch is
     // tuned and the shape of the first seven waves depends on it.
-    if (since <= this.rampDuration) {
+    if (waves <= this.rampWaves) {
       return this.startInterval
-        + (this.minInterval - this.startInterval) * (since / this.rampDuration)
+        + (this.minInterval - this.startInterval) * (waves / this.rampWaves)
     }
-    // Past it, keep going: the gap halves every halvingPeriod, so creep counts
+    // Past it, keep going: the gap halves every halvingWaves, so creep counts
     // rise without bound. minInterval used to be a hard floor, which meant wave
     // counts flatlined at 91 from wave 7 on and the only thing still growing
     // was per-creep health. absoluteMinInterval is a backstop so the spawner
     // can't melt the frame rate, not a difficulty ceiling.
-    const beyond = (since - this.rampDuration) / this.halvingPeriod
+    const beyond = (waves - this.rampWaves) / this.halvingWaves
     return Math.max(this.absoluteMinInterval, this.minInterval * Math.pow(0.5, beyond))
   }
 
@@ -305,13 +321,14 @@ export class Creeps {
     const giant = !!opts.giant
     const forceShooter = !!opts.forceShooter
     // Some creeps are "big": 2x size, 2x HP, knock 2 floors per kill. Late + rare.
-    const big = !giant && !forceShooter && this.elapsed >= this.bigUnlockTime && Math.random() < this.bigChance
+    const w = this.waveNumber
+    const big = !giant && !forceShooter && w >= this.bigUnlockWave && Math.random() < this.bigChance
     // Shooters stop at range and lob little blocks at towers.
-    const shooter = !giant && (forceShooter || (!big && this.elapsed >= this.shooterUnlockTime && Math.random() < this.shooterChance))
+    const shooter = !giant && (forceShooter || (!big && w >= this.shooterUnlockWave && Math.random() < this.shooterChance))
     // Laser creeps stop at range and fire a turret-style beam at towers.
-    const laser = !giant && !forceShooter && !big && !shooter && this.elapsed >= this.laserUnlockTime && Math.random() < this.laserChance
+    const laser = !giant && !forceShooter && !big && !shooter && w >= this.laserUnlockWave && Math.random() < this.laserChance
     // Bombers fly across at altitude and drop bombs.
-    const bomber = !giant && !forceShooter && !big && !shooter && !laser && this.elapsed >= this.bomberUnlockTime && Math.random() < this.bomberChance
+    const bomber = !giant && !forceShooter && !big && !shooter && !laser && w >= this.bomberUnlockWave && Math.random() < this.bomberChance
     // Heads-up blips for the two threats you can't just out-wall: a bright high
     // one for the airborne bomber, a sharper mid one for the laser. Fixed per
     // type (not randomised) so they stay learnable, and quiet enough to sit
@@ -551,7 +568,8 @@ export class Creeps {
 
   /**
    * Shield barriers: a creep that crosses a shield's perimeter is burned for
-   * SHIELD_DAMAGE and spends one of the shield's charges.
+   * SHIELD_DAMAGE and spends one of the shield's charges. An unsupported shield
+   * burns for half that - see EnergySystem.support().
    *
    * Only INWARD crossings count, and only for creeps seen outside first - the
    * previous-side flag starts undefined, so raising a shield over creeps
@@ -582,7 +600,8 @@ export class Creeps {
         t.shieldUsed = (t.shieldUsed || 0) + 1
         Sounds.play('alert3', 1.5, 0.08, 0.3)
         this.burnFlash(cr)
-        this.hit(cr, SHIELD_DAMAGE)
+        // Charges are spent either way; only the burn is weaker unsupported.
+        this.hit(cr, SHIELD_DAMAGE * city.energy.support(t))
         if (shieldCharges(t) <= 0) {
           // Spent: the ring goes dark and the barrier stops burning.
           Sounds.play('power-down', 1.2, 0.05, 0.45)
@@ -1066,7 +1085,7 @@ export class Creeps {
   /**
    * Fast-forward: replay the spawn schedule across `seconds` in fine steps, so
    * every creep that WOULD have spawned in that window is created now - they all
-   * arrive at once. Spawn cadence/types ramp with elapsed, so step finely.
+   * arrive at once. Spawn cadence/types ramp with wave progress, so step finely.
    */
   skipAhead(seconds) {
     if (!this.started) return

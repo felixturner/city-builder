@@ -37,6 +37,7 @@ import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS } from './palette.js'
 import { Buffs } from './buffs.js'
 import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, tileColorIndex, shieldRadiusCells, KING_HEALTH } from './blockTypes.js'
+import { fxMaterial } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
 // A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
@@ -322,7 +323,6 @@ export class City {
 
   /** Free a placed tower's cells and return it to the pool (no debris/sound). */
   freePlacedTower(tower) {
-    this._removeGenPie(tower)
     for (const [dx, dy] of tower.cells) this.occupied[tower.cellY + dy][tower.cellX + dx] = false
     const lot = this.lots[tower.lotY][tower.lotX]
     const k = lot.towers.indexOf(tower)
@@ -385,8 +385,9 @@ export class City {
     return this._tileBag.pop()
   }
 
-  /** Fill + shuffle the 66-tile bag: walls 6 each (6 shapes = 36, ~55%), 1x1
-   *  gens/turrets 3 each (6), 2x2 gens 3 each (3), 3x3 1 each (3). */
+  /** Fill + shuffle the 64-tile bag: walls 7 each (6 shapes = 42, ~66%), then
+   *  1x1 path gens 6, enclosure gens 4, turrets 2 each (6), barracks 3,
+   *  shields 3. */
   _fillTileBag() {
     const bag = []
     const add = (n, spec) => { for (let i = 0; i < n; i++) bag.push(spec) }
@@ -396,16 +397,16 @@ export class City {
     // the tetromino walls - which made footprint a second, inconsistent axis of
     // variation on top of height.
     //
-    // Every non-wall count is one lower than it was, and shields are halved on
-    // top of that (2 -> 1), making them the rarest tile in the bag. Walls are
-    // untouched at 7 per shape, so trimming the others also lifts the wall share
-    // of a draw from ~68% to ~74%.
-    const gens = [TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR]
+    // Walls sit at 7 per shape and dominate the bag (~66%); the 1x1 utility
+    // tiles are tuned against each other. Enclosure gens draw less often than
+    // path gens because one enclosure ring covers a lot of ground, and turrets
+    // stay the scarcest at 2 apiece.
     const turrets = [TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET]
-    for (const typeTop of gens) add(6, { s: 1, typeTop })
+    add(6, { s: 1, typeTop: TopType.PATH_GENERATOR })
+    add(4, { s: 1, typeTop: TopType.ENCLOSURE_GENERATOR })
     for (const typeTop of turrets) add(2, { s: 1, typeTop })
     add(3, { s: 1, typeTop: TopType.BARRACKS })
-    add(1, { s: 1, typeTop: TopType.SHIELD })
+    add(3, { s: 1, typeTop: TopType.SHIELD })
     for (let i = bag.length - 1; i > 0; i--) {
       const j = MathUtils.randInt(0, i)
       ;[bag[i], bag[j]] = [bag[j], bag[i]]
@@ -1084,11 +1085,9 @@ export class City {
       this._supportRingGeo = new CircleGeometry(1, 40)
       this._supportRingGeo.rotateX(-Math.PI / 2)
     }
-    const mat = new MeshBasicNodeMaterial({
-      color: color.clone(), transparent: true, opacity: 0.85,
-      depthWrite: false, depthTest: false,
-    })
-    mat.mrtNode = mrt({ output: output, normal: vec3(0, 1, 0) }) // flat: skip AO
+    const mat = fxMaterial(new MeshBasicNodeMaterial({
+      color: color.clone(), opacity: 0.85,
+    }))
     const mesh = new Mesh(this._supportRingGeo, mat)
     mesh.position.set(x, 0.09, z)
     mesh.scale.setScalar(0.01)

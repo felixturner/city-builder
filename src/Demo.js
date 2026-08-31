@@ -316,6 +316,11 @@ export class Demo {
     // The orbit centre is the middle of the city and stays there for good.
     this.controls.target.set(0, 0, 0)
     this.controls.update()
+    // The azimuth the tray icons and the placed-tile geometry were lined up
+    // against (see TetrominoGeometry.placeOrient). TilePalette measures the
+    // current orbit against this to work out how many quarter turns a dragged
+    // tile needs so it lands looking like its icon.
+    this.baseAzimuth = this.controls.getAzimuthalAngle()
   }
 
   updateOrthoFrustum() {
@@ -457,6 +462,7 @@ export class Demo {
     // The score stops the moment the king dies, not when the panel appears -
     // the run ended at the death, the extra seconds are just the aftermath.
     if (!this.kingDead) this.mana.tick(dt)
+    this.mana.setLevel(this.creeps.waveNumber + 1)
     this.city.update(dt)
     this.trails.update(dt)
     this.creeps.update(dt)

@@ -18,12 +18,12 @@ import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { roofGeomIndex } from './blockTypes.js'
-import { mrt, output, vec3 } from 'three/tsl'
+import { fxMaterial, NO_AO_MRT } from './fx.js'
 
 // Write a fake "up" normal to the MRT so GTAO treats the FX as flat and barely
 // darkens them - keeps beams/projectiles/explosions AO-free while staying in the
 // main scene (so they depth-sort against blocks). Same trick the trails/floor use.
-const NO_AO = () => mrt({ output: output, normal: vec3(0, 1, 0) })
+const NO_AO = NO_AO_MRT
 
 /**
  * Turrets - two kinds of auto-firing tower:
@@ -74,7 +74,7 @@ export class Turrets {
     this.cooldowns = new Map() // tower -> seconds until next shot
 
     this.fireCooldown = 0.35 // seconds between Peg shots
-    this.projectileSpeed = 50 // world units / sec
+    this.projectileSpeed = 100 // world units / sec
     this.hitRadius = 1.0 // sphere considered "on" the creep within this
     this.baseY = 0.8
 
@@ -85,8 +85,7 @@ export class Turrets {
     this.beamGeo = new CylinderGeometry(0.28, 0.28, 1, 8) // unit length along Y
     this.beams = []
     for (let i = 0; i < 8; i++) {
-      const mat = new MeshBasicNodeMaterial({ transparent: true, opacity: 0, depthWrite: false })
-      mat.mrtNode = NO_AO()
+      const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
       const mesh = new Mesh(this.beamGeo, mat)
       mesh.visible = false
       this.scene.add(mesh)
@@ -474,8 +473,13 @@ export class Turrets {
       let cd = (this.cooldowns.get(tower) ?? 0) - dt
       if (cd <= 0) {
         const fired = isMortar ? this.fireMortar(tower) : isLaser ? this.fireLaser(tower) : this.fire(tower)
-        if (fired) cd = (isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown) * Buffs.fireRate
-        else cd = 0.15 // nothing in range or out of energy; re-check soon
+        if (fired) {
+          const base = isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown
+          // No support tower reaching this turret => half rate, i.e. double the
+          // gap between shots. support() is 1 or SUPPORT_PENALTY and doesn't
+          // stack, so a second support tower changes nothing.
+          cd = base * Buffs.fireRate / this.city.energy.support(tower)
+        } else cd = 0.15 // nothing in range or out of energy; re-check soon
       }
       this.cooldowns.set(tower, cd)
     }
@@ -515,10 +519,9 @@ export class Turrets {
     }
     // Blast dome: sphere centered at ground (y=0) so only the top half shows;
     // pops its scale up fast then fades out (animated in update()).
-    const mat = new MeshBasicNodeMaterial({
-      color: this._explodeColor.clone(), transparent: true, opacity: 0.6, depthWrite: false,
-    })
-    mat.mrtNode = NO_AO()
+    const mat = fxMaterial(new MeshBasicNodeMaterial({
+      color: this._explodeColor.clone(), opacity: 0.6,
+    }))
     const mesh = new Mesh(this.explosionGeo, mat)
     mesh.position.set(x, 0, z)
     mesh.scale.setScalar(0.001)

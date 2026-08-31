@@ -66,7 +66,7 @@ export const BOSS_HORN_PREROLL = 2.5
  * these sit low.
  */
 const BEDS_SRC = {
-  'bed-calm': { base: 0.30 }, // 126.8s ambient piece - long enough that the loop rarely comes round
+  'build-bed': { base: 0.30 }, // 84.3s - the build phase is 60s, so it rarely loops inside one
   'bed-fight1': { base: 0.20 },
   'bed-fight2': { base: 0.22 },
   'bed-boss': { base: 0.23 },
@@ -81,7 +81,7 @@ const BED_MODES = {
   // No bed at all - used for the beat of silence after a round is cleared, so
   // the win lands in the quiet instead of straight into the next track.
   quiet: [],
-  build: ['bed-calm'],
+  build: ['build-bed'],
   fight: ['bed-fight1', 'bed-fight2'],
   boss: ['bed-boss'],
 }
@@ -140,7 +140,7 @@ const VOICES = {
  *
  * Everything else - combat, waves, the music beds - is fetched in the
  * background by loadDeferred() once the game is up. It used to all preload
- * eagerly, which put ~9MB of audio (bed-calm alone is 1.9MB) between the player
+ * eagerly, which put ~9MB of audio (the build bed alone is 2.7MB) between the player
  * and the Start button.
  *
  * A deferred sound played before its fetch finishes is not an error: Howler
@@ -268,7 +268,7 @@ class SoundsManager {
    */
   loadDeferred(batch = 4, gapMs = 300) {
     const queue = Object.keys(this.sounds).filter(n => !CORE.has(n) && !this._unavailable.has(n))
-    const priority = ['bed-calm', 'tick-fast', 'horn1', 'horn2', 'horn3', 'riser1',
+    const priority = ['build-bed', 'tick-fast', 'horn1', 'horn2', 'horn3', 'riser1',
       'creep-warn', 'spawn', 'step1', 'step2', 'shoot1', 'shoot2', 'shoot3']
     queue.sort((a, b) => {
       const ia = priority.indexOf(a), ib = priority.indexOf(b)

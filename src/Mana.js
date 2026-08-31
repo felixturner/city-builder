@@ -18,6 +18,7 @@ export { ENERGY_COLOR, AMMO_COLOR } from './palette.js'
  *   energy: current / max  (max = baseMax + population)  - spent on building
  *   ammo:   current / max                                - spent by turrets
  *   score:  whole seconds survived (ticks up during play, freezes on game over)
+ *   level:  wave number, 1-based (Creeps.waveNumber + 1)
  *
  * Each resource gets a progress bar directly above its readout. Grey blocks
  * generate energy and raise its cap (City calls setStats); ammo comes only from
@@ -34,6 +35,7 @@ export class Mana {
     // ever displayed rounded down - see render().
     this.ammo = Math.min(ammoInitial, ammoMax)
     this.elapsed = 0 // survival time = score
+    this.level = 1 // 1-based wave number, pushed in by Demo each frame
     this._build()
     this.render()
   }
@@ -83,6 +85,7 @@ export class Mana {
     this.energyEl = document.createElement('div')
     this.ammoEl = document.createElement('div')
     this.scoreEl = document.createElement('div')
+    this.levelEl = document.createElement('div')
     this.energyEl.style.color = ENERGY_COLOR
     this.ammoEl.style.color = AMMO_COLOR
 
@@ -92,6 +95,7 @@ export class Mana {
     el.appendChild(a.track)
     el.appendChild(this.ammoEl)
     el.appendChild(this.scoreEl)
+    el.appendChild(this.levelEl)
 
     document.body.appendChild(el)
     this.el = el
@@ -119,9 +123,17 @@ export class Mana {
     this.energyEl.textContent = `energy: ${Math.floor(this.current)} /${this.max}`
     this.ammoEl.textContent = `ammo:   ${Math.floor(this.ammo)} /${ammoCap}`
     this.scoreEl.textContent = `score:  ${Math.floor(this.elapsed)}`
+    this.levelEl.textContent = `level:  ${this.level}`
     const pct = (v, m) => `${Math.max(0, Math.min(100, (v / m) * 100))}%`
     this.energyFill.style.width = pct(this.current, this.max)
     this.ammoFill.style.width = pct(this.ammo, ammoCap)
+  }
+
+  /** Set the displayed level (1-based wave). No-op when unchanged. */
+  setLevel(level) {
+    if (level === this.level) return
+    this.level = level
+    this.render()
   }
 
   /** Advance the survival-time score. Called each frame while the game runs. */
