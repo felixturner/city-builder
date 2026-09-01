@@ -36,7 +36,7 @@ export class FlowFieldView {
   constructor(city, creeps) {
     this.city = city
     this.creeps = creeps
-    this.enabled = true // on by default - toggle with GUI 'Creep Flow'
+    this.enabled = false // off by default - toggle with GUI 'Creep Flow'
     this.mesh = null
     this._key = null
     this._dummy = new Object3D()

@@ -1,5 +1,5 @@
 import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three/webgpu'
-import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges } from '../blockTypes.js'
+import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges, turretRangeCells } from '../blockTypes.js'
 import { Buffs } from '../buffs.js'
 import { SHIELD_LINE } from '../palette.js'
 import { fxMaterial, glow } from '../fx.js'
@@ -101,7 +101,7 @@ export class RangeVisuals {
     this.range = new RingLayer(
       city.scene,
       () => fxMaterial(new MeshBasicNodeMaterial({ color: 0xffffff, opacity: 0.4 })),
-      (n) => (n * 2 + 1) * city.cellUnit,
+      (n) => turretRangeCells(n) * city.cellUnit,
       { thickness: 0.12, y: 0.07 }
     )
   }
@@ -173,7 +173,7 @@ export class RangeVisuals {
       out.push({
         x: this._zc.x + city.gridOffsetX,
         z: this._zc.y + city.gridOffsetZ,
-        r: (t.numFloors * 2 + 1) * city.cellUnit,
+        r: turretRangeCells(t.numFloors) * city.cellUnit,
       })
     }
     return out

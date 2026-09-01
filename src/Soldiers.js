@@ -1,9 +1,11 @@
 import { Mesh, BoxGeometry, MeshStandardNodeMaterial, Vector2, Color } from 'three/webgpu'
 import { Sounds } from './lib/Sounds.js'
-import { isBarracks, towerTopY } from './blockTypes.js'
+import { isBarracks, towerTopY, roofGeomIndex } from './blockTypes.js'
 import { Creeps } from './Creeps.js'
+import { Tower } from './Tower.js'
 import { Buffs } from './buffs.js'
 import { ExtraGeometry } from './lib/ExtraGeometry.js'
+import { BlockGeometry } from './lib/BlockGeometry.js'
 import { advanceHop, snapToCell, towerWorldCenter } from './lib/gridUnit.js'
 
 /**
@@ -53,6 +55,8 @@ const IDLE_PAUSE = [0.15, 0.6] // seconds between steps when it does move
 const IDLE_STAND = [0.8, 2.4] // seconds it stands still when it doesn't
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+// Shared with the ground and the boulders (Lighting.boundsGround, Rocks).
+const SOLDIER_GREY = 0x999999
 
 export class Soldiers {
   constructor(scene, city, creeps) {
@@ -66,14 +70,15 @@ export class Soldiers {
     // still wears the city's flat wall grey and reads as one of yours.
     this.geo = ExtraGeometry.unit || new BoxGeometry(2, 2, 2)
     this.usingModel = !!ExtraGeometry.unit
-    // The same grey the turret/barracks tiles wear, so a soldier reads as a
-    // piece of its barracks that got up and walked - and, more usefully, so the
-    // only coloured things moving on the board are creeps.
+    // The board's own grey - the ground and the boulders wear it too - so a
+    // soldier reads as a piece of the city that got up and walked, and the only
+    // coloured things moving are creeps. 0xbbbbbb before this, which under the
+    // key light came out white enough to look like a different material.
     //
     // No emissive: with bloom in the pipeline anything emissive smears, and the
     // loot crate is the only thing meant to.
     this.mat = new MeshStandardNodeMaterial({
-      color: new Color(0xbbbbbb), // TowerRenderer.turretColor
+      color: new Color(SOLDIER_GREY),
       roughness: 0.5,
       metalness: 0,
     })
@@ -95,20 +100,44 @@ export class Soldiers {
       if (!t.visible || !isBarracks(t) || t.numFloors < 1) continue
       let mesh = this.sitters.get(t)
       if (!mesh) {
-        mesh = new Mesh(this.geo, this.mat)
+        // Its own material, not the shared grey: a sitter is part of the tile it
+        // stands in, so it wears the tile's ROOF colour. Sharing one material
+        // would paint every barracks' lookout whatever the last one computed.
+        mesh = new Mesh(this.geo, new MeshStandardNodeMaterial({
+          color: new Color(), roughness: 0.5, metalness: 0,
+        }))
         if (!this.usingModel) mesh.scale.setScalar(SIZE)
         mesh.castShadow = true
         mesh.rotation.y = Math.PI / 4
         this.scene.add(mesh)
         this.sitters.set(t, mesh)
+        mesh.userData.floors = -1
       }
-      // Re-place every frame: the roof height moves as floors are bought/lost.
+      // The roof's shade is derived from the floor count, so it moves as the
+      // barracks is built up or knocked down - re-derive only when it changes.
+      if (mesh.userData.floors !== t.numFloors) {
+        mesh.userData.floors = t.numFloors
+        Tower.roofShade(t, t.topColor || t.baseColor, mesh.material.color)
+      }
+      // Re-place every frame, riding the roof's ANIMATED height while the roof is
+      // in flight. The floor count jumps the instant a block is added while the
+      // roof mesh tweens up over the next fraction of a second, so a sitter
+      // placed off the floor count teleported a storey and hovered in the air
+      // waiting for its roof to arrive. The roof is one instance of a
+      // BatchedMesh, not an Object3D, so it cannot be parented - reading the
+      // value the roof tween writes is as close as this gets. (City's king
+      // marker does the same thing.)
       this.towerWorld(t, this._c)
-      mesh.position.set(this._c.x, towerTopY(t, this.city.floorHeight) - 0.15, this._c.y)
+      const roofHalf = BlockGeometry.halfHeights[roofGeomIndex(t.typeTop)]
+      const top = t.roofAnimating && t.roofAnim.y > 0
+        ? t.roofAnim.y + roofHalf
+        : towerTopY(t, this.city.floorHeight)
+      mesh.position.set(this._c.x, top - 0.15, this._c.y)
     }
     for (const [t, mesh] of this.sitters) {
       if (t.visible && isBarracks(t) && t.numFloors >= 1) continue
       this.scene.remove(mesh)
+      mesh.material.dispose()
       this.sitters.delete(t)
     }
   }
@@ -152,13 +181,18 @@ export class Soldiers {
 
   /**
    * Keep each barracks topped up. A barracks supports SQUAD_PER_FLOOR soldiers
-   * per storey, so building it taller is what grows the garrison.
+   * per storey, plus one for every support trail reaching it - so a garrison
+   * grows by building taller or by linking it into the network.
    */
   updateGarrisons(dt) {
     for (const t of this.city.towers) {
       if (!t.visible || !isBarracks(t) || t.numFloors < 1) continue
       if (this.city.upkeep.isDark(t)) continue // browned out
+      // Floors set the garrison; support trails add flat soldiers on top. A
+      // barracks with nothing reaching it is a barracks at its floor count,
+      // which is what it has always been.
       const cap = t.numFloors * (SQUAD_PER_FLOOR + Buffs.squadPerFloor)
+        + this.city.energy.squadBonus(t)
       let alive = 0
       for (const s of this.soldiers) if (s.home === t) alive++
       if (alive >= cap) continue
@@ -270,6 +304,39 @@ export class Soldiers {
     }
   }
 
+  /**
+   * If a soldier's cell has been built on, move it out this frame.
+   *
+   * Only once it has LANDED - mid-hop its claim is on the cell it is heading
+   * for, and re-aiming from there would slide it across the board rather than
+   * step it. A hop is a fraction of a second, so it costs nothing to wait.
+   *
+   * Prefers an ordinary free step. If every neighbour is taken as well, it takes
+   * an unbuilt one anyway and accepts standing on another unit for a moment:
+   * being inside a wall is the worse of the two.
+   */
+  evictIfBuried(s) {
+    if (s.t < 1 || !this.blocked(s.toX, s.toZ)) return false
+    s.pause = 0
+    s.evicting = true
+    for (const [dx, dz] of [...DIRS].sort(() => Math.random() - 0.5)) {
+      if (this.tryStep(s, dx, dz)) return true
+    }
+    // Nothing free: ignore the queue and take any cell that isn't built on.
+    for (const [dx, dz] of [...DIRS].sort(() => Math.random() - 0.5)) {
+      const nx = s.toX + dx * this.cell, nz = s.toZ + dz * this.cell
+      if (this.blocked(nx, nz)) continue
+      const occ = this.city.occupancy
+      occ.releaseWorld(s.toX, s.toZ, s)
+      occ.claimWorld(nx, nz, s)
+      s.fromX = s.toX; s.fromZ = s.toZ
+      s.toX = nx; s.toZ = nz
+      s.t = 0
+      return true
+    }
+    return false // walled in on all four sides: wait for one of them to go
+  }
+
   kill(s, i) {
     this.city.debris?.spawn(s.mesh.position.x, this.baseY, s.mesh.position.z, 0.4,
       this.mat.color, 5)
@@ -287,6 +354,13 @@ export class Soldiers {
 
       // The barracks is gone: the garrison it raised goes with it.
       if (!s.home.visible || !isBarracks(s.home) || s.home.numFloors < 1) { this.kill(s, i); continue }
+
+      // Built on top of: get out from under it. A tile can be dropped on a cell
+      // a soldier is standing in (placement only refuses cells with CREEPS in
+      // them), and without this the soldier stood inside the wall until its
+      // idle timer happened to run out - up to a couple of seconds of a man
+      // embedded in a block.
+      if (this.evictIfBuried(s)) continue
 
       const px = s.mesh.position.x, pz = s.mesh.position.z
       const homeDist = Math.hypot(px - s.homeX, pz - s.homeZ) / this.cell
@@ -336,12 +410,14 @@ export class Soldiers {
       // read as the same kind of thing moving on the same grid.
       if (s.t < 1) {
         advanceHop(s, dt, {
-          duration: s.target ? STEP_CHASE : STEP_WANDER,
+          // Getting out of a block is done at a run, whatever it was doing.
+          duration: (s.target || s.evicting) ? STEP_CHASE : STEP_WANDER,
           baseY: this.baseY,
           hopHeight: HOP_HEIGHT,
         })
       } else {
         s.mesh.position.set(s.toX, this.baseY, s.toZ)
+        s.evicting = false
       }
     }
   }

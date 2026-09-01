@@ -43,7 +43,7 @@ import { TowerInteraction } from './systems/TowerInteraction.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS, SHIELD_LINE } from './palette.js'
 import { Buffs } from './buffs.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_WARN_FLOORS, KING_WARN_CELLS } from './blockTypes.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_MAX_FLOORS, KING_WARN_FLOORS, KING_WARN_CELLS } from './blockTypes.js'
 import { fxMaterial, glow, NO_AO_MRT } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
@@ -64,6 +64,9 @@ const GRID_FLASH_GAIN = 1.9
 // Resting opacities of the board furniture, so the flash knows where to settle.
 const CELL_GRID_OPACITY = 0.5
 const LOT_GRID_OPACITY = 0.85
+// The board outline: white, over ground that steps down in value outside it
+// (see Lighting's three ground planes).
+const OUTLINE_COLOR = 0xffffff
 const OUTLINE_OPACITY = 0.55
 const START_VISIBLE_LOTS = 5
 const MAX_VISIBLE_LOTS = 11
@@ -82,6 +85,13 @@ const KING_HIT_FLASH = 0.45
 // can do something about the king or you cannot. It re-arms if the king is built
 // back out of range and driven down again.
 const KING_ALARM_PLAYS = 5
+// Line width shared by the king's two markers - the ground ring and the beam
+// standing on the tile - so they read as one thing rather than two.
+const KING_MARK_WIDTH = 0.16
+// Seconds after the opening begins before the city starts building. Everything
+// else in the intro - the fade, the fall, the stings - happens at once at zero;
+// this is the one thing held back, so the board arrives before it fills.
+const BUILD_DELAY = 1
 const TOWER_HIT_FLASH = 0.22
 const WHITE = new Color(0xffffff)
 
@@ -159,6 +169,11 @@ export class City {
     this.upkeep = new Upkeep(this)
     this.rocks = new Rocks(this)
     this.introDone = false // set when startIntroAnimation's camera move lands
+    // Set when the intro's BUILD finishes, which is later than the camera move.
+    // The king's beam and danger ring wait for this: they belong to a finished
+    // king, and struck in over a half-built one they upstaged the thing they are
+    // pointing at.
+    this.introBuilt = false
     // The board is BUILT at CITY_SIZE_LOTS but only part of it is in play. The
     // grid, the tower pool and the BatchedMesh are all sized once at init, so
     // the board cannot actually change size at runtime - instead the full one
@@ -579,7 +594,12 @@ export class City {
       typeTop: TopType.HOLE, colorIndex: kingColor, topColorIndex: kingColor, king: true,
     }, true)
     if (!t) return
-    t.numFloors = this.kingMaxFloors || KING_HEALTH
+    // The king can outgrow the pool's per-tower allocation (Crown the King adds
+    // floors permanently), so give it the extra block instances up front - a
+    // floor with no instance behind it draws nothing and throws on any colour
+    // write, which read as a gap under the roof.
+    this.growTowerSlots(t, KING_MAX_FLOORS)
+    t.numFloors = Math.min(this.kingMaxFloors || KING_HEALTH, KING_MAX_FLOORS)
     this.updateTowerMatrices(t)
     this.king = t
     this.kingAlive = true
@@ -605,9 +625,12 @@ export class City {
     if (!this.king) return
     const H = 160 // tall enough to leave frame at every zoom level
     // Open-ended: the caps would read as bright discs from a high camera.
-    const geo = new CylinderGeometry(0.16, 0.16, H, 12, 1, true)
+    // Radius matches the ring's 0.16 width, and the colour matches it too: the
+    // beam and the ring are one marker seen from two angles, and they were a
+    // different yellow and twice the thickness apart.
+    const geo = new CylinderGeometry(KING_MARK_WIDTH / 2, KING_MARK_WIDTH / 2, H, 12, 1, true)
     const mat = fxMaterial(new MeshBasicNodeMaterial({
-      color: this.accentColors[this.king.colorIndex].clone(),
+      color: new Color(SHIELD_LINE),
       side: DoubleSide, // an open tube shows its inside wall from most angles
     }))
     // Solid where it leaves the roof, gone by the top - a hard cut in the sky
@@ -632,7 +655,7 @@ export class City {
     // Held back until the opening build-up finishes: the beam is a marker for a
     // city that exists, and firing it up while the towers are still rising drew
     // the eye away from the one animation that only plays once.
-    if (!king || !king.visible || !this.kingAlive || !this.introDone) {
+    if (!king || !king.visible || !this.kingAlive || !this.introBuilt) {
       beam.visible = false
       if (this.kingRing) this.kingRing.visible = false
       this._kingShown = false
@@ -694,7 +717,7 @@ export class City {
   createKingRing() {
     if (!this.king) return
     const r = KING_WARN_CELLS * this.cellUnit
-    const geo = new RingGeometry(r - 0.08, r + 0.08, 96)
+    const geo = new RingGeometry(r - KING_MARK_WIDTH / 2, r + KING_MARK_WIDTH / 2, 96)
     const mat = fxMaterial(new MeshBasicNodeMaterial({
       color: new Color(SHIELD_LINE), opacity: 0.75,
     }))
@@ -763,7 +786,8 @@ export class City {
     // Center-lot towers + a pool of generic towers grabbed on free placement.
     this.poolSize = 900
     const totalTowers = this.towers.length + this.poolSize
-    const maxInstances = totalTowers * (this.floorSlots + 1) + 10
+    // The spare covers the king's extra floors (see growTowerSlots) plus slack.
+    const maxInstances = totalTowers * (this.floorSlots + 1) + KING_MAX_FLOORS + 10
     this.towerMesh = new BatchedMesh(maxInstances, totalV, totalI, mat)
     this.towerMesh.sortObjects = false
     this.towerMesh.castShadow = true
@@ -855,6 +879,7 @@ export class City {
     const gridCenterY = this.actualGridHeight / 2
 
     // Mute build sounds during intro (except pop) and disable debris
+    this.introBuilt = false // replaying the intro hides the beam again
     Sounds.mute(['stone', 'tick', 'clink'])
     const debrisWasEnabled = this.debris.enabled
     this.debris.enabled = false
@@ -878,7 +903,11 @@ export class City {
     const building = towerData.filter(t => t.targetFloors > 0)
     const maxDist = building[building.length - 1]?.dist || 1
 
-    // 3. Animate each tower's floors with stagger
+    // 3. Animate each tower's floors with stagger, held for BUILD_DELAY so the
+    //    camera and the stings have the opening to themselves. Built at once,
+    //    the one thing on the board went up somewhere in the distance and was
+    //    over by the time you could see it - it is worth watching.
+    const buildStart = BUILD_DELAY
     const staggerDuration = duration * 0.85 // 85% of duration for stagger spread
     const floorDelay = 0.25 // 250ms between floors of same tower
 
@@ -895,7 +924,7 @@ export class City {
       const maxSoundDist = this.cellSize * 3 // 3 lots
       const volume = Math.max(0, 1 - dist / maxSoundDist) * 0.35
       for (let f = 0; f < targetFloors; f++) {
-        const delay = staggerDelay + f * floorDelay
+        const delay = buildStart + staggerDelay + f * floorDelay
         maxDelay = Math.max(maxDelay, delay)
         setTimeout(() => {
           tower.numFloors = f + 1
@@ -921,22 +950,44 @@ export class City {
       Sounds.unmute(['stone', 'tick', 'clink'])
       this.debris.enabled = debrisWasEnabled
       this.updateTowerVisuals()
+      // The last block is up: the king's beam and ring may strike in now.
+      this.introBuilt = true
     }, (maxDelay + 1) * 1000)
 
     // 4. Camera zoom animation (angle-based distance)
     const target = controls.target.clone()
     const direction = camera.position.clone().sub(target).normalize()
     const endDist = camera.position.distanceTo(target)
-    const startDist = endDist * 3
+    // How far back the fall starts, as a multiple of the resting distance.
+    const startDist = endDist * 2
 
     // Set initial zoomed-out position
     camera.position.copy(target).addScaledVector(direction, startDist)
+
+    // Lift the zoom-out clamp for the duration of the move.
+    //
+    // OrbitControls.update() clamps the camera to maxDistance EVERY frame, and
+    // Demo calls it every frame whether the controls are enabled or not.
+    // maxDistance is only 1.12x the resting distance (it exists to stop you
+    // zooming out past the board), so a move starting at 6x was clamped straight
+    // back to 1.12x: the camera sat still for the first four fifths of the tween
+    // and only began to move once `dist` fell under the clamp. That read exactly
+    // like the zoom waiting for the fade to finish.
+    const prevMaxDistance = controls.maxDistance
+    controls.maxDistance = Math.max(prevMaxDistance, startDist)
 
     // Disable user input during the zoom tween - gsap and OrbitControls fighting
     // over the camera leaves the controls in a bad state (pan reads as rotate).
     controls.enabled = false
 
-    // Animate distance only
+    // Fade, fall and the opening sting all start together on the click. Beds are
+    // already running by now, so the audio context is unlocked and this needs no
+    // user gesture of its own.
+    //
+    // 'reveal' used to play under this one. Two stings landing together on a
+    // board with nothing on it read as a pair of alerts rather than an opening.
+    Sounds.play('intro')
+
     const animState = { dist: startDist }
     gsap.to(animState, {
       dist: endDist,
@@ -947,6 +998,7 @@ export class City {
         controls.update()
       },
       onComplete: () => {
+        controls.maxDistance = prevMaxDistance
         controls.enabled = true
         this.introDone = true
       },
@@ -1196,7 +1248,11 @@ export class City {
    */
   updateKingAlarm() {
     const king = this.king
-    const low = !!king && king.visible && this.kingAlive && this.introDone
+    // introBUILT, not introDone: the intro empties every tower to zero floors and
+    // rebuilds them, and the camera lands well before the king is back up. Armed
+    // on the camera landing, this siren fired every single game - the king was
+    // genuinely on one floor at the time, it just had not been knocked there.
+    const low = !!king && king.visible && this.kingAlive && this.introBuilt
       && king.numFloors <= KING_WARN_FLOORS
     if (!low) {
       this._kingAlarmFired = false
@@ -1224,7 +1280,12 @@ export class City {
     // No emissive and NOT on the glow layer: it sits right over the king, and a
     // bloomed marker smeared over the tile it is meant to point at.
     const mat = new MeshStandardNodeMaterial({
-      color: this.accentColors[KING_COLOR].clone(),
+      // Matched to the king's ROOF, not its base accent. The stack is shaded by
+      // floor and the roof takes the shade of the block under it, so the flat
+      // accent came out the colour of the king's ground floor - the marker read
+      // as a chip off the bottom of the tower rather than a thing sitting on top
+      // of it. Re-derived whenever the king's height changes (updateKingMarker).
+      color: new Color(),
       roughness: 0.35,
       metalness: 0.1,
     })
@@ -1238,9 +1299,29 @@ export class City {
     mesh.castShadow = true
     this.scene.add(mesh)
     this.kingMarker = mesh
+    this.refreshKingMarkerColor()
   }
 
-  /** Hover, bob and spin the marker; parks it on the king's current roof. */
+  /** Take the marker's colour from the king's roof block, whatever height it is. */
+  refreshKingMarkerColor() {
+    const king = this.king
+    if (!this.kingMarker || !king) return
+    Tower.roofShade(king, king.topColor || king.baseColor, this.kingMarker.material.color)
+  }
+
+  /**
+   * Hover, bob and spin the marker; parks it on the king's current roof.
+   *
+   * It rides the roof's ANIMATED height while the roof is in flight, not the
+   * height its floor count implies. The two are different during a build: the
+   * floor count goes up the instant a block is added, while the roof mesh tweens
+   * to its new position over the next fraction of a second - so the marker
+   * teleported a storey and waited there for the roof to catch up.
+   *
+   * The roof is one instance of a BatchedMesh, not an Object3D, so the marker
+   * cannot be parented to it. Reading `roofAnim.y` - the same value the roof
+   * tween writes each frame - is as close as this gets, and it costs nothing.
+   */
   updateKingMarker(dt) {
     const marker = this.kingMarker
     if (!marker) return
@@ -1249,13 +1330,38 @@ export class City {
     marker.visible = true
     this._markerT = (this._markerT || 0) + dt
     const c = king.box.getCenter(this.towerCenter)
+    const roofHalf = BlockGeometry.halfHeights[roofGeomIndex(king.typeTop)]
+    const top = king.roofAnimating && king.roofAnim.y > 0
+      ? king.roofAnim.y + roofHalf
+      : towerTopY(king, this.floorHeight)
     marker.position.set(
       c.x + this.gridOffsetX,
-      towerTopY(king, this.floorHeight) + KING_MARKER_HOVER
-        + Math.sin(this._markerT * 1.6) * 0.22,
+      top + KING_MARKER_HOVER + Math.sin(this._markerT * 1.6) * 0.22,
       c.y + this.gridOffsetZ
     )
     marker.rotation.y += 0.9 * dt
+    // The roof's shade depends on the floor count, so it moves as the king is
+    // built up or knocked down.
+    if (this._markerFloors !== king.numFloors) {
+      this._markerFloors = king.numFloors
+      this.refreshKingMarkerColor()
+    }
+  }
+
+  /**
+   * Give a tower enough block instances to stand `slots` floors tall.
+   *
+   * Towers are pre-allocated floorSlots instances each at startup; this tops one
+   * up afterwards, out of the spare capacity reserved in the batched mesh.
+   */
+  growTowerSlots(tower, slots) {
+    while (tower.floorInstances.length < slots) {
+      const idx = this.towerMesh.addInstance(this.geomIds[tower.typeBottom])
+      this.towerMesh.setColorAt(idx, tower.baseColor)
+      this.towerMesh.setVisibleAt(idx, false)
+      tower.floorInstances.push(idx)
+      this.instanceToTower.set(idx, tower)
+    }
   }
 
   setTowerColor(tower, color) {
@@ -1422,7 +1528,7 @@ export class City {
       -hw, y, -hh, // closed
     ])
     const mat = new Line2NodeMaterial({
-      color: 0xffffff,
+      color: OUTLINE_COLOR,
       linewidth: 2, // screen pixels, because worldUnits is false
       worldUnits: false,
       transparent: true,

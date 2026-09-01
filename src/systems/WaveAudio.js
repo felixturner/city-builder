@@ -125,13 +125,18 @@ export class WaveAudio {
     const inCombat = spawning || creepsOnBoard
     if (inCombat !== this._activeNow) {
       this._activeNow = inCombat
-      // The stab marks the real end of the round, so it moves with it.
+      // The stab marks the real end of the round, so it moves with it - unless
+      // the king is already dead. The board clearing after a loss is not a round
+      // survived, and the fanfare (plus the upgrade cards behind it) landed on
+      // top of the game-over sting.
       if (!inCombat) {
-        this.playRoundClear(clock.isBossWave(this._audioWave))
         this.creeps._quietTimer = this.creeps.roundEndQuiet
-        // The wave that just finished - 0-based, so the first boss round
-        // (level 4) is index 3. Demo hangs the upgrade screen off this.
-        this.onRoundCleared?.(this._audioWave)
+        if (this.creeps.city.kingAlive) {
+          this.playRoundClear(clock.isBossWave(this._audioWave))
+          // The wave that just finished - 0-based, so the first boss round
+          // (level 4) is index 3. Demo hangs the upgrade screen off this.
+          this.onRoundCleared?.(this._audioWave)
+        }
       }
     }
 

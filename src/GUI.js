@@ -53,7 +53,7 @@ export class GUIManager {
       // Both off by default: they are readouts for reasoning about the maze, and
       // three thousand arrows plus a bright route line over the board is a lot
       // to look at when you just want to see the city. Toggle them on to plan.
-      creepFlow: true,
+      creepFlow: false,
       bloom: true,
       bloomStrength: 0.77,
       bloomRadius: 0.49,
@@ -148,9 +148,10 @@ export class GUIManager {
     viewFolder.add({ replayBuild: () => {
       demo.city.renderer.recalculateVisibility()
       demo.postFX.fadeOpacity.value = 0
-      demo.fadeIn(1000)
-      Sounds.play('intro')
-      demo.city.startIntroAnimation(demo.camera, demo.controls, 4)
+      // Same shape as the real opening: fade, fall and stings together
+      // (startIntroAnimation owns the last two).
+      demo.fadeIn(500)
+      demo.city.startIntroAnimation(demo.camera, demo.controls, 1.0)
     } }, 'replayBuild').name('Replay Build')
     viewFolder.add({ exportPNG: () => demo.exportPNG() }, 'exportPNG').name('Export PNG')
 

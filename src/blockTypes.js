@@ -51,10 +51,23 @@ export const BARRACKS_COLOR = 1
  *  them, and the palette only has three colours to spend. */
 export const SHIELD_COLOR = 1
 
-/** Shield radius in CELLS for a shield of `floors` storeys - the same height
- *  rule a turret's range uses. Shared by the ring that draws it and the test
- *  that decides what crosses it, so the circle never lies. */
+/** Shield radius in CELLS for a shield of `floors` storeys. Shared by the ring
+ *  that draws it and the test that decides what crosses it, so the circle never
+ *  lies. */
 export const shieldRadiusCells = (floors) => floors * 2 + 1 + Buffs.shieldRadius
+
+/**
+ * Turret firing range in CELLS for a turret of `floors` storeys.
+ *
+ * One function because four places used to spell the formula out - the three
+ * guns, the range ring and the coverage-glow disc - and a ring that disagrees
+ * with the gun is a lie you cannot see until something walks through it.
+ *
+ * Fractional on purpose: at 2 cells a storey the difference between a 5 and a 6
+ * was four cells of reach, which made height the only decision worth making.
+ */
+export const TURRET_RANGE_PER_FLOOR = 1.5
+export const turretRangeCells = (floors) => floors * TURRET_RANGE_PER_FLOOR
 
 /** Charges a shield carries per storey. Each creep that crosses the perimeter
  *  is burned for one; when they run out the barrier is spent and goes dark. */
@@ -132,6 +145,17 @@ export const towerArea = (tower, cellUnit, sizeScratch) => {
  *  Shared so TowerRenderer can scale its damage feedback against it without
  *  keeping a second copy of the number. */
 export const KING_HEALTH = 5
+
+/**
+ * Ceiling on the king's height, however many Crown cards are taken.
+ *
+ * Every tower is pre-allocated a fixed number of block instances in the batched
+ * mesh, so a king taller than its allocation has floors with nothing to draw
+ * them with: the stack renders with a gap under the roof and any colour write to
+ * the missing instance throws. The king gets its own allocation up to this, and
+ * the card stops handing out floors past it.
+ */
+export const KING_MAX_FLOORS = 9
 
 /** Floors at or below which the king raises its own alarm. */
 export const KING_WARN_FLOORS = 2

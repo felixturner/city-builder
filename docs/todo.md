@@ -27,18 +27,9 @@
 
 
 ## FIXES
-- powerup stars should lay flat on the floor and spin CW
 - new encluosre sound sounds like power down?
-- make energy dots bigger go up more
 - keep attacks swarms in one dir until boss level
 - add dec or indicator when at top height
-- 7 height towers too strong?
-- dont allow soldiers inside creeps
-- stars shouldnt be blocking for build
-- shields are also healers?
-- fix gens get stuck at 0 or trail gens get stuck once not connected.
-- more threat warnings when king is exposed attacked
-- grey out gens when dead or destroy them.
 - make completing wall rings more important. buff walls that are completed x2 def.
 - remove 3rd party blender file. start new clean repo?
 
@@ -47,12 +38,12 @@
 - add big guns like heavy crossbows thta go thru multiple enemeys high damage
 - add more high powered creeps
 - nicer energy spawn sound
-- remove 0 level blocks? make blocks start at 1?
-- dont allow regrowing king
 - add back 3 colors per gen type?
 - mak online live demo
 - make mobile friendly (right click + R key)
 
+- make all stars yellow
+- creep debris should be same color as the creep. dont play the good level complete sound if the game just eneded
 
 ## ART
 - do a sound mix with all volume sliders

@@ -74,6 +74,10 @@ const BOMB_DAMAGE = 2
 // rest of the numbers are priced against: a block has 3 hit points, so three
 // bites cost a floor.
 const BITE_DAMAGE = 1
+// Damage one shooter's lobbed block does. Two, like the laser and the bomb: a
+// creep that stands off out of reach and never risks itself should be worth more
+// per shot than one walking into your walls to bite them.
+const SHOT_DAMAGE = 2
 
 // What a big creep shrinks to once it is down to half health: 0.5 of its spawn
 // size, which is exactly a normal marcher.
@@ -1205,7 +1209,7 @@ export class Creeps {
       const dist = Math.hypot(dx, dy, dz) || 1
       const step = this.shotSpeed * dt
       if (dist <= 1.0 + step) {
-        this.city.renderer.damageTower(target)
+        this.city.renderer.damageTower(target, SHOT_DAMAGE)
         this.scene.remove(s.mesh)
         this.shots.splice(i, 1)
         continue
@@ -1218,11 +1222,20 @@ export class Creeps {
     }
   }
 
-  /** Burst of debris (coloured to match the creep) where it died. */
+  /**
+   * Burst of debris (coloured to match the creep) where it died.
+   *
+   * Its OWN material, not whatever it is wearing this instant: a creep almost
+   * always dies on the blow that flashed it, so reading the live material paid
+   * out hit-flash orange - or shield yellow - for every creep on the board, and
+   * the colour that was supposed to tell smashers from seekers never showed.
+   * `flashMat` holds the real one for as long as a flash is up.
+   */
   explode(c) {
     const debris = this.city.debris
     if (!debris) return
-    const color = c.mesh.material.color || this._black
+    const mat = c.flashMat || c.mesh.material
+    const color = mat.color || this._black
     debris.spawn(c.mesh.position.x, c.baseY, c.mesh.position.z, c.big ? 1.0 : 0.6, color, c.big ? 14 : 8)
   }
 
@@ -1649,10 +1662,13 @@ export class Creeps {
     const battle = this.started && (this.clock.isSpawning || this.creeps.length > 0)
     const open = !!city.king && city.king.visible && city.kingAlive
       && city.enclosure.kingEnclosed === false
-    const on = battle && open
+    // Never over the king's own low-health siren. Both are "the king is in
+    // trouble" and they are different sounds, so together they read as two
+    // unrelated alarms going off rather than one situation.
+    const on = battle && open && !Sounds.isPlaying('king-warning')
     if (on === !!this._exposedAlarm) return // no change
     this._exposedAlarm = on
-    if (on) Sounds.loop('alert2', 0.5)
+    if (on) Sounds.loop('alert2', 0.25) // half volume: it runs for a whole round
     else Sounds.fadeOut('alert2', 0.3)
   }
 }

@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR, PINK, BLUE } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import {
-  isPathGenerator, claimsEnclosure, isGrey, isShield, isTurret, towerArea, towerTopY,
+  isPathGenerator, claimsEnclosure, isGrey, isShield, isTurret, isBarracks, towerArea, towerTopY,
   shieldRadiusCells, shieldCharges,
 } from '../blockTypes.js'
 
@@ -72,6 +72,7 @@ const BASE_FACTOR = 0.5
 const SUPPORT_FIRE_RATE = 0.25 // +25% turret fire rate each
 const SUPPORT_SHIELD_DAMAGE = 1 // +1 shield burn damage each
 const SUPPORT_GEN_RATE = 0.15 // +15% enclosure generator output each
+const SUPPORT_SQUAD = 1 // +1 soldier in a barracks' garrison each
 // Hit points a shield ring adds to every block of every tower standing in it.
 const SHIELD_COVER_HP = 1
 // Caption colours by what the bonus DOES, not by which building granted it, so
@@ -137,6 +138,7 @@ export class EnergySystem {
   supportLabel(t) {
     if (isTurret(t)) return { text: `${Math.round(SUPPORT_FIRE_RATE * 100)}% speed`, color: LABEL_ATTACK }
     if (isShield(t)) return { text: `${SUPPORT_SHIELD_DAMAGE} burn`, color: LABEL_ATTACK }
+    if (isBarracks(t)) return { text: `${SUPPORT_SQUAD} soldier`, color: LABEL_ATTACK }
     if (claimsEnclosure(t)) return { text: `${Math.round(SUPPORT_GEN_RATE * 100)}% energy`, color: LABEL_ENERGY }
     return null // nothing else takes a bonus, so nothing else gets a caption
   }
@@ -198,6 +200,11 @@ export class EnergySystem {
   /** Extra burn damage a shield gets from support: +1 per trail. */
   shieldBonus(tower) {
     return SUPPORT_SHIELD_DAMAGE * this.supportCount(tower)
+  }
+
+  /** Extra soldiers a barracks' garrison gets from support: +1 per trail. */
+  squadBonus(tower) {
+    return SUPPORT_SQUAD * this.supportCount(tower)
   }
 
   /** Recompute generator networks (called when a tower changes). */

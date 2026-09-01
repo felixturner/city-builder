@@ -124,11 +124,11 @@ export class Enclosure {
       this._markCells(t, wall, W, H)
     }
 
-    // Boulders seal like walls do, so a ring can be closed off using terrain.
-    const rocks = this.city.rocks
-    if (rocks?.blocked) {
-      for (let i = 0; i < wall.length; i++) if (rocks.blocked[i]) wall[i] = 1
-    }
+    // Boulders are NOT walls here, though creeps cannot walk through them - an
+    // enclosure is meant to be something you built, and terrain that happens to
+    // close a ring for you is a free enclosure you never paid for. They still
+    // block pathing (see FlowField), so a rock-sealed pocket is unreachable
+    // without being claimable.
 
     // 2. Flood-fill "outside" from the boundary through non-wall cells.
     const outside = new Uint8Array(W * H)

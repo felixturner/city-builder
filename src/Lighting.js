@@ -56,8 +56,12 @@ export class Lighting {
       scene.add(mesh)
       return mesh
     }
-    this.beyondGround = plane(0x44444a, -0.04, 420)
-    this.outerField = plane(0x7a7a7a, -0.02)
+    // Three tones, darkening outward: the board you can build on, the field the
+    // creeps walk in across, then everything beyond. The middle one used to sit
+    // close enough to the board that the boundary read as a line drawn on one
+    // surface rather than as the edge of the thing you are defending.
+    this.beyondGround = plane(0x2b2b31, -0.04, 420)
+    this.outerField = plane(0x4a4a4e, -0.02)
     this.boundsGround = plane(0x999999, 0)
 
     // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)

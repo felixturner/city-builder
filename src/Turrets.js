@@ -15,7 +15,7 @@ import { Sounds } from './lib/Sounds.js'
 import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
-import { roofGeomIndex } from './blockTypes.js'
+import { roofGeomIndex, turretRangeCells } from './blockTypes.js'
 import { fxMaterial, NO_AO_MRT, glow } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 
@@ -320,7 +320,7 @@ export class Turrets {
     const muzzle = new Vector3()
     this.turretMuzzle(tower, muzzle)
     // Range in cells equals the tower's height in floors.
-    const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
+    const range = turretRangeCells(tower.numFloors) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
 
@@ -337,7 +337,7 @@ export class Turrets {
   fireLaser(tower) {
     const muzzle = this._from
     this.turretMuzzle(tower, muzzle)
-    const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
+    const range = turretRangeCells(tower.numFloors) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
 
@@ -456,7 +456,7 @@ export class Turrets {
   fireMortar(tower) {
     const muzzle = this._from
     this.turretMuzzle(tower, muzzle)
-    const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
+    const range = turretRangeCells(tower.numFloors) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range) // no LOS: arcs over
     if (!target) return false
 

@@ -44,7 +44,8 @@ export class ExtraGeometry {
     // are tall and are meant to fill a cell, so matching heights would leave the
     // flat ones sprawling over their neighbours.
     this.rocks = []
-    for (const name of ['rock_single_A', 'rock_single_B', 'rock_single_C',
+    // rock_single_A is deliberately absent from the set.
+    for (const name of ['rock_single_B', 'rock_single_C',
       'rock_single_D', 'rock_single_E']) {
       const mesh = find(name)
       if (mesh) this.rocks.push(this._bake(mesh, { width: cellUnit * 1.14, sitOnGround: true }))

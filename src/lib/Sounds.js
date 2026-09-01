@@ -347,7 +347,12 @@ class SoundsManager {
     const id = this._trimmed.has(key) ? sound.play('play') : sound.play()
     sound.rate(baseRate - variation / 2 + Math.random() * variation, id)
     sound.volume(volume, id)
-    this._active[name] = { sound, id }
+    // Don't overwrite a LOOP's entry with this one-shot. _active is keyed by
+    // name and stop()/fadeOut() work through it, so clobbering it orphans the
+    // looping instance - it plays for the rest of the session with no handle to
+    // stop it, and the next time the loop is asked for you get a second one on
+    // top. One-shots are fire-and-forget, so losing their entry costs nothing.
+    if (!this._active[name]?.looping) this._active[name] = { sound, id }
     return id
   }
 
@@ -400,7 +405,7 @@ class SoundsManager {
     sound.loop(true, id)
     sound.rate(rate, id)
     sound.volume(volume, id)
-    this._active[name] = { sound, id }
+    this._active[name] = { sound, id, looping: true }
     // A siren that rings forever stops being information and becomes the
     // soundtrack. `maxPlays` lets the caller say it a fixed number of times and
     // then shut up, without needing to know how long the file is: 'end' fires at
@@ -571,6 +576,9 @@ class SoundsManager {
     this._lastRiser = avail[i]
     return { name: avail[i], ...RISERS[avail[i]] }
   }
+
+  /** True while a sound started by play()/loop() is still registered. */
+  isPlaying(name) { return !!this._active[name] }
 
   /** Stop a sound started by play()/countdown()/loop(). Safe to call when not
    *  playing. */

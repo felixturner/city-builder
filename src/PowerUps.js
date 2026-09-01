@@ -1,7 +1,7 @@
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
-import { TopType } from './blockTypes.js'
+import { TopType, KING_MAX_FLOORS } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
 
 export { Buffs, resetBuffs }
@@ -44,6 +44,9 @@ export const CARDS = [
   {
     id: 'king-big', title: 'Crown the King', color: YELLOW,
     desc: 'The king gains 2 permanent floors of health.',
+    // Gone once the king is as tall as it can get, rather than being offered as
+    // a card that would do nothing.
+    available: (g) => g.kingMaxFloors() < KING_MAX_FLOORS,
     apply: (g) => g.growKing(2),
   },
   {
@@ -152,8 +155,15 @@ export class PowerUpScreen {
   }
   growKing(n) {
     const city = this.demo.city
-    city.kingMaxFloors = this.kingMaxFloors() + n
-    if (city.king) { city.king.numFloors += n; city.onTowerChanged(city.king) }
+    // Capped: the king has exactly KING_MAX_FLOORS block instances allocated to
+    // it, and a floor past that has nothing to draw it with.
+    const max = Math.min(this.kingMaxFloors() + n, KING_MAX_FLOORS)
+    const gained = max - this.kingMaxFloors()
+    city.kingMaxFloors = max
+    if (gained > 0 && city.king) {
+      city.king.numFloors = Math.min(city.king.numFloors + gained, max)
+      city.onTowerChanged(city.king)
+    }
   }
   addPaletteSlot() {
     Buffs.paletteSlots += 1

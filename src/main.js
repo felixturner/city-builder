@@ -28,26 +28,24 @@ async function init() {
 }
 
 function start() {
-  // Play intro sound (also unlocks AudioContext on user gesture)
-  Sounds.play('intro')
   // Background beds loop for the whole session. They can only be started from
-  // inside a user gesture, so this has to happen here and nowhere earlier.
+  // inside a user gesture, so this has to happen here and nowhere earlier - and
+  // starting them is also what unlocks the AudioContext, which is why the two
+  // intro stings can wait for the camera move (see City.startIntroAnimation).
   Sounds.startBeds()
   Sounds.setBedMode('build', 3.0)
-  // Reveal sting over the opening build period, under the intro animation.
-  Sounds.play('reveal', 1.0, 0, 0.5)
 
   // Hide loading overlay
   loadingEl.style.display = 'none'
 
-  // Fade in scene
-  demo.fadeIn(1000)
+  // Fade up, camera fall and the opening stings all start here, together.
+  demo.fadeIn(500)
 
   // Enable gameplay updates (frozen until now so nothing runs on the start screen)
   demo.started = true
 
   // Start intro build animation
-  demo.city.startIntroAnimation(demo.camera, demo.controls, 2.5)
+  demo.city.startIntroAnimation(demo.camera, demo.controls, 1.0)
 
   // Release the creeps (grace period counts from here)
   demo.creeps.start()

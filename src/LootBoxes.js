@@ -34,6 +34,8 @@ const BOB_SPEED = 1.6 // radians/sec
 const SPIN_SPEED = -0.9 // radians/sec about Y; negative = clockwise seen from above
 const HOVER_Y = 1.6 // fallback cube resting height above the ground
 const REST_Y = 0.05 // star resting height - a hair up so it can't z-fight the floor
+// Accent index every star wears: 1 is the yellow, the same one the king takes.
+const STAR_COLOR = 1
 const SHAKE_TIME = 0.75 // seconds of rattling before it bursts
 const CONFETTI_PER_COLOUR = 14
 // Base payout for walling in a crate, multiplied by the current level.
@@ -99,7 +101,10 @@ export class LootBoxes {
   }
 
   spawn(x, z) {
-    const colorIndex = Math.floor(Math.random() * ACCENT_COLORS.length)
+    // Every star is the same yellow. They used to draw one of the three accents
+    // at random, which made a colour that means nothing - the accents are the
+    // vocabulary the tiles use, and a crate borrowing one read as a tile type.
+    const colorIndex = STAR_COLOR
     const accent = ACCENT_COLORS[colorIndex]
     // Emissive is back to a sane level now that glow is opt-in by layer: the
     // crate no longer has to out-shine the whole board to be picked out by a

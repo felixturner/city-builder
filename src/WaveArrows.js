@@ -11,11 +11,11 @@ import { fxMaterial, glow } from './fx.js'
  * place. On the floor they sit in the same space as the thing they are warning
  * about, and you can see at a glance which of your walls is about to be tested.
  *
- * They sit INSIDE the bounds - tail on the white outline, body pointing in over
- * the board. The bounds are what reads as "the board", so an arrow coming in off
- * one names a side of the thing you are defending, and it moves with the board
- * when a ring opens. Outside the line they were adrift in dark ground with
- * nothing around them to give the direction a place.
+ * They sit on the EDGE OF THE BOUNDS - tip touching the white outline, body out
+ * in the walkable field beyond it. The bounds are what reads as "the board", so
+ * an arrow coming in off one names a side of the thing you are defending, and it
+ * moves with the board when a ring opens. Inside the line they sat on top of the
+ * tiles you are trying to read while you build.
  *
  * They used to ride a radius derived from how far you had BUILT, which wandered
  * as the city grew: build compactly and the arrows sat in empty dark ground
@@ -59,12 +59,13 @@ export class WaveArrows {
 
   /**
    * Distance from the centre to an arrow's MIDDLE. The arrow is drawn centred on
-   * its own length, so pulling it half a length inside the bounds puts its tail
-   * on the outline and the whole body over the board, pointing the way the wave
-   * will travel.
+   * its own length, so pushing it half a length past the bounds lands its tip on
+   * the outline with the rest of it sitting outside - between the board edge and
+   * the ring creeps actually spawn on (bounds + one lot), so it never overlaps
+   * either.
    */
   _radius() {
-    return this.city.visibleHalf - (LENGTH_CELLS / 2) * this.city.cellUnit
+    return this.city.visibleHalf + (LENGTH_CELLS / 2) * this.city.cellUnit
   }
 
   update() {
