@@ -138,6 +138,7 @@ export class Demo {
         this.city.flow.debugEnabled = !this.city.flow.debugEnabled
         this.city.computeFlowField()
       }
+      if (e.key === 'Escape') this.toggleMenu()
     })
 
     // Initialize params from defaults before creating modules
@@ -581,11 +582,9 @@ export class Demo {
       cursor: 'pointer',
       backdropFilter: 'blur(4px)',
     })
-    btn.addEventListener('click', () => {
-      this.paused = !this.paused
-      btn.textContent = this.paused ? '▶ Play' : '⏸ Pause'
-      this.setPauseAudio(this.paused)
-    })
+    // Opens (or closes) the same pause menu Esc does, rather than silently
+    // freezing the game - the menu IS the paused state.
+    btn.addEventListener('click', () => this.toggleMenu())
     document.body.appendChild(btn)
     this.pauseButton = btn
   }
@@ -643,9 +642,9 @@ export class Demo {
       position: 'fixed', inset: '0', zIndex: '2000',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       gap: '28px',
-      // No scrim: the city you just lost stays fully visible behind the text.
-      // Each label carries its own shadow instead so it reads over any scene.
-      background: 'transparent',
+      // A light scrim: the city you just lost stays visible behind the text,
+      // dimmed just enough to lift the labels off it.
+      background: 'rgba(0,0,0,0.15)',
       pointerEvents: 'none',
     })
     const title = document.createElement('div')
@@ -693,6 +692,98 @@ export class Demo {
     el.appendChild(stats)
     el.appendChild(btn)
     document.body.appendChild(el)
+  }
+
+  /**
+   * Esc pause menu - same shape as the game-over panel: big title, score +
+   * best underneath, buttons at the bottom. Esc toggles it; opening pauses the
+   * game, Resume unpauses, New game reloads.
+   */
+  toggleMenu() {
+    if (!this.started || this.isGameOver || this.kingDead) return
+    if (this.powerUps?.open) return // the card screen owns the freeze
+    if (this.tilePalette?.drag) return // Esc there cancels the held tile instead
+    if (this.menuEl) this._hideMenu()
+    else this._showMenu()
+  }
+
+  _showMenu() {
+    this.paused = true
+    this.setPauseAudio(true)
+    if (this.pauseButton) this.pauseButton.textContent = '▶ Play'
+
+    const el = document.createElement('div')
+    el.id = 'game-menu'
+    Object.assign(el.style, {
+      position: 'fixed', inset: '0', zIndex: '2000',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: '28px',
+      // Same as the game-over panel: a light scrim to lift the text off the
+      // city without hiding it.
+      background: 'rgba(0,0,0,0.15)',
+      pointerEvents: 'none',
+    })
+    const title = document.createElement('div')
+    title.textContent = 'PAUSED'
+    Object.assign(title.style, {
+      color: ENERGY_COLOR, font: '800 72px Inter, system-ui, sans-serif',
+      letterSpacing: '2px', textShadow: TEXT_SHADOW,
+    })
+
+    const score = Math.floor(this.mana?.elapsed || 0)
+    let best = 0
+    try { best = parseInt(localStorage.getItem('cityBuilderHighScore') || '0', 10) || 0 } catch (e) { /* storage blocked */ }
+
+    const stats = document.createElement('div')
+    Object.assign(stats.style, {
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
+    })
+    const scoreEl = document.createElement('div')
+    scoreEl.textContent = `score: ${score}`
+    Object.assign(scoreEl.style, {
+      color: '#fff', font: '700 30px Inter, system-ui, sans-serif', textShadow: TEXT_SHADOW,
+    })
+    const bestEl = document.createElement('div')
+    bestEl.textContent = `best: ${Math.max(best, score)}`
+    Object.assign(bestEl.style, {
+      color: '#dfdfdf', font: '600 20px Inter, system-ui, sans-serif', textShadow: TEXT_SHADOW,
+    })
+    stats.appendChild(scoreEl)
+    stats.appendChild(bestEl)
+
+    const buttons = document.createElement('div')
+    Object.assign(buttons.style, { display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '16px' })
+    const buttonStyle = {
+      padding: '12px 36px', font: '600 18px Inter, system-ui, sans-serif', color: '#fff',
+      background: 'rgba(0,0,0,0.35)', border: '2px solid #fff', borderRadius: '24px',
+      cursor: 'pointer', textShadow: TEXT_SHADOW,
+      pointerEvents: 'auto', // the panel itself is click-through; the buttons aren't
+    }
+    const resume = document.createElement('button')
+    resume.textContent = 'Resume game'
+    Object.assign(resume.style, buttonStyle)
+    resume.addEventListener('click', () => this._hideMenu())
+    const restart = document.createElement('button')
+    restart.textContent = 'New game'
+    Object.assign(restart.style, buttonStyle)
+    restart.addEventListener('click', () => location.reload())
+    buttons.appendChild(resume)
+    buttons.appendChild(restart)
+
+    el.appendChild(title)
+    el.appendChild(stats)
+    el.appendChild(buttons)
+    document.body.appendChild(el)
+    this.menuEl = el
+  }
+
+  _hideMenu() {
+    if (!this.menuEl) return
+    document.body.removeChild(this.menuEl)
+    this.menuEl = null
+    this.paused = false
+    this.setPauseAudio(false)
+    if (this.pauseButton) this.pauseButton.textContent = '⏸ Pause'
   }
 
   /** Fast-forward button (right of the creep timeline): advance the wave clock 20s. */
