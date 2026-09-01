@@ -79,6 +79,10 @@ plus a floor income. The diagnosis is in the file header.
 ## Assets
 
 - `assets/` is source; `public/assets/` is served. Both copies need updating.
+- **`public/assets/sfx/incoming/` is deliberately untracked** — ~19MB of raw
+  source audio (wavs, unused mp3s) staged for auditioning. It sits under
+  `public/`, so committing it would both bloat the history permanently and ship
+  every byte to the live site. Copy a file out to `sfx/` when you actually use it.
 - Sound names resolve **voices → groups → files**, in that order. A voice alias
   shadows a file of the same name permanently.
 - `vite.config.js` full-reloads on save, gated to real source files so editing
