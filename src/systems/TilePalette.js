@@ -20,7 +20,7 @@ const REROLL_COST = 5 // mana to discard/reroll a palette tile
 /**
  * TilePalette - a bottom-center hand of random tiles drawn top-down. 66% are grey
  * tetromino walls; the rest are generators/turrets on square footprints. Drag a
- * tile onto the grid (a real 3D ghost snaps to cells) to place it; R rotates;
+ * tile onto the grid (a real 3D ghost snaps to cells) to place it; Space rotates;
  * long-press discards. A consumed slot shows a clockwise ring timer, then refills.
  */
 export class TilePalette {
@@ -45,9 +45,9 @@ export class TilePalette {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.drag && this.drag.sticky) this._cancelDrag()
     })
-    // R rotates the held tile 90deg CW while dragging.
+    // Space rotates the held tile 90deg CW while dragging.
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'r' || e.key === 'R') this.rotateHeld()
+      if (e.key === ' ' || e.code === 'Space') this.rotateHeld()
     })
 
     this._buildDOM()
@@ -176,7 +176,7 @@ export class TilePalette {
   }
 
   /**
-   * Rotate control for touch, where there's no R key. Bottom-left, styled as
+   * Rotate control for touch, where there's no Space key. Bottom-left, styled as
    * the tray is so it reads as part of the same furniture.
    *
    * It turns the HELD tile mid-drag, which is the only moment rotation means
@@ -217,7 +217,7 @@ export class TilePalette {
    * Place the rotate button, and get out of the tray's way when the screen is
    * too narrow to sit beside it.
    *
-   * Shown on touch devices only - on a mouse the R key already does this and a
+   * Shown on touch devices only - on a mouse the Space key already does this and a
    * permanent button is clutter.
    */
   layout() {
@@ -238,7 +238,7 @@ export class TilePalette {
     }
   }
 
-  /** Turn the tile currently in hand. Shared by the R key and the on-screen
+  /** Turn the tile currently in hand. Shared by the Space key and the on-screen
    *  button so the two can't drift apart. */
   rotateHeld() {
     if (!this.drag) return
