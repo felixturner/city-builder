@@ -43,7 +43,7 @@ import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS } from './palette.js'
 import { Buffs } from './buffs.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, KING_HEALTH, KING_WARN_FLOORS } from './blockTypes.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_WARN_FLOORS } from './blockTypes.js'
 import { fxMaterial, glow, NO_AO_MRT } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
@@ -57,6 +57,14 @@ const MAX_GENS = 30 // hard cap on simultaneously placed generators
 // Seconds the ground takes to ease outward when a ring opens. Demo paces the
 // boss-reward beat against this.
 const EXPAND_TIME = 1.2
+// The grid flashing in behind the rect once it lands, and how far past its
+// resting weight that flash peaks.
+const GRID_FLASH_TIME = 0.5
+const GRID_FLASH_GAIN = 1.9
+// Resting opacities of the board furniture, so the flash knows where to settle.
+const CELL_GRID_OPACITY = 0.5
+const LOT_GRID_OPACITY = 0.85
+const OUTLINE_OPACITY = 0.55
 const START_VISIBLE_LOTS = 5
 const MAX_VISIBLE_LOTS = 11
 const LOTS_PER_BOSS = 2 // rings opened per boss round cleared
@@ -129,7 +137,12 @@ export class City {
     this.instanceToTower = new Map() // Maps instance ID to tower
 
     // Floor stacking config
-    this.maxFloors = 5
+    this.maxFloors = MAX_FLOORS
+    // Instance slots allocated per tower. Sized to the TALLEST thing any tower
+    // can become, not to the default cap: towers are recycled out of one pool
+    // and re-typed on placement, so any of them may end up a turret and need
+    // the extra two storeys' worth of blocks.
+    this.floorSlots = MAX_FLOORS + TURRET_EXTRA_FLOORS
     this.floorHeight = 2
 
     // Debris system
@@ -192,7 +205,7 @@ export class City {
     await ExtraGeometry.init(this.cellUnit)
     await this.initTowers()
     this.placeKing() // central king piece (must exist before the cluster seeds around it)
-    this.rocks.place(20) // scattered terrain, after the king so it can keep clear of it
+    this.rocks.place(40) // scattered terrain, after the king so it can keep clear of it
     // no starting cluster — player builds from scratch around the king
     this.updateMatrices()
     this.renderer.recalculateVisibility()
@@ -282,17 +295,127 @@ export class City {
    * Everything that draws or measures the board reads visibleLots, so this is
    * just a number change plus a redraw - no grid rebuild, no re-pooling.
    */
+  /** Whether another ring is left to open. */
+  get canGrowPlayArea() { return this.visibleLots < MAX_VISIBLE_LOTS }
+
   growPlayArea() {
-    if (this.visibleLots >= MAX_VISIBLE_LOTS) return false
+    if (!this.canGrowPlayArea) return false
+    const prevHalf = this.visibleHalf
     this.visibleLots = Math.min(MAX_VISIBLE_LOTS, this.visibleLots + LOTS_PER_BOSS)
-    this.rebuildGrids()
+    // The ground eases out first so the rect has something to travel over. It
+    // has to be started BEFORE the grid rebuild, which sets the ground to its
+    // new size instantly - tweening after that ran from the target to the target
+    // and the ground simply snapped.
     this.lighting?.setBoardSize(this.visibleHalf, this.cellSize, EXPAND_TIME)
+    this.expandGrids(prevHalf)
     this.rocks.refresh() // boulders in the newly opened ring come into play
     this.lootBoxes?.refresh() // ...and so do the crates sitting on it
     this.creeps?.onBoardResized()
     this.onBoardResized?.()
     Sounds.play('board-expand', 1.0, 0, 0.7)
     return true
+  }
+
+  /**
+   * The board opening up, as a two-beat animation instead of a redraw.
+   *
+   * 1. The outline rect tweens from the old bounds out to the new ones, over the
+   *    ground easing outward under it. The OLD grid is held on screen for the
+   *    whole trip - redrawing it up front left the board bare while the rect
+   *    travelled, which reads as a glitch rather than as ground being won.
+   * 2. The rect lands, the stale grid goes, and the new one flashes in behind
+   *    it: blank, a bright overshoot, then its resting weight.
+   *
+   * Sequenced rather than simultaneous because the rect is the readable part -
+   * it is the thing that says how much you gained - and a grid redrawing on the
+   * same frame buries it. Demo paces the boss beat (quiet, grow, cards) against
+   * EXPAND_TIME, and the flash lands inside the CARD_DELAY that follows.
+   */
+  expandGrids(prevHalf) {
+    const half = this.visibleHalf
+    // Detach (don't dispose) the old grid so createGrids builds a fresh set
+    // alongside it. The rect is the one piece replaced immediately, because it
+    // is the piece that animates.
+    const stale = [this.cellGrid, this.dotMesh, this.lotGrid].filter(Boolean)
+    this.cellGrid = null
+    this.dotMesh = null
+    this.lotGrid = null
+    this.disposeGridObject(this.boardOutline)
+    this.boardOutline = null
+
+    // createGrids sets the ground to its new size instantly. growPlayArea has
+    // already started it easing there, and gsap reads a tween's start value on
+    // its first tick - which happens AFTER this - so letting the snap through
+    // would hand the tween a start equal to its target and the ground would
+    // simply jump. Suppressed for the duration of the rebuild.
+    this._expanding = true
+    this.createGrids()
+    this._expanding = false
+    this.setGridFade(0) // new grid drawn but blank until the rect lands
+
+    const line = this.boardOutline
+    const from = half > 0 ? prevHalf / half : 1
+    line.scale.set(from, 1, from)
+    // A second expand landing mid-tween would orphan the grid the first one was
+    // still holding on screen, so anything pending is dropped here.
+    this._expandTween?.kill()
+    for (const obj of this._staleGrids || []) this.disposeGridObject(obj)
+    this._staleGrids = stale
+    this._expandTween = gsap.to(line.scale, {
+      x: 1, z: 1, duration: EXPAND_TIME, ease: 'power2.out',
+      onComplete: () => {
+        for (const obj of this._staleGrids) this.disposeGridObject(obj)
+        this._staleGrids = null
+        this.flashGrid()
+      },
+    })
+  }
+
+  /**
+   * DEV ONLY: put the play area back to its opening size so the expand can be
+   * watched again (see Demo.previewBossReward). Anything already built outside
+   * the smaller bounds is left standing - this is a preview tool, not a game
+   * action, and there is no "give the ground back" rule to be faithful to.
+   */
+  rewindPlayArea() {
+    this.visibleLots = START_VISIBLE_LOTS
+    this.rebuildGrids()
+    this.lighting?.setBoardSize(this.visibleHalf, this.cellSize)
+    this.rocks.refresh()
+    this.lootBoxes?.refresh()
+    this.creeps?.onBoardResized()
+    this.onBoardResized?.()
+  }
+
+  /** Set the whole grid's visible weight, 0 = blank, 1 = resting. */
+  setGridFade(f) {
+    if (this.cellGrid) this.cellGrid.material.opacity = CELL_GRID_OPACITY * f
+    if (this.lotGrid) this.lotGrid.material.opacity = LOT_GRID_OPACITY * f
+    if (this.gridFade) this.gridFade.value = f
+  }
+
+  /**
+   * Flash the new grid in: up past its resting weight, then back down to it.
+   *
+   * GridHelper bakes its colour into vertex colours, so brightness here can only
+   * be opacity - which is why the resting weights are held below 1 (see
+   * LOT_GRID_OPACITY): a line already at full alpha has nowhere to flash to.
+   * The dots go through a uniform instead, and being alpha-tested they pop in
+   * partway up the ramp rather than fading, which suits the beat.
+   */
+  flashGrid() {
+    const up = GRID_FLASH_TIME * 0.35, down = GRID_FLASH_TIME * 0.65
+    const ramp = (target, key, peak, rest) => {
+      gsap.timeline()
+        .to(target, { [key]: peak, duration: up, ease: 'power2.out' })
+        .to(target, { [key]: rest, duration: down, ease: 'power2.inOut' })
+    }
+    if (this.cellGrid) ramp(this.cellGrid.material, 'opacity', 1, CELL_GRID_OPACITY)
+    if (this.lotGrid) ramp(this.lotGrid.material, 'opacity', 1, LOT_GRID_OPACITY)
+    if (this.gridFade) ramp(this.gridFade, 'value', GRID_FLASH_GAIN, 1)
+    // The rect pulses with it rather than from zero - it has been on screen for
+    // the whole tween and blinking it out would undo the move it just made.
+    if (this.boardOutline) ramp(this.boardOutline.material, 'opacity', 1, OUTLINE_OPACITY)
   }
 
   gridToWorld(gridX, gridZ) {
@@ -577,7 +700,7 @@ export class City {
     // Center-lot towers + a pool of generic towers grabbed on free placement.
     this.poolSize = 900
     const totalTowers = this.towers.length + this.poolSize
-    const maxInstances = totalTowers * (this.maxFloors + 1) + 10
+    const maxInstances = totalTowers * (this.floorSlots + 1) + 10
     this.towerMesh = new BatchedMesh(maxInstances, totalV, totalI, mat)
     this.towerMesh.sortObjects = false
     this.towerMesh.castShadow = true
@@ -604,13 +727,13 @@ export class City {
       })
     }
 
-    // Create instances for each tower: maxFloors base + 1 roof
+    // Create instances for each tower: floorSlots base + 1 roof
     for (let i = 0; i < this.towers.length; i++) {
       const tower = this.towers[i]
       tower.floorInstances = []
 
       // Create floor instances (base geometry)
-      for (let f = 0; f < this.maxFloors; f++) {
+      for (let f = 0; f < this.floorSlots; f++) {
         const idx = this.towerMesh.addInstance(geomIds[tower.typeBottom])
         this.towerMesh.setColorAt(idx, tower.baseColor)
         this.towerMesh.setVisibleAt(idx, false)
@@ -625,7 +748,7 @@ export class City {
       this.instanceToTower.set(tower.roofInstance, tower)
     }
 
-    // Free-placement pool: generic hidden towers, each pre-allocated maxFloors+1
+    // Free-placement pool: generic hidden towers, each pre-allocated floorSlots+1
     // instances. A tile drop grabs one (placeTileFree); demolish returns it.
     this.towerPool = []
     const defBottom = BlockGeometry.topToBottom.get(0)
@@ -637,7 +760,7 @@ export class City {
       t.typeTop = 0
       t.typeBottom = defBottom
       t.floorInstances = []
-      for (let f = 0; f < this.maxFloors; f++) {
+      for (let f = 0; f < this.floorSlots; f++) {
         const idx = this.towerMesh.addInstance(geomIds[defBottom])
         this.towerMesh.setColorAt(idx, t.baseColor)
         this.towerMesh.setVisibleAt(idx, false)
@@ -714,7 +837,7 @@ export class City {
         setTimeout(() => {
           tower.numFloors = f + 1
           // Play pop sound with pitch based on floor height, volume based on distance
-          const pitch = 0.8 + (f / this.maxFloors) * 1.2
+          const pitch = 0.8 + (f / maxFloorsFor(tower)) * 1.2
           if (volume > 0) Sounds.play('pop', pitch, 0.15, volume)
           tower.animateNewFloor(
             this.towerMesh,
@@ -776,7 +899,7 @@ export class City {
 
       // Hide all instances if tower is not visible
       if (tower.visible === false) {
-        for (let f = 0; f < this.maxFloors; f++) {
+        for (let f = 0; f < tower.floorInstances.length; f++) {
           towerMesh.setVisibleAt(tower.floorInstances[f], false)
         }
         towerMesh.setVisibleAt(tower.roofInstance, false)
@@ -790,7 +913,7 @@ export class City {
         const ax = c.x, az = c.y
         const nf = tower.numFloors
         const fhh = this.floorHeight / 2
-        for (let f = 0; f < this.maxFloors; f++) {
+        for (let f = 0; f < tower.floorInstances.length; f++) {
           const idx = tower.floorInstances[f]
           if (f < nf) {
             dummy.position.set(ax, f * this.floorHeight + fhh, az)
@@ -821,7 +944,7 @@ export class City {
       const roofHalfHeight = BlockGeometry.halfHeights[roofGeomIndex(tower.typeTop)]
 
       // Position and show floor instances (geometry centered, so add halfHeight)
-      for (let f = 0; f < this.maxFloors; f++) {
+      for (let f = 0; f < tower.floorInstances.length; f++) {
         const idx = tower.floorInstances[f]
         if (f < numFloors) {
           dummy.position.set(center.x, f * this.floorHeight + floorHalfHeight, center.y)
@@ -1123,7 +1246,7 @@ export class City {
 
     // Hidden tower: hide all of its instances (floors + roof) and bail.
     if (tower.visible === false) {
-      for (let f = 0; f < this.maxFloors; f++) {
+      for (let f = 0; f < tower.floorInstances.length; f++) {
         towerMesh.setVisibleAt(tower.floorInstances[f], false)
       }
       towerMesh.setVisibleAt(tower.roofInstance, false)
@@ -1136,7 +1259,7 @@ export class City {
       const ax = c.x, az = c.y
       const nf = tower.numFloors
       const fhh = this.floorHeight / 2
-      for (let f = 0; f < this.maxFloors; f++) {
+      for (let f = 0; f < tower.floorInstances.length; f++) {
         const idx = tower.floorInstances[f]
         if (f < nf) {
           dummy.position.set(ax, f * this.floorHeight + fhh, az)
@@ -1167,7 +1290,7 @@ export class City {
     const floorHalfHeight = this.floorHeight / 2
     const roofHalfHeight = BlockGeometry.halfHeights[roofGeomIndex(tower.typeTop)]
 
-    for (let f = 0; f < this.maxFloors; f++) {
+    for (let f = 0; f < tower.floorInstances.length; f++) {
       const idx = tower.floorInstances[f]
       if (f < numFloors) {
         dummy.position.set(center.x, f * this.floorHeight + floorHalfHeight, center.y)
@@ -1223,7 +1346,7 @@ export class City {
       linewidth: 2, // screen pixels, because worldUnits is false
       worldUnits: false,
       transparent: true,
-      opacity: 0.55,
+      opacity: OUTLINE_OPACITY,
       depthWrite: false,
     })
     // Line2 needs the viewport to convert pixel width into clip space.
@@ -1250,24 +1373,33 @@ export class City {
    */
   rebuildGrids() {
     for (const key of ['boardOutline', 'cellGrid', 'dotMesh', 'lotGrid']) {
-      const obj = this[key]
-      if (!obj) continue
-      this.scene.remove(obj)
-      obj.geometry?.dispose()
-      obj.material?.dispose()
+      this.disposeGridObject(this[key])
       this[key] = null
     }
     this.createGrids()
   }
 
+  /** Pull one piece of grid furniture out of the scene and free it. */
+  disposeGridObject(obj) {
+    if (!obj) return
+    this.scene.remove(obj)
+    obj.geometry?.dispose()
+    obj.material?.dispose()
+  }
+
   createGrids() {
-    this.lighting?.setBoardSize(this.visibleHalf, this.cellSize)
+    // Snap the ground to the new size - except mid-expand, where it is already
+    // being tweened there (see expandGrids).
+    if (!this._expanding) this.lighting?.setBoardSize(this.visibleHalf, this.cellSize)
     this.createBoardOutline()
+    // One dial the expand flash drives the dots with (see flashGrid). Rebuilt
+    // with the grid, because the material it feeds is rebuilt with it too.
+    this.gridFade = uniform(1)
     const span = this.visibleHalf * 2
     // Fine cell grid - centered at origin (same as lot grid). One line per buildable cell.
     const cellGrid = new GridHelper(span, span / this.cellUnit, 0x888888, 0x888888)
     cellGrid.material.transparent = true
-    cellGrid.material.opacity = 0.5
+    cellGrid.material.opacity = CELL_GRID_OPACITY
     cellGrid.position.set(0, 0.01, 0)
     this.scene.add(cellGrid)
     this.cellGrid = cellGrid
@@ -1290,10 +1422,14 @@ export class City {
     const dotMask = float(1).sub(step(dotRadius, dist))
 
     const dotColor = vec3(0.267, 0.267, 0.267)
-    dotMaterial.colorNode = dotColor
-    dotMaterial.opacityNode = dotMask
+    // Colour rides the fade as well as alpha: the dots are alpha-TESTED, so
+    // opacity alone would only pop them in at the halfway point and the flash's
+    // overshoot would do nothing to them. Brightness makes them part of it.
+    const dotLit = dotColor.mul(this.gridFade)
+    dotMaterial.colorNode = dotLit
+    dotMaterial.opacityNode = dotMask.mul(this.gridFade)
     dotMaterial.mrtNode = mrt({
-      output: dotColor,
+      output: dotLit,
       normal: vec3(0, 1, 0)
     })
 
@@ -1301,8 +1437,11 @@ export class City {
     this.dotMesh.position.set(0, 0.015, 0)
     this.scene.add(this.dotMesh)
 
-    // Coarse lot grid - centered at origin, lines at lot spacing intervals
+    // Coarse lot grid - centered at origin, lines at lot spacing intervals.
+    // Held just under full alpha so the expand flash has somewhere to go.
     const lotGrid = new GridHelper(span, this.visibleLots, 0x888888, 0x888888)
+    lotGrid.material.transparent = true
+    lotGrid.material.opacity = LOT_GRID_OPACITY
     lotGrid.position.set(0, 0.02, 0)
     this.scene.add(lotGrid)
     this.lotGrid = lotGrid

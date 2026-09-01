@@ -38,7 +38,7 @@ export class FlowFieldView {
   constructor(city, creeps) {
     this.city = city
     this.creeps = creeps
-    this.enabled = true
+    this.enabled = false // off until asked for - see GUI 'Creep Flow'
     this.mesh = null
     this._key = null
     this._dummy = new Object3D()
@@ -50,10 +50,12 @@ export class FlowFieldView {
     // Wound so the face points UP. Back-face culling goes by winding order, not
     // by the normal attribute below - with the other winding these are all
     // facing the ground and the whole field is invisible from the game camera.
+    // Square bounding box: 0.9 long, 0.9 across, so the arrow reads the same
+    // whichever of the four directions it is pointing.
     geo.setAttribute('position', new Float32BufferAttribute([
       0, 0, 0.55,
-      0.34, 0, -0.35,
-      -0.34, 0, -0.35,
+      0.45, 0, -0.35,
+      -0.45, 0, -0.35,
     ], 3))
     geo.setAttribute('normal', new Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0], 3))
     this.geo = geo

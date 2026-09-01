@@ -168,7 +168,7 @@ const SIMPLE = [
   'board-expand',
   // long-form event sounds
   'horn-boss', 'countdown', 'tick-fast', 'gen-online', 'sting',
-  'creep-alert', 'creep-alert-2', 'flyer-warn', 'snap', 'game-over', 'king-hit', 'king-danger', 'level-complete', 'card-reveal',
+  'creep-alert', 'creep-alert-2', 'flyer-warn', 'snap', 'game-over', 'king-hit', 'king-danger', 'level-complete', 'boss-complete', 'card-reveal',
   // short blips, addressed individually so each meaning is learnable
   // energy-down.mp3 is deliberately NOT loaded: 'energy-down' is a voice above,
   // and _resolve checks VOICES first, so the file could never be reached.

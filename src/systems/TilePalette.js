@@ -13,6 +13,8 @@ const SLOTS = 4
 const REFILL_TIME = 1.33 // seconds for a used/discarded palette slot to refill
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
+// Tray opacity while a tile is in hand, so the ghost stays readable through it.
+const TRAY_DRAG_OPACITY = '0.25'
 const REROLL_COST = 5 // mana to discard/reroll a palette tile
 
 /**
@@ -451,6 +453,7 @@ export class TilePalette {
     if (!this.drag) return
     const { slot, ghost } = this.drag
     this._endSticky()
+    this._setTrayFaded(false)
     this.city.scene.remove(ghost)
     if (this.demo.controls) this.demo.controls.enabled = true
     this.slots[slot].el.style.cursor = 'grab'
@@ -542,6 +545,11 @@ export class TilePalette {
     this.slots[i].canvas.getContext('2d').clearRect(0, 0, ICON, ICON)
     this.slots[i].el.style.cursor = 'grabbing'
     if (this.demo.controls) this.demo.controls.enabled = false
+    // Get the tray out of the way: the ghost is a scene object drawn UNDER the
+    // DOM panel, so at full opacity you would be placing blind over the bottom
+    // of the board. Pointer events stay on - the slots still take a press, and
+    // the rotate button still works.
+    this._setTrayFaded(true)
     const base = this._tileColor3(tile, new Color())
     const hi = base.clone().lerp(this._white, 0.45)
     this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined }
@@ -598,20 +606,24 @@ export class TilePalette {
     return { gx, gy, cells, w, h, valid }
   }
 
-  /** True if a screen point is over the palette bar (drag back here to cancel). */
-  /** True over any of our own chrome - the tray or the rotate button. A drag
-   *  must not resolve a board target under either. */
+  /**
+   * True over chrome a drag must not resolve a board target under.
+   *
+   * That is now the rotate button ONLY. The tray used to count too, which made
+   * the bottom-centre of the screen a dead zone: cells behind the panel could
+   * not be built on at all, and the tray sits over the part of the board you are
+   * most often working in. It is a DOM overlay, not a mouse blocker - the drag
+   * listens on window and this is a hand-rolled rect test - so nothing forced
+   * that, it was policy.
+   *
+   * Dropping there used to mean "put it back". Right-click and Esc still do, and
+   * _beginDrag fades the tray out of the way so the ghost stays visible under
+   * the cursor.
+   */
   _overUI(x, y) {
-    if (this._overPalette(x, y)) return true
     const b = this.rotateBtn
     if (!b || b.style.display === 'none') return false
     const r = b.getBoundingClientRect()
-    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
-  }
-
-  _overPalette(x, y) {
-    if (x == null) return false
-    const r = this.el.getBoundingClientRect()
     return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
   }
 
@@ -620,15 +632,17 @@ export class TilePalette {
     this.drag.lastY = e.clientY
     const { tile, ghost, mat, slot } = this.drag
     const city = this.city
-    // Over the palette: show the tile back in its slot + hide the ghost (release
-    // here puts it back). Re-hide the slot icon when moving back onto the grid.
-    const overPal = this._overUI(e.clientX, e.clientY)
-    if (overPal !== this.drag.overPal) {
-      this.drag.overPal = overPal
-      if (overPal) drawTile(this.slots[slot], this.city.accentColors)
+    // Over the rotate button: show the tile back in its slot + hide the ghost
+    // (release here puts it back). Re-hide the slot icon when moving back onto
+    // the grid. The tray no longer counts - dragging across it targets the board
+    // underneath like anywhere else.
+    const overUI = this._overUI(e.clientX, e.clientY)
+    if (overUI !== this.drag.overUI) {
+      this.drag.overUI = overUI
+      if (overUI) drawTile(this.slots[slot], this.city.accentColors)
       else this._clearCanvas(this.slots[slot])
     }
-    if (overPal) { ghost.visible = false; this.drag.target = null; return }
+    if (overUI) { ghost.visible = false; this.drag.target = null; return }
     const t = this._pickTarget(e.clientX, e.clientY)
     this.drag.target = t
     if (!t) {
@@ -668,20 +682,28 @@ export class TilePalette {
     else { mat.color.copy(this.drag.base); mat.opacity = 0.5 }
   }
 
+  /** Dim the tray so a ghost dragged over it stays readable. */
+  _setTrayFaded(on) {
+    if (!this.el) return
+    this.el.style.transition = 'opacity 0.12s ease'
+    this.el.style.opacity = on ? TRAY_DRAG_OPACITY : '1'
+  }
+
   _dropDrag() {
     const { slot, tile, ghost, target, rot } = this.drag
     const city = this.city
     const finish = () => {
       this._endSticky()
+      this._setTrayFaded(false)
       city.scene.remove(ghost)
       if (this.demo.controls) this.demo.controls.enabled = true
       this.slots[slot].el.style.cursor = 'grab'
       this.drag = null
     }
     const restore = () => { finish(); drawTile(this.slots[slot], this.city.accentColors) }
-    // Released over the palette: drop it back in its slot (no place, no error).
-    // Released over our own chrome (tray or rotate button): put it back rather
-    // than trying to resolve a board cell underneath it.
+    // Released over the rotate button: put it back rather than trying to resolve
+    // a board cell underneath it. The tray itself is a normal drop target now -
+    // release over it and the tile lands on the board underneath.
     if (this._overUI(this.drag.lastX, this.drag.lastY)) { restore(); return }
     if (target && target.valid) {
       // Escalating placement cost (per-type standing count); validity already

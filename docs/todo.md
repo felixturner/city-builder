@@ -24,11 +24,7 @@
 
 
 ## FIXES
-- outer field darker
-- saving mds should not rebuild server
-- first level shows 2 attck arrows but only 1 swarm?
-- creeps should come from more in the middle not corners so much
-- flow filed drawing chnages on enclosure and on battle rounds?
+- stars shouldnt be blocking for build
 - shields are also healers?
 - fix gens get stuck at 0 or trail gens get stuck once not connected.
 - more threat warnings when king is exposed attacked

@@ -30,10 +30,17 @@ const MISSTEP_CHANCE = 0.12
 // whole side, which read as weather rather than as an attack - nothing to brace
 // for and nothing to aim at. Creeps now arrive in clumps: several at once, from
 // one spot, then a lull.
-const SWARM_SIZE = [4, 9] // creeps per clump
+const SWARM_SIZE = [4, 9] // target creeps per clump - sets how MANY clumps a
+// wave splits into, not how big any one of them is (see _planWave)
+// ...but never so few clumps that a wave arrives all at once.
+const MIN_SWARMS = 3
 const SWARM_SPREAD_CELLS = 2.5 // cells either side of the clump's entry point
 const SWARM_GAP = 0.11 // seconds between creeps inside one clump
 const SWARM_SLOT_SPAN = 0.85 // clump slots stop this far through the attack window
+// Clear seconds between one swarm finishing its pour and the next starting. A
+// swarm is the unit the wave is read in, so two of them running together read
+// as one shapeless push - the lull is what makes them countable.
+const SWARM_LULL = 0.8
 
 // Creeps claim the cell they are walking into and won't enter a claimed one, so
 // a swarm queues rather than stacking. After this many blocked attempts a creep
@@ -59,6 +66,12 @@ const WALL_BITE = 2
 // Damage flash: hot orange, and how long it lingers.
 const HIT_FLASH_COLOR = 0xff7a1a
 const HIT_FLASH_TIME = 0.14
+// ...and the rattle that goes with it. A tilt rather than a positional nudge:
+// the march rewrites mesh.position outright every frame, so an offset would be
+// erased on marching creeps and accumulate into a random walk on stationary
+// ones. Nothing else touches a creep's X/Z rotation, so it is free to use.
+const HIT_SHAKE_TIME = 0.18
+const HIT_SHAKE_ANGLE = 0.3 // radians of tilt at the start of the shake
 
 // Seconds a creep glows shield-yellow after a barrier burns it.
 const SHIELD_FLASH_TIME = 0.28
@@ -174,8 +187,17 @@ export class Creeps {
 
     // Creeps in a wave, as a straight line: creepsBase at level 1, plus
     // creepsPerWave for every level after. Uncapped.
-    this.creepsBase = 8
-    this.creepsPerWave = 7
+    //
+    // The line used to be 8 + 7n, which roughly DOUBLED the opening levels
+    // against the spawn-gap curve it replaced (that one gave ~7, 8, 10, 11 for
+    // levels 1-4 against 8, 15, 22, 29). The reason for the rewrite was the far
+    // END of the old curve - a gap ramp is a hyperbola in count, so level 7
+    // alone added more creeps than levels 1-6 together - and the early numbers
+    // came along for the ride. 6 + 3n keeps the straight line and puts the first
+    // few levels back where they were; the per-creep health and swing ramp
+    // (hpPerWave / attackPerWave) is what carries the late game.
+    this.creepsBase = 6
+    this.creepsPerWave = 3
 
     // Creeps left alive past the spawn window eat into the next build phase -
     // the following wave still lands on schedule - so a slow clear costs you
@@ -239,9 +261,13 @@ export class Creeps {
 
     this.knockInterval = 0.45 // seconds between knocks, for a normal creep at level 1
     this.knocksPerFloor = 3
-    // Up from 4, to pay back the thinner spawn rate: fewer creeps, each of them
-    // something you have to commit fire to rather than something that pops.
-    this.hitsToKill = 7 // turret sphere hits needed to destroy a creep
+    // Back to 4 from 7. The 7 was one half of a trade - ~40% fewer creeps, each
+    // ~75% tougher, for the same wave health in a wave you could actually follow
+    // - and the other half of it didn't survive: the spawn-gap ramp it was
+    // priced against was replaced by a creep-count line that put the numbers
+    // back. A creep that soaks seven shots when there are plenty of them is just
+    // a slog.
+    this.hitPoints = 4 // turret sphere hits needed to destroy a creep
 
     /**
      * Per-creep difficulty ramp, straight-line and uncapped: a creep is
@@ -259,12 +285,14 @@ export class Creeps {
 
     // Ammo boxes: a dying creep leaves one 20% of the time.
     //
-    // This was priced to break even exactly - 5 a box is 1.0 ammo per kill, and
-    // a 4-hit creep cost 4 peg shots at 0.25. Raising hitsToKill to 7 pushed the
-    // cost to 1.75 a kill, so at 5 a box turrets would simply run dry and stay
-    // dry. 8 pays 1.6, deliberately just under: sustained turret fire now bleeds
-    // ammo slowly instead of funding itself, and the shortfall has to come from
-    // kills you didn't pay for - soldiers, shield burns, creeps dying on walls.
+    // 5 a box priced this to break even exactly: 5 x 0.2 = 1.0 ammo per kill,
+    // and a 4-hit creep costs 4 peg shots at 0.25. It went to 8 when hitPoints
+    // was 7 and a kill cost 1.75, which 5 could not fund.
+    //
+    // hitPoints is back to 4, so 8 is no longer break-even - it pays 1.6 against
+    // a 1.0 kill, a 60% surplus, and turret fire funds itself with room to
+    // spare. Left high on purpose: ammo starvation was never the pressure the
+    // game wanted. Drop it back to 5 to make ammo bite again.
     this.ammoDropChance = 0.2
     this.ammoDropAmount = 8
     this.ammoBoxGeo = new BoxGeometry(1.1, 1.1, 1.1)
@@ -455,7 +483,7 @@ export class Creeps {
       shotsFired: 0,
       baseY,
       maxHits: Math.max(1, Math.round(
-        (giant ? this.hitsToKill * 8 : (big ? this.hitsToKill * 2 : this.hitsToKill))
+        (giant ? this.hitPoints * 8 : (big ? this.hitPoints * 2 : this.hitPoints))
         * Buffs.creepHp * ramp.hp
       )),
       // Everything knocks one floor. Size and level buy a FASTER swing rather
@@ -650,7 +678,7 @@ export class Creeps {
       bob: Math.random() * Math.PI * 2,
       shootTimer: 0,
       baseY: this.bomberY,
-      maxHits: Math.max(1, Math.round(this.hitsToKill * Buffs.creepHp * this.rampMul().hp)),
+      maxHits: Math.max(1, Math.round(this.hitPoints * Buffs.creepHp * this.rampMul().hp)),
       attackRate: 1,
       atkSpeed: 1,
     })
@@ -974,6 +1002,7 @@ export class Creeps {
   hit(creep, dmg = 1) {
     creep.hits += dmg
     this.hitFlash(creep)
+    creep.shakeT = HIT_SHAKE_TIME
     // Random stone thunk on every hit (slight pitch variation for variety).
     Sounds.play('stone', 0.9 + Math.random() * 0.3, 0.2, 0.6)
     // Giants visibly wear down: a boss shrinks toward 45% of its spawn size as
@@ -1196,9 +1225,10 @@ export class Creeps {
     }
 
     const phase = this.clock.cyclePhase - this.clock.buildTime // 0..waveActive
-    // Release any clump whose slot has arrived. More than one can be pouring at
-    // once on a busy level, which is what turns a long line of clumps into a
-    // continuous press rather than a stutter.
+    // Release any swarm whose slot has arrived. Slots are spaced so the previous
+    // swarm has finished pouring first (see _planWave), so in practice this
+    // releases one at a time - the loop stays a while because a squeezed
+    // late-game schedule can still land two on the same frame.
     while (this._plan && this._planIndex < this._plan.length
       && this._plan[this._planIndex].at <= phase) {
       this._release(this._plan[this._planIndex++])
@@ -1238,20 +1268,50 @@ export class Creeps {
    */
   _planWave() {
     const total = this.creepsThisWave
-    const sizes = []
-    for (let left = total; left > 0;) {
-      const size = Math.min(left, MathUtils.randInt(SWARM_SIZE[0], SWARM_SIZE[1]))
-      sizes.push(size)
-      left -= size
-    }
+    // Decide how many clumps first, then split the wave EVENLY between them.
+    //
+    // It used to fill clumps greedily off the front - take a random 4..9, repeat
+    // until the wave runs out - which left whatever didn't divide as a final
+    // clump of its own. On a small level that meant one big swarm followed by a
+    // lone creep wandering in, and the last slot of the window (the one that
+    // should land while you're busiest) was the emptiest thing in the wave.
+    //
+    // SWARM_SIZE is now the target size used to pick the COUNT; the actual sizes
+    // come out of the division, so every push in a wave is the same weight and
+    // the wave never ends on a straggler.
+    const target = (SWARM_SIZE[0] + SWARM_SIZE[1]) / 2
+    const n = Math.min(total, Math.max(MIN_SWARMS, Math.round(total / target)))
+    // Even split; anything left over goes one extra creep per clump from the
+    // front, so sizes differ by at most one.
+    const sizes = Array.from({ length: n }, (_, i) =>
+      Math.floor(total / n) + (i < total % n ? 1 : 0))
     const span = this.waveActive * SWARM_SLOT_SPAN
+
+    // Slot times. Evenly across the window is the shape we want, but a slot is
+    // only honest if the previous swarm has finished arriving - so each start is
+    // pushed to at least "the one before it has poured, plus a lull". A swarm of
+    // 7 takes 7 x SWARM_GAP to come out of the gate; overlapping that with the
+    // next one turns two readable pushes into one blur.
+    const even = n > 1 ? span / (n - 1) : 0
+    const starts = []
+    for (let i = 0, t = 0; i < n; i++) {
+      starts.push(t)
+      t += Math.max(even, sizes[i] * SWARM_GAP + SWARM_LULL)
+    }
+    // ...and if a late wave has more swarms than the window can hold apart, the
+    // whole schedule is squeezed back into the window rather than spilling into
+    // the next build phase. That is the one case where they do overlap, and it
+    // is the case where the wave is meant to feel relentless anyway.
+    const last = starts[n - 1]
+    if (last > span) for (let i = 0; i < n; i++) starts[i] *= span / last
+
     // Round-robin across the wave's edges rather than rolling each clump: with a
     // random pick, a two-front wave could send every clump down one side and
     // leave the other arrow pointing at nothing.
     const edges = this.waveEdges(this.waveNumber)
     this._plan = sizes.map((size, i) => ({
       size,
-      at: (i / Math.max(1, sizes.length - 1)) * span,
+      at: starts[i],
       edge: edges[i % edges.length],
       offset: this.edgeOffset(),
     }))
@@ -1490,6 +1550,19 @@ export class Creeps {
         hopHeight: this.hopHeight,
         spin: !c.giant, // giants spin slowly on their own instead
       })
+    }
+
+    // Damage rattle, after everything else has moved the creeps - the march
+    // writes mesh.position and rotation.y from the path every frame, so this has
+    // to be the last word or it gets overwritten on half the creeps and not the
+    // other half. Re-rolled per frame, which at 60fps is a fast judder, and
+    // eased out by the remaining time so it settles rather than stopping dead.
+    for (const c of this.creeps) {
+      if (!(c.shakeT > 0)) continue
+      c.shakeT -= dt
+      const a = c.shakeT > 0 ? (c.shakeT / HIT_SHAKE_TIME) * HIT_SHAKE_ANGLE : 0
+      c.mesh.rotation.x = (Math.random() * 2 - 1) * a
+      c.mesh.rotation.z = (Math.random() * 2 - 1) * a
     }
 
     // Re-arm / fire the king-proximity siren on a cooldown.

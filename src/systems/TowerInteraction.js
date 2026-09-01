@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGrey, towerArea, towerTopY } from '../blockTypes.js'
+import { TopType, isTurret, isGrey, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
 import { fxMaterial, glow } from '../fx.js'
 import { priceOfTower } from './tileCost.js'
 
@@ -45,11 +45,16 @@ export class TowerInteraction {
     let nearestDist = Infinity
     for (const tower of city.towers) {
       if (!tower.visible) continue
-      // Box top = real geometry top (a 0-floor tower is just the thin roof tile).
+      // Box top = real geometry top, PLUS the turret model standing on it. A
+      // 0-floor tower is just the thin roof tile, so on a level-0 turret the
+      // only thing on screen is the gun - and every click aimed at it passed
+      // over the sliver of box at ground level and hit the floor instead, which
+      // is why a turret knocked down to zero could never be built back up.
+      const top = towerTopY(tower, city.floorHeight)
+        + (isTurret(tower) ? (city.turrets?.modelHeight(tower) || 0) : 0)
       this._pickBox.min.set(tower.box.min.x + city.gridOffsetX, 0, tower.box.min.y + city.gridOffsetZ)
       this._pickBox.max.set(
-        tower.box.max.x + city.gridOffsetX, towerTopY(tower, city.floorHeight),
-        tower.box.max.y + city.gridOffsetZ
+        tower.box.max.x + city.gridOffsetX, top, tower.box.max.y + city.gridOffsetZ
       )
       const hit = ray.intersectBox(this._pickBox, this._pickHit)
       if (!hit) continue
@@ -115,7 +120,7 @@ export class TowerInteraction {
   buildFloor(tower) {
     const city = this.city
     if (!this.canBuild(tower)) return
-    tower.handleClick(city, city.floorHeight, city.maxFloors, city.debris,
+    tower.handleClick(city, city.floorHeight, maxFloorsFor(tower), city.debris,
       city.towers, () => city.onTowerChanged(tower), () => city.updateTowerVisuals())
   }
 
@@ -138,7 +143,8 @@ export class TowerInteraction {
       Sounds.play('error', 1.0, 0.06, 0.35)
       return false
     }
-    if (tower.numFloors >= city.maxFloors) {
+    // Turrets top out two storeys above everything else (see maxFloorsFor).
+    if (tower.numFloors >= maxFloorsFor(tower)) {
       // Same cue as "can't afford it": both are "that click did nothing", and
       // two different blips for the same non-event just read as inconsistency.
       Sounds.play('error', 1.0, 0.06, 0.35) // already at max height

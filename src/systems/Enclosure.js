@@ -27,9 +27,23 @@ export class Enclosure {
     this.enclosedCells = null
   }
 
-  /** A low-opacity glow per enclosed cell (white = unclaimed, accent = claimed by
-   *  an enclosure generator), one merged ground mesh with per-vertex colours. */
+  /**
+   * A low-opacity glow per enclosed cell (white = unclaimed, accent = claimed by
+   * an enclosure generator), one merged ground mesh with per-vertex colours.
+   *
+   * Idempotent, because createGrids calls it on every grid rebuild - opening a
+   * ring, or taking a card. It used to add a second mesh each time and leave the
+   * old one in the scene, still drawing whatever the board looked like when it
+   * was replaced. Nothing updated those copies again, so after the first board
+   * expand a sealed region went on glowing under the live mesh however many
+   * walls you knocked out of it.
+   *
+   * There is nothing to rebuild in any case: the buffers are sized off
+   * gridCellsX/Y, and the grid is built once at full size - only the part of it
+   * that is IN PLAY grows.
+   */
   build() {
+    if (this.mesh) { this.update(); return }
     this._maxVerts = this.city.gridCellsX * this.city.gridCellsY * 6 // 2 tris/cell
     this._encPos = new Float32Array(this._maxVerts * 3)
     const normals = new Float32Array(this._maxVerts * 3)

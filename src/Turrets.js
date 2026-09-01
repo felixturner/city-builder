@@ -59,6 +59,9 @@ export class Turrets {
     this.scene = scene
     this.city = city
     this.creeps = creeps
+    // City is the hub every system reaches through, and picking needs to know
+    // how tall the turret model standing on a tower is (see pickTowerBox).
+    city.turrets = this
 
     this.projGeo = new SphereGeometry(0.4, 12, 8)
     this.projMat = new MeshStandardNodeMaterial({
@@ -72,19 +75,35 @@ export class Turrets {
     this.projectiles = []
     this.cooldowns = new Map() // tower -> seconds until next shot
 
-    this.fireCooldown = 0.35 // seconds between Peg shots
+    /**
+     * All three guns fire at the SAME damage per second. The peg turret sets it -
+     * 1 damage every 0.35s, so 2.86/s - and the other two take however long their
+     * bigger shot is worth: cooldown = damage x fireCooldown, because the peg's
+     * damage is 1. Laser 2 dmg -> 0.7s, mortar 8 dmg -> 2.8s.
+     *
+     * Derived rather than written down, so the three can't drift apart the way
+     * they had (0.9s and 4.0s were 2.22/s and 2.00/s, both quietly worse than the
+     * cheapest gun in the game). What separates them is the SHAPE of that damage,
+     * which is the interesting part and the part you choose between:
+     *   peg     fine-grained, but a travelling projectile and 4 shots to a kill
+     *   laser   hitscan, no leading, but blind for twice as long after each shot
+     *   mortar  one-shots anything up to 8 HP and pays double per unit of ammo,
+     *           but overkills a small creep and only earns its slot on a clump,
+     *           where the AoE multiplies that 2.86/s by everything it catches
+     */
+    this.fireCooldown = 0.35 // seconds between Peg shots - the reference rate
     this.projectileSpeed = 100 // world units / sec
     this.hitRadius = 1.0 // sphere considered "on" the creep within this
     this.baseY = 0.8
 
     // Laser turret config + a small pool of reusable beam cylinders.
-    this.laserCooldown = 0.9 // fires less often than the peg turret
     this.laserDamage = 2
+    this.laserCooldown = this.laserDamage * this.fireCooldown // 0.7s
     this.beamPool = new BeamPool(scene, { radius: 0.28, duration: 0.16 })
 
     // Mortar turret: lobs an arcing shell that explodes in an AoE.
-    this.mortarCooldown = 4.0 // slow fire
     this.mortarDamage = 8 // heavy
+    this.mortarCooldown = this.mortarDamage * this.fireCooldown // 2.8s
     this.mortarRadius = 4 // AoE radius
     this.mortarArc = 8 // peak lob height
     this.mortarDur = 0.6 // travel time (seconds) - shorter so it lands near moving creeps
@@ -165,9 +184,29 @@ export class Turrets {
     const proto = new Group()
     proto.add(inner)
     const maxXZ = Math.max(size.x, size.z) || 1
-    proto.scale.setScalar((this.city.cellUnit * 1.1) / maxXZ)
+    const s = (this.city.cellUnit * 1.1) / maxXZ
+    proto.scale.setScalar(s)
+    // World height of the placed model. Picking adds this to a turret tower's
+    // box so the gun itself is clickable - see modelHeight.
+    proto.userData.height = size.y * s
     proto.traverse((o) => { if (o.isMesh) o.castShadow = true })
     return proto
+  }
+
+  /**
+   * World height of the turret model sitting on top of `tower` (0 if it isn't a
+   * turret, or the models haven't loaded).
+   *
+   * The model stands ON the roof block, so on a level-0 turret it is the whole
+   * of what you can see - the tower's own box is a sliver of roof tile at ground
+   * level, and a click aimed at the gun sailed clean over it. Nothing could be
+   * built back up once it had been knocked to zero.
+   */
+  modelHeight(tower) {
+    const proto = tower.typeTop === Turrets.MORTAR_TYPE ? this.mortarProto
+      : tower.typeTop === Turrets.LASER_TYPE ? this.laserProto
+        : tower.typeTop === Turrets.TURRET_TYPE ? this.pegProto : null
+    return proto ? proto.userData.height : 0
   }
 
   /** Place / aim a turret model on top of every visible turret tower. */

@@ -4,9 +4,14 @@ import { Tower } from '../Tower.js'
 import { ACCENT_COLORS } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, KING_HEALTH, KING_WARN_FLOORS, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, KING_WARN_FLOORS, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
 
 // Fallback only - the king normally wears one of the three accents.
+// Damage rattle on a tile that just took a blow. World units of horizontal
+// jitter, decaying to nothing over HIT_SHAKE_TIME.
+const HIT_SHAKE = 0.18
+const HIT_SHAKE_TIME = 0.18
+
 const KING_COLOR = ACCENT_COLORS[0]
 
 
@@ -119,18 +124,21 @@ export class TowerRenderer {
    * slab. Every floor is already its own instance, so this costs nothing beyond
    * the colour writes.
    *
-   * Shades all maxFloors instances, not just the built ones, so floors added
-   * later come in at the right shade without a recolour pass.
+   * Shades every instance the tower could ever build, not just the built ones,
+   * so floors added later come in at the right shade without a recolour pass.
+   * The gradient spans the tower's own cap - turrets go two storeys higher than
+   * everything else, and a wall shaded over a turret's range would come out
+   * washed out at the top.
    */
   shadeStack(tower) {
     const mesh = this.city.towerMesh
-    const n = tower.floorInstances.length
+    const n = maxFloorsFor(tower)
     // A browned-out building reads as unpowered: drained toward dark grey rather
     // than hidden or removed, so you can see exactly which parts of the city
     // went dark and roughly how far the shutdown reached.
     const dark = this.city.upkeep?.isDark(tower)
     const base = dark ? this._darkShade(tower.baseColor) : tower.baseColor
-    for (let f = 0; f < n; f++) {
+    for (let f = 0; f < tower.floorInstances.length; f++) {
       Tower.shadeForFloor(base, f, n, this._shade)
       mesh.setColorAt(tower.floorInstances[f], this._shade)
     }
@@ -221,6 +229,10 @@ export class TowerRenderer {
     // Reinforced walls soak blows rather than inflating the floor count, so a
     // tower never keeps phantom health after a buff is recalculated. (Shields
     // used to double this; they burn creeps at the perimeter now instead.)
+    // Every blow rattles the tile, soaked or not - a soaked hit is still a hit
+    // landing, and it is the one case with no other visual tell at all.
+    this.shakeTower(tower)
+
     let soak = 1
     if (isGrey(tower)) soak *= 1 + Buffs.wallHits
     if (soak > 1) {
@@ -271,6 +283,13 @@ export class TowerRenderer {
     // Destroyed at level 0: free its cell(s) and remove it (debris already spawned).
     city.demolishTower(tower)
     return 0
+  }
+
+  /** Rattle a tile that just took a hit, settling back to its resting pose. */
+  shakeTower(tower) {
+    const city = this.city
+    tower.shakeHit(city.towerMesh, city.floorHeight, HIT_SHAKE, HIT_SHAKE_TIME,
+      () => city.updateTowerMatrices(tower))
   }
 
   /** Count turret towers in a tower's lot, excluding itself. */

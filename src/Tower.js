@@ -2,7 +2,7 @@ import { Box2, Color, Object3D, Vector2, MathUtils } from 'three/webgpu'
 import gsap from 'gsap'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
-import { roofGeomIndex } from './blockTypes.js'
+import { roofGeomIndex, maxFloorsFor } from './blockTypes.js'
 import { Sounds } from './lib/Sounds.js'
 
 /**
@@ -56,7 +56,10 @@ export class Tower {
    *  hover tween - the tween used to write flat topColor here, which quietly
    *  undid the stack gradient every time the pointer crossed a tower. */
   static roofShade(tower, base, out) {
-    const n = tower.floorInstances ? tower.floorInstances.length : 1
+    // The tower's CAP, not how many instance slots it was handed. Every tower is
+    // allocated enough blocks to become a turret, so slot count would stretch a
+    // wall's gradient over seven storeys it can never build.
+    const n = maxFloorsFor(tower)
     Tower.shadeForFloor(base, Math.max(0, tower.numFloors - 1), n, out)
     return out.multiplyScalar(Tower.ROOF_SHADE_BIAS)
   }
@@ -161,7 +164,7 @@ export class Tower {
     // floorInstances[0] was sampled above, so `current`/`to` are both floor-0
     // shades; the gradient is re-applied per floor in onUpdate.
     const _shade = new Color()
-    const maxFloorsForShade = floorInstances.length
+    const maxFloorsForShade = maxFloorsFor(this)
 
     // Animation state object
     const anim = { t: 0 }
@@ -287,6 +290,66 @@ export class Tower {
         }
       },
       onComplete: onComplete
+    })
+  }
+
+  /**
+   * Rattle the whole stack for a moment when something hits it - the same
+   * feedback the creeps got, so you can see WHICH wall is being chewed on
+   * without watching a floor count.
+   *
+   * Writes instance matrices directly, the way animateOffset does: these are
+   * BatchedMesh instances, so there is no per-object transform to nudge. The
+   * jitter is horizontal only - a vertical one is the press-down that a click
+   * already means, and the two would read as the same event.
+   *
+   * `onSettle` puts the resting matrices back; the tween never writes them
+   * itself, because by the time it ends the tower may have lost a floor.
+   */
+  shakeHit(mesh, floorHeight, amount, duration, onSettle) {
+    this.shakeTween?.kill()
+    const dummy = new Object3D()
+    const center = this.box.getCenter(new Vector2())
+    const size = this.box.getSize(new Vector2())
+    const ex = this.tetro ? 1 : size.x // tetromino geometry is already cell-scaled
+    const ez = this.tetro ? 1 : size.y
+    const floorHalfHeight = floorHeight / 2
+    const roofHalfHeight = this.tetro
+      ? TetrominoGeometry.roofHalf
+      : BlockGeometry.halfHeights[roofGeomIndex(this.typeTop)]
+
+    const anim = { t: 1 }
+    this.shakeTween = gsap.to(anim, {
+      t: 0,
+      duration,
+      ease: 'none',
+      onUpdate: () => {
+        // A creep can destroy the tower mid-shake; the instances go back to the
+        // pool and are handed straight out as some other tile.
+        if (!this.visible) return
+        const a = anim.t * amount
+        const dx = (Math.random() * 2 - 1) * a
+        const dz = (Math.random() * 2 - 1) * a
+        // Re-read the floor count every frame - a hit that lands during the
+        // shake takes one off, and the removed instance is hidden by the
+        // matrix refresh that damage triggers.
+        const numFloors = this.numFloors
+        for (let f = 0; f < numFloors; f++) {
+          dummy.position.set(center.x + dx, f * floorHeight + floorHalfHeight, center.y + dz)
+          dummy.scale.set(ex, floorHeight, ez)
+          dummy.rotation.set(0, this.rotation, 0)
+          dummy.updateMatrix()
+          mesh.setMatrixAt(this.floorInstances[f], dummy.matrix)
+        }
+        if (!this.roofAnimating) {
+          dummy.position.set(center.x + dx, numFloors * floorHeight + roofHalfHeight, center.y + dz)
+          dummy.scale.set(ex, 1, ez)
+          dummy.rotation.set(0, this.rotation, 0)
+          dummy.updateMatrix()
+          mesh.setMatrixAt(this.roofInstance, dummy.matrix)
+        }
+      },
+      onComplete: () => { this.shakeTween = null; onSettle?.() },
     })
   }
 

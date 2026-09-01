@@ -25,7 +25,7 @@ export class PathPreview {
     this.city = city
     this.creeps = creeps
     this.meshes = []
-    this.enabled = true
+    this.enabled = false // off until asked for - see GUI 'Creep Path'
     this._key = null
   }
 

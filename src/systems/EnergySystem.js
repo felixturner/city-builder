@@ -22,7 +22,10 @@ const FLOOR_PULSE_DECAY = 0.22
 // being enough to make energy a non-issue) -> 0.07 (+25%) -> 0.056 (-20%) once
 // PROD_FACTOR had been raised twice and area generators were out-earning again.
 const ENCLOSURE_RATE = 0.056
-const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
+// Mana per (footprint cell x trail length) for the blue path generators.
+// -30% from 0.2: sealing ground is meant to be the main income, so linking
+// plus-blocks is the supplementary one.
+const PATH_RATE = 0.14
 // Volume of the per-arrival income blip. It fires several times a second at a
 // developed economy, so it sits well under the one-off cues.
 const INCOME_BLIP_VOLUME = 0.54

@@ -23,6 +23,22 @@ export class WaveAudio {
     this.reset()
   }
 
+  /**
+   * The round-clear stab. Demo's preview button calls this too, so the boss beat
+   * sounds the same however it was triggered.
+   *
+   * A boss round layers boss-complete OVER the usual fanfare rather than
+   * replacing it: level-complete is the "you survived" cue you have learned by
+   * round four, and swapping it out would make the biggest round of the run the
+   * one round that doesn't sound like a win.
+   */
+  playRoundClear(isBoss) {
+    // 5.5s fanfare peaking at 1.3s - it plays out across the quiet gap and has
+    // decayed by the time the build bed eases back in.
+    Sounds.play('level-complete', 1.0, 0, 0.7)
+    if (isBoss) Sounds.play('boss-complete', 1.0, 0, 0.75)
+  }
+
   /** Forget which wave has been cued, so the next one starts its run-up again.
    *  Pausing calls this; a countdown bed left running would drift out of sync
    *  with the wave clock it is counting down to, which stops with the game. */
@@ -111,9 +127,7 @@ export class WaveAudio {
       this._activeNow = inCombat
       // The stab marks the real end of the round, so it moves with it.
       if (!inCombat) {
-        // 5.5s fanfare peaking at 1.3s - it plays out across the quiet gap and
-        // has decayed by the time the build bed eases back in.
-        Sounds.play('level-complete', 1.0, 0, 0.7)
+        this.playRoundClear(clock.isBossWave(this._audioWave))
         this.creeps._quietTimer = this.creeps.roundEndQuiet
         // The wave that just finished - 0-based, so the first boss round
         // (level 4) is index 3. Demo hangs the upgrade screen off this.

@@ -11,16 +11,19 @@ import { fxMaterial, glow } from './fx.js'
  * place. On the floor they sit in the same space as the thing they are warning
  * about, and you can see at a glance which of your walls is about to be tested.
  *
- * They ride a radius derived from how far you have BUILT, not a fixed distance,
- * so they stay just beyond your frontier as the city grows instead of drifting
- * off into empty board. Floored so they clear a tiny opening city, and capped so
- * they never sit outside the ring creeps actually spawn on.
+ * They sit on the EDGE OF THE BOUNDS - tip touching the white outline, body out
+ * in the walkable field beyond it. The bounds are what reads as "the board", so
+ * an arrow coming in off one names a side of the thing you are defending, and it
+ * moves with the board when a ring opens.
+ *
+ * They used to ride a radius derived from how far you had BUILT, which wandered
+ * as the city grew: build compactly and the arrows sat in empty dark ground
+ * nowhere near anything, and they moved every time you placed a tile.
  */
-
-const MARGIN_CELLS = 5 // how far beyond the built frontier the arrows sit
-const MIN_CELLS = 8 // ...but never closer in than this, for a small city
+// Length and width are equal on purpose: the arrow sits in a square, so it
+// looks the same size whichever side a wave is coming from.
 const LENGTH_CELLS = 3.2 // arrow length, tip to tail
-const WIDTH_CELLS = 2.4 // arrow width across the barbs
+const WIDTH_CELLS = 3.2 // arrow width across the barbs
 const Y = 0.12 // on the floor, above the grid and the flow field
 
 export class WaveArrows {
@@ -54,20 +57,14 @@ export class WaveArrows {
   }
 
   /**
-   * How far out to put the arrows: past the furthest thing you have built, but
-   * never inside MIN_CELLS and never beyond the spawn ring.
+   * Distance from the centre to an arrow's MIDDLE. The arrow is drawn centred on
+   * its own length, so pushing it half a length past the bounds lands its tip on
+   * the outline with the rest of it sitting outside - between the board edge and
+   * the ring creeps actually spawn on (bounds + one lot), so it never overlaps
+   * either.
    */
   _radius() {
-    const city = this.city
-    const cu = city.cellUnit
-    let extent = 0
-    for (const tower of city.towers) {
-      if (!tower.visible) continue
-      const c = tower.box.getCenter(city.towerCenter)
-      extent = Math.max(extent, Math.abs(c.x + city.gridOffsetX), Math.abs(c.y + city.gridOffsetZ))
-    }
-    const want = extent + MARGIN_CELLS * cu
-    return Math.min(Math.max(want, MIN_CELLS * cu), this.creeps.reach - cu)
+    return this.city.visibleHalf + (LENGTH_CELLS / 2) * this.city.cellUnit
   }
 
   update() {

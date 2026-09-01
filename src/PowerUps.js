@@ -16,6 +16,9 @@ export { Buffs, resetBuffs }
  * eight systems would have been a far bigger change than the feature deserves.
  * Each system now reads `Buffs.x` where it read a bare constant - one line each.
  */
+// Cards dealt onto the choose screen.
+const CARDS_OFFERED = 4
+
 const YELLOW = ENERGY_COLOR
 const PINK = AMMO_COLOR
 const BLUE = ACCENTS[2]
@@ -175,7 +178,7 @@ export class PowerUpScreen {
       return !c.available || c.available(this)
     })
     const picked = []
-    while (picked.length < 4 && pool.length) {
+    while (picked.length < CARDS_OFFERED && pool.length) {
       picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0])
     }
     return picked

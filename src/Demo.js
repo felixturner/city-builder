@@ -522,6 +522,7 @@ export class Demo {
    */
   _runBossReward() {
     const alive = () => !this.isGameOver && !this.kingDead
+    this._cancelBossReward()
     // 1. Let the fanfare and the last debris settle.
     this._bossTimers = []
     this._bossTimers.push(setTimeout(() => {
@@ -534,6 +535,32 @@ export class Demo {
       this._cardTimer = null
       if (alive()) this.powerUps.show()
     }, (Demo.BOSS_COOLDOWN + Demo.EXPAND_TIME + Demo.CARD_DELAY) * 1000)
+  }
+
+  /** Drop any boss beat still in flight, so a second one can't stack on it. */
+  _cancelBossReward() {
+    for (const t of this._bossTimers || []) clearTimeout(t)
+    this._bossTimers = []
+    if (this._cardTimer) clearTimeout(this._cardTimer)
+    this._cardTimer = null
+  }
+
+  /**
+   * DEV: play the whole boss-clear beat on demand - the fanfare, the quiet, the
+   * board opening, the cards - without surviving to a boss round. Wired to the
+   * GUI button, because the expand animation is otherwise four minutes of play
+   * away from every tweak to it.
+   *
+   * Rewinds the play area first once the board has run out of rings, so the
+   * sequence stays watchable however many times you press it.
+   */
+  previewBossReward() {
+    if (!this.city.canGrowPlayArea) this.city.rewindPlayArea()
+    // Exactly what WaveAudio fires on a real boss clear, so the beat starts the
+    // same way rather than drifting from it.
+    this.creeps.audio.playRoundClear(true)
+    this.creeps._quietTimer = this.creeps.roundEndQuiet
+    this._runBossReward()
   }
 
   /** Floating play/pause button at the bottom-center of the screen. */

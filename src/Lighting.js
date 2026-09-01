@@ -121,7 +121,9 @@ export class Lighting {
     this._growTween?.kill()
     this._growTween = gsap.to([this.boundsGround.scale, this.outerField.scale], {
       duration,
-      ease: 'power2.out',
+      // Expo: nearly all the travel is over in the first third, so the ground
+      // reads as thrown outward and then settling, rather than as a slide.
+      ease: 'expo.out',
       x: (i) => (i === 0 ? bounds : outer),
       z: (i) => (i === 0 ? bounds : outer),
     })

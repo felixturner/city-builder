@@ -56,8 +56,11 @@ export class GUIManager {
       aoBlur: 0.3,
       aoIntensity: 0.95,
       vignette: true,
-      creepFlow: true,
-      creepPath: true,
+      // Both off by default: they are readouts for reasoning about the maze, and
+      // three thousand arrows plus a bright route line over the board is a lot
+      // to look at when you just want to see the city. Toggle them on to plan.
+      creepFlow: false,
+      creepPath: false,
       bloom: true,
       bloomStrength: 0.77,
       bloomRadius: 0.49,
@@ -97,6 +100,11 @@ export class GUIManager {
     gameplayFolder.add(allParams.gameplay, 'music').name('Music').onChange((v) => {
       Sounds.setMusicEnabled(v)
     })
+    // The boss-clear beat is otherwise four minutes of play away from every
+    // tweak to it, so it gets a button: fanfare, quiet, the board opening, cards.
+    gameplayFolder.add({
+      bossReward: () => demo.previewBossReward(),
+    }, 'bossReward').name('▶ Boss Clear')
 
     // View folder holds all rendering/debug controls (collapsed at start)
     const viewFolder = gui.addFolder('View').close()
