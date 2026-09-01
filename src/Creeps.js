@@ -52,10 +52,18 @@ const SWARM_HORN_VOLUME = 0.3
 // Damage a shield perimeter does to a creep crossing it (halved when the shield
 // has no support tower reaching it - see updateShieldBarriers).
 const SHIELD_DAMAGE = 2
+// Health a creep loses for each floor it knocks down. Walls charge an entry fee
+// rather than being free to chew through.
+const WALL_BITE = 2
+
+// Damage flash: hot orange, and how long it lingers.
+const HIT_FLASH_COLOR = 0xff7a1a
+const HIT_FLASH_TIME = 0.14
+
 // Seconds a creep glows shield-yellow after a barrier burns it.
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
-import { fxMaterial, glow } from './fx.js'
+import { fxMaterial, glow, unglow } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 import { advanceHop, towerWorldCenter } from './lib/gridUnit.js'
 import { WaveAudio } from './systems/WaveAudio.js'
@@ -277,6 +285,16 @@ export class Creeps {
     this.shieldFlashMat = new MeshStandardNodeMaterial({
       color: new Color(SHIELD_LINE),
       emissive: new Color(SHIELD_LINE).multiplyScalar(0.7),
+      roughness: 0.4,
+      metalness: 0,
+    })
+    // Ordinary damage flash: hot orange, bright enough to bloom. Creeps are near
+    // black, so a hit had no visual tell at all beyond the stone thunk - you
+    // could not see which of a dozen creeps your turrets were actually working
+    // on. Emissive over 1 puts it on the glow layer's side of the threshold.
+    this.hitFlashMat = new MeshStandardNodeMaterial({
+      color: new Color(HIT_FLASH_COLOR),
+      emissive: new Color(HIT_FLASH_COLOR).multiplyScalar(1.4),
       roughness: 0.4,
       metalness: 0,
     })
@@ -955,6 +973,7 @@ export class Creeps {
   /** Apply turret damage; explode + remove the creep once it reaches max HP. */
   hit(creep, dmg = 1) {
     creep.hits += dmg
+    this.hitFlash(creep)
     // Random stone thunk on every hit (slight pitch variation for variety).
     Sounds.play('stone', 0.9 + Math.random() * 0.3, 0.2, 0.6)
     // Giants visibly wear down: a boss shrinks toward 45% of its spawn size as
@@ -1007,7 +1026,24 @@ export class Creeps {
     this.city.debris?.spawn(p.x, p.y, p.z, 0.5, new Color(SHIELD_LINE), 8)
     if (!c.flashMat) c.flashMat = c.mesh.material // remember what to restore
     c.mesh.material = this.shieldFlashMat
+    glow(c.mesh)
     c.flashT = SHIELD_FLASH_TIME
+  }
+
+  /**
+   * Flash a creep orange for a moment when it takes damage.
+   *
+   * Swaps the shared material rather than tinting: creeps share one material per
+   * TYPE, so tinting would light up every creep of that type at once. A shield
+   * burn does the same thing in yellow, and wins if both land - being burned is
+   * the rarer event and the one worth reading.
+   */
+  hitFlash(c) {
+    if (c.flashT > 0 && c.mesh.material === this.shieldFlashMat) return
+    if (!c.flashMat) c.flashMat = c.mesh.material // remember what to restore
+    c.mesh.material = this.hitFlashMat
+    glow(c.mesh) // on the bloom layer for as long as the flash lasts
+    c.flashT = HIT_FLASH_TIME
   }
 
   rollAmmoDrop(creep) {
@@ -1293,7 +1329,11 @@ export class Creeps {
       // Shield burn fading - hand the creep its own material back.
       if (c.flashT > 0) {
         c.flashT -= dt
-        if (c.flashT <= 0 && c.flashMat) { c.mesh.material = c.flashMat; c.flashMat = null }
+        if (c.flashT <= 0 && c.flashMat) {
+          c.mesh.material = c.flashMat
+          c.flashMat = null
+          unglow(c.mesh) // stop blooming once it's back to its own colour
+        }
       }
       if (c.giant) c.mesh.rotation.y += dt * 0.18 // very slow, ominous spin
 
@@ -1398,6 +1438,14 @@ export class Creeps {
             // decides how much damage it gets to do.
             c.knocks = 0
             this.city.renderer.damageTower(target)
+            // Breaking a floor costs the creep health, the same way a soldier
+            // and a creep both bleed when they trade blows. Without it a creep
+            // that reached your walls was pure profit for the attacker: it could
+            // level a whole city given time, and only your turrets could ever
+            // say otherwise. Now a wall is worth something even undefended - it
+            // charges an entry fee - while still not being the free one-for-one
+            // trade it was when creeps burst after a single floor.
+            if (this.hit(c, WALL_BITE)) continue // it died on the last block
             // Its target may have just been destroyed outright - go and find
             // something else rather than swinging at a hole.
             if (!target.visible) { c.state = 'march'; c.target = null; c.t = 1 }

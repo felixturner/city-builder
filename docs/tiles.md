@@ -1,90 +1,71 @@
 # Tiles
 
-Reference for the tiles the palette generates (`TilePalette.randomTile()`), their
-shapes, and generation odds. All placeable tiles are **rectangular** — the curved
-`Quart` (quarter-circle) and the `Tri` (triangle) tops still exist in `blocks.glb`
-but are no longer generated.
+Reference for what the palette deals (`TileBag._refill`) and what each tile does.
+Rules of play are in `gameplay.md`.
 
-A tile carries four things: a **footprint** (w×h cells), a **top type** (its
-shape/role), a **colorIndex** (one of 3 accent colours, used by generators), and a
-**topColorIndex** (one of 5 grey roof colours, used by plain greys).
+There are exactly two footprints: **tetromino walls** (4 cells) and **1×1**
+utilities. Nothing else — the old rectangles up to 3×3 are gone, so footprint is
+no longer an axis of variation on top of height.
 
----
+## The bag
 
-## Top types
+One shared bag of **36**, drawn without replacement and reshuffled when empty, so
+the wait for any particular tile is bounded.
 
-| Type | Shape (top-down) | Role | Colour | Allowed footprints |
-|------|------------------|------|--------|--------------------|
-| **Square** | plain rect | grey wall / filler — forms enclosures | grey roof (1 of 5) | any |
-| **Hole** (`ADJ_GENERATOR`) | rect with a circular hole | adjacency generator (energy when next to same) | accent (1 of 3) | squares only (1×1, 2×2, 3×3) |
-| **Cross** (`PATH_GENERATOR`) | rect with an inset plus | path generator (energy via colour trails) | accent (1 of 3) | squares only |
-| **Peg turret** (`PEG_TURRET`) | rect + raised disc (▲ icon) | bullet turret | grey body, accent laser | 1×1 only |
-| **Divot turret** (`DIVOT_TURRET`) | rect + recessed dimple (▲ icon) | laser turret | grey body, accent laser | 1×1 only |
+| tile | count | share | avg wait | worst |
+|---|---:|---:|---:|---:|
+| **Wall** (6 shapes × 4) | 24 | 66.7% | 1.5 | 12 |
+| Path generator | 3 | 8.3% | 9.3 | 33 |
+| Enclosure generator | 2 | 5.6% | 12.3 | 34 |
+| Barracks | 2 | 5.6% | 12.3 | 34 |
+| Shield | 2 | 5.6% | 12.3 | 34 |
+| Peg / Divot / Mortar turret | 1 each | 2.8% each | 18.5 | 35 |
 
-Constraints enforced in generation:
-- **Generators** (Hole, Cross) only spawn on **square** footprints.
-- **Turrets** (Peg, Divot) only spawn on **1×1**.
-- **Non-square** footprints are **always plain Square** (grey).
+Waits are in draws: average is `(37)/(n+1)`, worst is `36 − n` — the run you get
+if every copy sits at the back of the shuffle.
 
----
+The wall count must stay a multiple of 6 to keep the six tetromino shapes equally
+likely.
 
-## Footprint generation
+## What each does
 
-`randomTile()` first rolls a footprint:
+| tile | `TopType` | role |
+|---|---|---|
+| **Wall** | `SQUARE` | blocks and *reroutes* creeps; seals enclosures. Grey |
+| **Path generator** | `PATH_GENERATOR` | links to same-colour path gens within `(a.floors + b.floors) × 2` cells, earning from trail length. Its trail reaching a turret, enclosure gen or shield brings that building to full speed — unsupported ones run at half. Blue |
+| **Enclosure generator** | `ENCLOSURE_GENERATOR` | claims a sealed region, earns from its area. Pink |
+| **Peg turret** | `PEG_TURRET` | fast, 1 damage, 0.25 ammo |
+| **Divot turret** | `DIVOT_TURRET` | laser, 2 damage, 0.5 ammo |
+| **Mortar turret** | `MORTAR_TURRET` | 8 damage, AoE, arcs over walls, 1.0 ammo |
+| **Barracks** | `BARRACKS` | raises soldiers. A new floor raises one immediately. Yellow |
+| **Shield** | `SHIELD` | burns creeps crossing its ring, 5 charges per floor. Yellow |
 
-- **55%** square → of those: **55%** 1×1, **35%** 2×2, **10%** 3×3
-- **45%** non-square → long side is **70%** length-2, **30%** length-3; orientation is a 50/50 coin flip
+Turret range and shield radius are both `floors × 2 + 1` cells. Turrets need line
+of sight. `HOLE` is the king's roof — never dealt.
 
-| Footprint | Chance |
-|-----------|-------:|
-| 1×1 | 30.25% |
-| 2×2 | 19.25% |
-| 3×3 | 5.5% |
-| 1×2 / 2×1 (combined) | 31.5% (15.75% each) |
-| 1×3 / 3×1 (combined) | 13.5% (6.75% each) |
+## Cost
 
----
+One function prices placing *and* growing (`systems/tileCost.js`):
 
-## Type, given the footprint
+```
+price = base × growth^(that type already placed) × (1 + income/sec × 0.02)
+```
 
-Once the footprint is set, the top type is picked **uniformly** from the types
-allowed for that footprint:
-
-| Footprint | Candidate types | Each |
-|-----------|-----------------|-----:|
-| 1×1 | Square, Hole, Cross, Peg, Divot (5) | 20% |
-| 2×2 / 3×3 | Square, Hole, Cross (3) | 33.3% |
-| any non-square | Square (1) | 100% |
-
----
-
-## Overall odds per top type
-
-Combining footprint odds with the type-given-footprint odds:
-
-| Type | Overall chance |
-|------|---------------:|
-| **Square** (grey) | **59.3%** |
-| **Hole** (adj generator) | **14.3%** |
-| **Cross** (path generator) | **14.3%** |
-| **Peg turret** | **6.05%** |
-| **Divot turret** | **6.05%** |
-
-Greys dominate because every non-square is grey and they're also in the square
-pools — which fits their role as the wall/enclosure material.
-
----
+- **base** — wall **4**, everything else **8**. Flat, not per cell
+- **growth** — wall 1.01, everything else 1.2
+- **adding a floor costs half** that. Max 5 floors
+- generators bucket by type *and* colour; turrets by type
 
 ## Colour
 
-- **colorIndex** — `randInt(0,2)`, one of 3 accent colours. Drives generator
-  matching (same-colour generators chain). Only meaningful for Hole/Cross; turrets
-  use it for their laser colour.
-- **topColorIndex** — `randInt(0,4)`, one of 5 grey roof colours. Cosmetic; only
-  shown on plain Square tops.
+- **colorIndex** — the tile's accent. Fixed per type for generators (blue paths,
+  pink enclosures), so colour identifies the tool. Path gens only chain to the
+  same colour.
+- **topColorIndex** — cosmetic roof shade on walls.
 
 ## Rotation
 
-Non-square tiles can be rotated 90° while dragging (`R` key). Since all shapes are
-now rectangular (symmetric under the placement), rotation just swaps the footprint
-dimensions — no special-case geometry handling.
+`R` or the on-screen button, while dragging. Tetrominoes have real rotation
+states; shields and barracks are corner shapes whose facing matters. Rotation is
+also offset by the camera's nearest quarter turn, so a tile lands looking like its
+tray icon whichever way the board is facing.

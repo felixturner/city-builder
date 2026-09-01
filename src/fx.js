@@ -56,3 +56,10 @@ export function glow(object) {
   if (object.children) for (const c of object.children) glow(c)
   return object
 }
+
+/** Take it back out again - for things that only glow for a moment. */
+export function unglow(object) {
+  object.layers.disable(FX_GLOW_LAYER)
+  if (object.children) for (const c of object.children) unglow(c)
+  return object
+}
