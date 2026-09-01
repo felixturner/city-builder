@@ -55,15 +55,17 @@ export const SHIELD_COLOR = 1
 /** Shield radius in CELLS for a shield of `floors` storeys - the same height
  *  rule a turret's range uses. Shared by the ring that draws it and the test
  *  that decides what crosses it, so the circle never lies. */
-export const shieldRadiusCells = (floors) => floors * 2 + 1
+export const shieldRadiusCells = (floors) => floors * 2 + 1 + Buffs.shieldRadius
 
 /** Charges a shield carries per storey. Each creep that crosses the perimeter
  *  is burned for one; when they run out the barrier is spent and goes dark. */
 export const SHIELD_HITS_PER_FLOOR = 5
 
-/** Charges a shield has left: 5 per floor, minus what's been spent. */
+/** Charges a shield has left: 5 per floor, minus what's been spent.
+ *  Buffs.shieldRadius used to be added HERE, which made "Wider Aegis" hand out
+ *  charges instead of radius - it belongs in shieldRadiusCells above. */
 export const shieldCharges = (t) =>
-  Math.max(0, t.numFloors * SHIELD_HITS_PER_FLOOR - (t.shieldUsed || 0)) + Buffs.shieldRadius
+  Math.max(0, t.numFloors * SHIELD_HITS_PER_FLOOR - (t.shieldUsed || 0))
 
 export const isBarracks = (t) => t.typeTop === TopType.BARRACKS
 export const isShield = (t) => t.typeTop === TopType.SHIELD
@@ -100,6 +102,12 @@ export const towerTopY = (tower, floorHeight) =>
 
 /** Footprint area of a tower in cells (1x1 = 1, 2x2 = 4, ...). */
 export const towerArea = (tower, cellUnit, sizeScratch) => {
+  // Cells the tower actually OCCUPIES, not its bounding box. A tetromino is
+  // always 4 cells, but only the I piece has a 4-cell box - the other five are
+  // 3x2 or 2x3, so pricing off the box charged 6 for an L and 4 for an I, and
+  // made growing a wall dearer than buying one. Pre-built centre-lot towers have
+  // no cell list, and they are true rectangles, so the box is right for them.
+  if (tower.cells) return tower.cells.length
   const size = tower.box.getSize(sizeScratch)
   return Math.max(1, Math.round((size.x / cellUnit) * (size.y / cellUnit)))
 }
@@ -109,3 +117,6 @@ export const towerArea = (tower, cellUnit, sizeScratch) => {
  *  Shared so TowerRenderer can scale its damage feedback against it without
  *  keeping a second copy of the number. */
 export const KING_HEALTH = 5
+
+/** Floors at or below which the king raises its own alarm. */
+export const KING_WARN_FLOORS = 2

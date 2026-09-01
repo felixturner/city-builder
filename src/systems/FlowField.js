@@ -74,6 +74,13 @@ export class FlowField {
         else genGoals.push(i) // gens/turrets: second-priority goals
       }
     }
+    // Boulders are impassable ground. They are not towers, so they are not in
+    // the loop above - the Rocks system keeps its own cell mask.
+    const rocks = this.city.rocks
+    if (rocks?.blocked) {
+      for (let i = 0; i < wall.length; i++) if (rocks.blocked[i]) wall[i] = 1
+    }
+
     const DDX = [1, -1, 0, 0], DDZ = [0, 0, 1, -1]
     const q = this._queue
     const block = this._block, base = this._base

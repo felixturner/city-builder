@@ -29,10 +29,10 @@ score persists in localStorage.
 
 | | start | used for | comes from |
 |---|---|---|---|
-| **Energy** | 80 / 100 | placing tiles, adding floors | generators + a king trickle |
+| **Energy** | 100 / 150 | placing tiles, adding floors | generators + a king trickle |
 | **Ammo** | 30 / 50 | every turret shot | creep drops (20% chance, 8 each) |
 
-Energy cap = 100 + population (total floors across grey walls) + upgrades.
+Energy cap = 150 + population (total floors across grey walls) + upgrades.
 
 ## Building
 

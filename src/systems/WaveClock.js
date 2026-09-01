@@ -13,6 +13,9 @@
  * arithmetic, which meant every change to the shape of a round had to be made in
  * five places and kept in step by hand.
  */
+// Waves before this one always arrive on a single side (see waveEdges).
+const TWO_FRONT_FROM_WAVE = 2
+
 export class WaveClock {
   constructor() {
     this.elapsed = 0
@@ -80,6 +83,11 @@ export class WaveClock {
     const first = hash % 4
     // Every third wave opens a second front, on any other edge - including the
     // opposite one, so a wave can genuinely come at you from both sides.
+    // A second front needs enough creeps to actually fill both, and the opening
+    // waves do not have them - level 1 is eight creeps, barely two clumps, so
+    // two arrows promised an attack from a side nothing ever came from. Held
+    // back until waves are big enough to split.
+    if (waveIdx < TWO_FRONT_FROM_WAVE) return [first]
     if (this.isBossWave(waveIdx) || (hash >> 4) % 3 !== 0) return [first]
     return [first, (first + 1 + ((hash >> 8) % 3)) % 4]
   }

@@ -21,6 +21,19 @@ class RingLayer {
     this.geos = new Map() // numFloors -> RingGeometry
   }
 
+  /**
+   * Throw away the cached ring geometry.
+   *
+   * The cache is keyed on floor count alone, which is right while the only thing
+   * that decides a radius IS the floor count - but a power-up can widen a shield
+   * or lengthen a generator's reach without any tower changing height, and then
+   * every cached ring is the wrong size and nothing would ever rebuild it.
+   */
+  invalidate() {
+    for (const g of this.geos.values()) g.dispose()
+    this.geos.clear()
+  }
+
   geoFor(numFloors) {
     let g = this.geos.get(numFloors)
     if (!g) {
@@ -91,6 +104,13 @@ export class RangeVisuals {
       (n) => (n * 2 + 1) * city.cellUnit,
       { thickness: 0.12, y: 0.07 }
     )
+  }
+
+  /** Drop cached ring geometry on every layer - call after a buff changes. */
+  invalidate() {
+    this.zoc.invalidate()
+    this.shield.invalidate()
+    this.range.invalidate()
   }
 
   refresh() {

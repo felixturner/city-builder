@@ -1,6 +1,8 @@
 # TODO
 
 ## STRATEGY
+- make ammo meaningfull
+- encorage smallr lots?
 - too easy
 - needs more strategy??/
 - more variety - game is monolithic all feels the same???
@@ -22,12 +24,15 @@
 
 
 ## FIXES
-- dont allow creeps to overlap
-- show cost of clicking X button as temp label anim or small white label
+- outer field darker
+- saving mds should not rebuild server
+- first level shows 2 attck arrows but only 1 swarm?
+- creeps should come from more in the middle not corners so much
+- flow filed drawing chnages on enclosure and on battle rounds?
+- shields are also healers?
 - fix gens get stuck at 0 or trail gens get stuck once not connected.
 - more threat warnings when king is exposed attacked
 - grey out gens when dead or destroy them.
-- after x waves, expand play field?
 - make completing wall rings more important. buff walls that are completed x2 def.
 - remove 3rd party blender file. start new clean repo?
 - make creeps low poly spider mecha (bugs)

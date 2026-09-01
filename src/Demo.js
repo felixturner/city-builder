@@ -54,7 +54,10 @@ export class Demo {
   static MAX_DT = 1 / 20
 
   // Seconds between a crate bursting and the upgrade cards flying out of it.
-  static CARD_DELAY = 1.55 // lets the round-clear fanfare land before the menu
+  // The boss-reward beat, in seconds: quiet, then the board grows, then cards.
+  static BOSS_COOLDOWN = 2.0 // silence after the round-clear sting
+  static EXPAND_TIME = 1.2 // how long the board takes to open (see Lighting)
+  static CARD_DELAY = 1.5 // pause after the expansion before the menu
 
   // Seconds between the king dying and the game freezing behind the score panel,
   // so you get to watch the creeps finish the job instead of cutting to a
@@ -155,12 +158,17 @@ export class Demo {
     // Initialize modules
     this.lighting = new Lighting(this.scene, this.renderer, this.params)
     this.city = new City(this.scene, this.params)
+    // The board's ground plane grows with the play area, so City needs to reach
+    // the lighting rig that owns it.
+    this.city.lighting = this.lighting
     this.city.onGameOver = () => this.gameOver()
     // Let interaction read the ground-plane pointer for empty-slot building
     this.city.interaction.pointer = this.pointerHandler
 
     // Energy/population HUD - grey blocks generate energy and raise its cap
-    this.mana = new Mana(100, 80) // cap 100, start near it so the opening build isn't cramped
+    // Start on 100 against a 150 cap, so the opening build has room to work with
+    // but there is still headroom to bank into before the first wave.
+    this.mana = new Mana(150, 100)
     this.city.mana = this.mana
     // Income boxes flying from generators to the HUD meters. City needs the live
     // camera to project their launch point.
@@ -232,17 +240,14 @@ export class Demo {
     this.lootBoxes = new LootBoxes(this.scene, this.city, this)
     this.city.lootBoxes = this.lootBoxes // placement checks read it
     this.lootBoxes.place()
+    this.lootBoxes.refresh() // switch off the ones outside the opening play area
     // Cards come from surviving a boss round, not from crates. It fires when the
     // board actually goes quiet - not when the spawn window shuts - so the menu
     // never opens over a field still full of creeps.
     this.creeps.audio.onRoundCleared = (waveIdx) => {
       if (!this.creeps.isBossWave(waveIdx)) return
       if (this.isGameOver || this.kingDead) return
-      // A beat after the round-clear fanfare so it isn't stepped on.
-      this._cardTimer = setTimeout(() => {
-        this._cardTimer = null
-        if (!this.isGameOver && !this.kingDead) this.powerUps.show()
-      }, Demo.CARD_DELAY * 1000)
+      this._runBossReward()
     }
 
     // Incoming-wave timeline strip across the top of the screen
@@ -377,7 +382,10 @@ export class Demo {
   updateZoomLimit() {
     if (!this.controls || !this.city) return
     const cam = this.perspCamera
-    const halfDiag = Math.hypot(this.city.actualGridWidth, this.city.actualGridHeight) / 2
+    // Frames the OPEN part of the board, not the full built grid - otherwise the
+    // opening 5x5 sits as a speck in the middle of a 13x13 of empty space.
+    const span = this.city.visibleHalf * 2
+    const halfDiag = Math.hypot(span, span) / 2
     const pitch = this.controls.minPolarAngle || 0 // pitch is locked, so this is exact
     const needV = halfDiag * Math.cos(pitch) + this.city.maxFloors * this.city.floorHeight * 0.5
     const needH = halfDiag
@@ -502,6 +510,30 @@ export class Demo {
   /** True while the board should ignore build/destroy input. */
   get buildLocked() {
     return this.paused || this.isGameOver || this.kingDead
+  }
+
+  /**
+   * The beat after a boss round: quiet, then the board opens, then the cards.
+   *
+   * Three payoffs used to land on top of each other - the round-clear fanfare,
+   * the board growing, and the upgrade menu - which turned the best moment in the
+   * run into a mess. Spaced out they read as a sequence: you survived, you gained
+   * ground, now choose.
+   */
+  _runBossReward() {
+    const alive = () => !this.isGameOver && !this.kingDead
+    // 1. Let the fanfare and the last debris settle.
+    this._bossTimers = []
+    this._bossTimers.push(setTimeout(() => {
+      if (!alive()) return
+      // 2. The board opens up.
+      if (this.city.growPlayArea()) this.updateZoomLimit()
+    }, Demo.BOSS_COOLDOWN * 1000))
+    // 3. ...and once that has played, the choice.
+    this._cardTimer = setTimeout(() => {
+      this._cardTimer = null
+      if (alive()) this.powerUps.show()
+    }, (Demo.BOSS_COOLDOWN + Demo.EXPAND_TIME + Demo.CARD_DELAY) * 1000)
   }
 
   /** Floating play/pause button at the bottom-center of the screen. */

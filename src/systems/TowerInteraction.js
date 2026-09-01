@@ -5,6 +5,7 @@ import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TopType, isTurret, isGrey, towerArea, towerTopY } from '../blockTypes.js'
 import { fxMaterial, glow } from '../fx.js'
+import { priceOfTower } from './tileCost.js'
 
 /**
  * TowerInteraction - all player input on towers (hover, build, destroy, place,
@@ -131,6 +132,12 @@ export class TowerInteraction {
    */
   canBuild(tower) {
     const city = this.city
+    // The king's height IS its health - building it back up would make the one
+    // loss condition in the game something you can simply pay off.
+    if (tower.king) {
+      Sounds.play('error', 1.0, 0.06, 0.35)
+      return false
+    }
     if (tower.numFloors >= city.maxFloors) {
       // Same cue as "can't afford it": both are "that click did nothing", and
       // two different blips for the same non-event just read as inconsistency.
@@ -138,11 +145,9 @@ export class TowerInteraction {
       return false
     }
     if (!city.mana) return true
-    // Walls (grey) cost 1/cell; generators + turrets cost 2/cell (same rule as
-    // placing a tile from the palette).
-    const cost = Math.max(1, Math.round(
-      (isGrey(tower) ? 1 : 2) * towerArea(tower, city.cellUnit, city.towerSize) * Buffs.buildCost
-    ))
+    // Exactly what the same thing costs from the tray - one shared price
+    // function, so raising a wall can never drift away from buying one.
+    const cost = priceOfTower(city, tower)
     if (!city.freeClicks && !city.mana.spend(cost)) {
       Sounds.play('error', 1.0, 0.06, 0.35) // can't afford this build
       return false

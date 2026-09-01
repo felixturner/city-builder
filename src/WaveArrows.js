@@ -1,139 +1,133 @@
-import { Vector3 } from 'three/webgpu'
-import { ACCENTS } from './palette.js'
+import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color } from 'three/webgpu'
+import { fxMaterial, glow } from './fx.js'
 
 /**
- * Small triangles around the edge of the viewport during a wave's countdown,
- * pointing at the side of the board the wave will arrive from.
+ * Big arrows on the ground pointing IN from the sides the next wave arrives
+ * from, sitting just outside the city.
  *
- * Waves commit to their edges up front (Creeps.waveEdges), which only helps if
- * you know which before they land. The board is bigger than the screen at most
- * zooms and the camera can be orbited any way round, so an on-board marker is no
- * use - the warning has to live in screen space and point at where the threat
- * is, whether or not that part of the world is on screen.
+ * These used to be small triangles pinned to the edge of the viewport. Screen
+ * space is the wrong place for them: you read the board, not the bezel, and an
+ * arrow at the edge of the window tells you a compass direction rather than a
+ * place. On the floor they sit in the same space as the thing they are warning
+ * about, and you can see at a glance which of your walls is about to be tested.
  *
- * Each arrow is PROJECTED from the world every frame, so it slides around the
- * viewport edge as you orbit and always points at the real direction rather than
- * at a fixed corner of the screen.
- *
- * They come up when the countdown ticker starts (see WaveAudio, same lead
- * values) and STAY up for as long as the wave is on the board. The direction
- * matters more during the fight than before it - it is what tells you which side
- * to look at when creeps are already chewing on something - so they only go away
- * once the board is clear again.
- *
- * They read differently in the two phases: an urgent blink while you are waiting,
- * accelerating as the wave closes, then a steady hold once it has landed. A
- * flashing arrow means "brace", a solid one means "they are over there".
+ * They ride a radius derived from how far you have BUILT, not a fixed distance,
+ * so they stay just beyond your frontier as the city grows instead of drifting
+ * off into empty board. Floored so they clear a tiny opening city, and capped so
+ * they never sit outside the ring creeps actually spawn on.
  */
 
-const W = 14 // triangle half-width, px (1.5x)
-const H = 23 // triangle height, px (1.5x)
-const MARGIN = 30 // inset from the viewport edge - a touch more, for the bigger arrow
+const MARGIN_CELLS = 5 // how far beyond the built frontier the arrows sit
+const MIN_CELLS = 8 // ...but never closer in than this, for a small city
+const LENGTH_CELLS = 3.2 // arrow length, tip to tail
+const WIDTH_CELLS = 2.4 // arrow width across the barbs
+const Y = 0.12 // on the floor, above the grid and the flow field
 
 export class WaveArrows {
   constructor(demo) {
     this.demo = demo
     this.creeps = demo.creeps
-    this._v = new Vector3()
-    this.arrows = []
+    this.city = demo.city
+    this._colour = new Color()
 
-    const wrap = document.createElement('div')
-    wrap.id = 'wave-arrows'
-    Object.assign(wrap.style, {
-      position: 'fixed', inset: '0', zIndex: '520',
-      pointerEvents: 'none', overflow: 'hidden',
-    })
-    // One per board edge; only the ones the next wave uses are shown. Built from
-    // CSS borders rather than a glyph so the shape is identical on every
-    // platform - a font triangle picks up whatever the system font has.
+    // A plain triangle pointing toward +Z, wound face-up so it isn't back-face
+    // culled by a camera looking down at the board.
+    const L = LENGTH_CELLS / 2, W = WIDTH_CELLS / 2
+    const geo = new BufferGeometry()
+    geo.setAttribute('position', new Float32BufferAttribute([
+      0, 0, L,
+      W, 0, -L,
+      -W, 0, -L,
+    ], 3))
+    geo.computeVertexNormals()
+    this.geo = geo
+
+    this.arrows = []
     for (let i = 0; i < 4; i++) {
-      const el = document.createElement('div')
-      Object.assign(el.style, {
-        position: 'absolute', width: '0', height: '0',
-        marginLeft: `${-W}px`, marginTop: `${-H / 2}px`,
-        borderLeft: `${W}px solid transparent`,
-        borderRight: `${W}px solid transparent`,
-        borderBottom: `${H}px solid ${ACCENTS[2]}`,
-        filter: 'drop-shadow(0 0 5px rgba(0,0,0,0.9))',
-        opacity: '0', transformOrigin: `${W}px ${H / 2}px`,
-      })
-      wrap.appendChild(el)
-      this.arrows.push(el)
+      const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
+      const mesh = glow(new Mesh(geo, mat))
+      mesh.visible = false
+      mesh.renderOrder = 4
+      demo.scene.add(mesh)
+      this.arrows.push({ mesh, mat })
     }
-    document.body.appendChild(wrap)
-    this.el = wrap
   }
 
   /**
-   * World point at the middle of a board edge - what the arrow points AT.
-   * Matches the spawn ring in Creeps: 0/1 are the two X sides, 2/3 the Z sides.
+   * How far out to put the arrows: past the furthest thing you have built, but
+   * never inside MIN_CELLS and never beyond the spawn ring.
    */
-  _edgePoint(edge, out) {
-    const r = this.creeps.reach
-    if (edge === 0) out.set(-r, 0, 0)
-    else if (edge === 1) out.set(r, 0, 0)
-    else if (edge === 2) out.set(0, 0, -r)
-    else out.set(0, 0, r)
-    return out
+  _radius() {
+    const city = this.city
+    const cu = city.cellUnit
+    let extent = 0
+    for (const tower of city.towers) {
+      if (!tower.visible) continue
+      const c = tower.box.getCenter(city.towerCenter)
+      extent = Math.max(extent, Math.abs(c.x + city.gridOffsetX), Math.abs(c.y + city.gridOffsetZ))
+    }
+    const want = extent + MARGIN_CELLS * cu
+    return Math.min(Math.max(want, MIN_CELLS * cu), this.creeps.reach - cu)
   }
 
   update() {
     const creeps = this.creeps
-    const cam = this.demo.camera
-    if (!creeps || !cam || !creeps.started) return this._hideAll()
+    if (!creeps || !creeps.started) return this._hideAll()
 
-    // One cycle covers both halves, so one wave index serves the countdown and
-    // the fight. A round is over when the last creep of it dies, not when the
-    // spawn window shuts - the same rule the music uses, so the arrows and the
-    // fight bed drop together.
     const clock = creeps.clock
-    const wave = clock.waveNumber
     const away = clock.timeToWave // <= 0 once this cycle's wave has landed
-    const lead = clock.leadFor(wave)
-    const inCombat = clock.isSpawning || creeps.creeps.length > 0
+    const lead = clock.leadFor(clock.waveNumber)
+    const spawning = clock.isSpawning
+    // Creeps still alive after their spawn window closes carry on into the NEXT
+    // cycle's build phase, by which point clock.waveNumber has already ticked
+    // over. Pointing at that wave's edges while the survivors of the last one are
+    // still walking in from somewhere else is exactly the mismatch you'd see:
+    // the arrows are honest about a wave that has not spawned yet.
+    const stragglers = !spawning && creeps.creeps.length > 0
 
-    let blink
-    if (inCombat) {
-      blink = 0.85 // steady: "they are over there", not "brace"
-    } else if (away <= lead && away >= 0) {
-      // Flash faster as it closes, so urgency reads without checking a clock.
+    let wave, alpha
+    if (away <= lead && away >= 0) {
+      // A countdown outranks stragglers - what is about to arrive matters more
+      // than where the last few came from.
+      wave = clock.waveNumber
       const urgency = 1 - away / lead
-      blink = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(away * (1.4 + urgency * 4) * Math.PI * 2))
+      alpha = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(away * (1.4 + urgency * 4) * Math.PI * 2))
+    } else if (spawning) {
+      wave = clock.waveNumber
+      alpha = 0.7 // steady: "they are over there", not "brace"
+    } else if (stragglers && creeps._lastWave >= 0) {
+      wave = creeps._lastWave // the wave the survivors actually came from
+      alpha = 0.7
     } else {
       return this._hideAll()
     }
 
-    const colour = clock.isBossWave(wave) ? ACCENTS[0] : ACCENTS[2]
+    const boss = clock.isBossWave(wave)
+    this._colour.set(boss ? 0xff2a4a : 0xcc5500)
     const edges = clock.waveEdges(wave)
-    const vw = window.innerWidth, vh = window.innerHeight
-    for (let i = 0; i < 4; i++) {
-      const el = this.arrows[i]
-      if (!edges.includes(i)) { el.style.opacity = '0'; continue }
+    const r = this._radius()
 
-      // Project the edge midpoint to get its on-screen direction from centre.
-      // Points behind the camera project mirrored, so flip those first.
-      this._v.copy(this._edgePoint(i, this._v)).project(cam)
-      const flip = this._v.z > 1 ? -1 : 1
-      let sx = this._v.x * flip, sy = this._v.y * flip
-      const len = Math.hypot(sx, sy) || 1
-      sx /= len; sy /= len
-
-      // Push that unit direction out to whichever viewport edge it hits first.
-      const t = Math.min(
-        (vw / 2 - MARGIN) / Math.max(Math.abs(sx), 1e-6),
-        (vh / 2 - MARGIN) / Math.max(Math.abs(sy), 1e-6)
-      )
-      el.style.left = `${vw / 2 + sx * t}px`
-      el.style.top = `${vh / 2 - sy * t}px` // screen y is inverted vs NDC
-      // The triangle is drawn pointing up, so 0deg already means "toward the top
-      // of the screen"; rotate it onto the same direction it was placed along.
-      el.style.transform = `rotate(${Math.atan2(sx, sy) * 180 / Math.PI}deg)`
-      el.style.borderBottomColor = colour
-      el.style.opacity = String(blink)
+    for (let edge = 0; edge < 4; edge++) {
+      const { mesh, mat } = this.arrows[edge]
+      if (!edges.includes(edge)) { mesh.visible = false; continue }
+      // Edges 0/1 are the two X sides, 2/3 the two Z sides. Place the arrow out
+      // along that axis and turn it to point back at the city - the direction
+      // the creeps will travel, not the direction they are from.
+      let x = 0, z = 0, yaw = 0
+      if (edge === 0) { x = -r; yaw = Math.PI / 2 } // from -X, pointing +X
+      else if (edge === 1) { x = r; yaw = -Math.PI / 2 }
+      else if (edge === 2) { z = -r; yaw = 0 } // from -Z, pointing +Z
+      else { z = r; yaw = Math.PI }
+      mesh.position.set(x, Y, z)
+      mesh.rotation.set(0, yaw, 0)
+      mesh.scale.setScalar(this.city.cellUnit)
+      mat.color.copy(this._colour)
+      mat.opacity = alpha
+      mesh.visible = true
     }
   }
 
   _hideAll() {
-    for (const el of this.arrows) el.style.opacity = '0'
+    for (const { mesh } of this.arrows) mesh.visible = false
   }
 }

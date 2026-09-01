@@ -6,6 +6,7 @@ import { Buffs } from '../buffs.js'
 import { ENERGY_COLOR, AMMO_COLOR } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
+import { costKey, priceOfTile } from './tileCost.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex, BARRACKS_COLOR } from '../blockTypes.js'
 
 const SLOTS = 4
@@ -13,14 +14,6 @@ const REFILL_TIME = 1.33 // seconds for a used/discarded palette slot to refill
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
 const REROLL_COST = 5 // mana to discard/reroll a palette tile
-// Flat base prices, NOT per cell - a wall tile costs the same whichever
-// tetromino it happens to be.
-const WALL_BASE_COST = 4
-const UTILITY_BASE_COST = 8 // generators and turrets
-const COST_GROWTH = 1.2 // gens/turrets: each placed tower of a bucket makes the next 20% pricier
-const WALL_COST_GROWTH = 1.01 // walls are one bucket drawn ~58% of the time (fills ~18x faster
-// than a gen bucket), so they need a tiny ~1% ramp to climb at a comparable pace
-const INCOME_PRICE_FACTOR = 0.02 // every +1 income/sec raises all prices by 2% (global surplus brake)
 
 /**
  * TilePalette - a bottom-center hand of random tiles drawn top-down. 66% are grey
@@ -109,28 +102,13 @@ export class TilePalette {
    *  same-colour same-type gens count together, regardless of footprint size);
    *  turrets bucket by type only. */
   _typeKey(tile) {
-    if (tile.wall) return 'wall'
-    if (isGenerator(tile)) return `gen${tile.typeTop}:${tile.colorIndex}`
-    return `turret${tile.typeTop}`
+    return costKey({ isWall: !!tile.wall, typeTop: tile.typeTop, colorIndex: tile.colorIndex })
   }
 
-  /** Energy cost to place this tile: a FLAT base per kind x COST_GROWTH^(cumulative
-   *  count of that bucket the player has placed). Everything escalates now, so
-   *  prices keep climbing even as gens expire and you replace them.
-   *
-   *  The base used to be priced per cell, which quietly made walls the dearest
-   *  thing in the tray: a tetromino is always 4 cells, so the cheapest wall came
-   *  out at 5 against a 1-cell generator's 3 - and walls are 66% of the bag and
-   *  the thing you place most. Per-kind flat pricing says what it means. */
+  /** Energy cost to place this tile - see systems/tileCost.js. Shared with the
+   *  click-to-add-a-floor path so the two can never disagree again. */
   _tileCost(tile) {
-    const base = tile.wall ? WALL_BASE_COST : UTILITY_BASE_COST
-    const count = this.city.placedCount(this._typeKey(tile))
-    const growth = tile.wall ? WALL_COST_GROWTH : COST_GROWTH
-    // Global income factor on top of per-bucket escalation: the stronger your
-    // economy, the pricier everything (fights the runaway energy surplus).
-    const income = this.city.energy ? this.city.energy.incomePerSec() : 0
-    const incomeFactor = 1 + income * INCOME_PRICE_FACTOR
-    return Math.round(base * Math.pow(growth, count) * incomeFactor)
+    return priceOfTile(this.city, tile)
   }
 
   /** Can the player currently afford to place this tile? */
@@ -164,6 +142,19 @@ export class TilePalette {
     })
     reroll.addEventListener('click', () => { if (!this.demo.buildLocked) this._rerollAll() })
     wrap.appendChild(reroll)
+
+    // Price tag under the button. The cost was only in the tooltip, which is no
+    // use on touch and no use at a glance - and rerolling is the one action here
+    // whose cost isn't already printed on the thing you're clicking.
+    const cost = document.createElement('div')
+    cost.textContent = `${REROLL_COST}`
+    Object.assign(cost.style, {
+      position: 'absolute', top: '26px', right: '-18px', width: '44px',
+      textAlign: 'center', pointerEvents: 'none',
+      font: '700 12px ui-monospace, monospace', color: '#fff',
+      textShadow: '0 1px 3px rgba(0,0,0,0.9)',
+    })
+    wrap.appendChild(cost)
     document.body.appendChild(wrap)
     this.el = wrap
     this._buildRotateButton()

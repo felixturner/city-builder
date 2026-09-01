@@ -4,6 +4,7 @@ import { isBarracks, BARRACKS_COLOR } from './blockTypes.js'
 import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
 import { Tower } from './Tower.js'
+import { ExtraGeometry } from './lib/ExtraGeometry.js'
 import { advanceHop, snapToCell, towerWorldCenter } from './lib/gridUnit.js'
 
 /**
@@ -24,7 +25,7 @@ import { advanceHop, snapToCell, towerWorldCenter } from './lib/gridUnit.js'
 // 0.467 puts a soldier at 0.47 of a cell across - 30% down from the 2/3 it was.
 const SIZE = 0.467
 const HOME_RADIUS = 5 // cells: how far a soldier drifts from its barracks
-const ENGAGE_RADIUS = 10 // cells: how far it will notice and chase a creep
+const ENGAGE_RADIUS = 16 // cells: how far it will notice and chase a creep
 const LEASH_RADIUS = 14 // cells: it breaks off a chase past this and heads home
 // (leash has to exceed the view or a soldier drops a target the moment it sees one)
 const STEP_WANDER = 0.40 // seconds per cell while loitering
@@ -53,7 +54,11 @@ export class Soldiers {
     this.creeps = creeps
     this.soldiers = []
 
-    this.geo = new BoxGeometry(2, 2, 2) // same unit cube as a creep, scaled down
+    // The little unit from game-extra.glb, or the old cube if it didn't load.
+    // Its texture is deliberately dropped - see ExtraGeometry - so a soldier
+    // still wears the city's flat wall grey and reads as one of yours.
+    this.geo = ExtraGeometry.unit || new BoxGeometry(2, 2, 2)
+    this.usingModel = !!ExtraGeometry.unit
     // The same grey the walls are built from, so a soldier reads as a piece of
     // your city that got up and walked - and, more usefully, so the only
     // coloured things moving on the board are creeps.
@@ -118,13 +123,27 @@ export class Soldiers {
     for (const t of this.city.towers) {
       if (!t.visible || !isBarracks(t) || t.numFloors < 1) continue
       if (this.city.upkeep.isDark(t)) continue // browned out
-      t.spawnTimer = (t.spawnTimer || 0) - dt
-      if (t.spawnTimer > 0) continue
-      t.spawnTimer = SPAWN_INTERVAL
       const cap = t.numFloors * (SQUAD_PER_FLOOR + Buffs.squadPerFloor)
       let alive = 0
       for (const s of this.soldiers) if (s.home === t) alive++
-      if (alive < cap) this.spawn(t)
+      if (alive >= cap) continue
+
+      // A floor you just paid for raises its soldier NOW. The garrison is only
+      // ever refilled on a timer, so adding a storey used to buy you nothing you
+      // could see for several seconds - the one build in the game with no
+      // immediate feedback. Growing the cap is treated as its own event; the
+      // timer stays for replacing soldiers that DIED, which should cost you
+      // something.
+      if (t.garrisonCap !== cap) {
+        t.garrisonCap = cap
+        this.spawn(t)
+        continue
+      }
+
+      t.spawnTimer = (t.spawnTimer || 0) - dt
+      if (t.spawnTimer > 0) continue
+      t.spawnTimer = SPAWN_INTERVAL
+      this.spawn(t)
     }
   }
 
@@ -143,7 +162,9 @@ export class Soldiers {
     // Step out from the foot of the barracks onto that free cell - an ordinary
     // walking hop, just starting inside the building.
     const mesh = new Mesh(this.geo, this.mat)
-    mesh.scale.setScalar(SIZE)
+    // The cube geometry is 2 units across and needs SIZE to shrink it; the
+    // model comes out of ExtraGeometry already at board scale.
+    if (!this.usingModel) mesh.scale.setScalar(SIZE)
     mesh.castShadow = true
     mesh.rotation.y = Math.PI / 4
     mesh.position.set(home.x, this.baseY, home.y)

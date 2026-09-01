@@ -571,7 +571,14 @@ export class Tower {
 
     const pushAmount = floorHeight * 0.25
     this.animateOffset(mesh, floorHeight, maxFloors, -pushAmount, 0.1, () => {
-      // Increment floor count
+      // The press-down takes 100ms, and a creep can knock this tower over inside
+      // it - or destroy it outright, in which case the tower goes back to the
+      // pool and is handed straight out again as some other tile. Writing the
+      // captured count into whatever now lives here gave it floors it never paid
+      // for, and left a tetromino's roof being scaled as if it were a 1x1 - the
+      // "wall suddenly enormous" bug. If anything moved underneath us, the click
+      // is simply void.
+      if (!this.visible || this.numFloors !== numFloors) return
       this.numFloors = numFloors + 1
 
       // Refresh ZOC radius / connectors immediately so they grow with the new

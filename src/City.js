@@ -5,6 +5,7 @@ import {
   Vector3,
   Object3D,
   BatchedMesh,
+  BoxGeometry,
   CylinderGeometry,
   DoubleSide,
   MeshPhysicalNodeMaterial,
@@ -13,6 +14,7 @@ import {
   PlaneGeometry,
   Mesh,
   MeshBasicNodeMaterial,
+  MeshStandardNodeMaterial,
   ArrowHelper,
   CircleGeometry,
   Group,
@@ -23,6 +25,7 @@ import gsap from 'gsap'
 import { uniform, cos, sin, vec3, normalWorld, positionViewDirection, cameraViewMatrix, roughness, pmremTexture, mrt, uv, fract, step, min, float, output, positionLocal, smoothstep } from 'three/tsl'
 import { Tower } from './Tower.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
+import { ExtraGeometry } from './lib/ExtraGeometry.js'
 import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
 import { Debris } from './lib/Debris.js'
 import { Sounds } from './lib/Sounds.js'
@@ -32,6 +35,7 @@ import { FlowField } from './systems/FlowField.js'
 import { Enclosure } from './systems/Enclosure.js'
 import { TileBag } from './systems/TileBag.js'
 import { Upkeep } from './systems/Upkeep.js'
+import { Rocks } from './systems/Rocks.js'
 import { RangeVisuals } from './systems/RangeVisuals.js'
 import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
@@ -39,14 +43,31 @@ import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS } from './palette.js'
 import { Buffs } from './buffs.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, KING_HEALTH } from './blockTypes.js'
-import { fxMaterial, glow } from './fx.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, KING_HEALTH, KING_WARN_FLOORS } from './blockTypes.js'
+import { fxMaterial, glow, NO_AO_MRT } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
 // A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
 // a 1-storey one, so building tall is an investment in uptime rather than just
 // output. It visibly shrinks as it burns down, and dies when the last floor goes.
 const MAX_GENS = 30 // hard cap on simultaneously placed generators
+// Lots across at the start, and the most that ever open up. The board is built
+// at CITY_SIZE_LOTS (13) so there is always a spawn margin outside the largest
+// play area (11).
+// Seconds the ground takes to ease outward when a ring opens. Demo paces the
+// boss-reward beat against this.
+const EXPAND_TIME = 1.2
+const START_VISIBLE_LOTS = 5
+const MAX_VISIBLE_LOTS = 11
+const LOTS_PER_BOSS = 2 // rings opened per boss round cleared
+
+// Accent index the king always wears: 1 is the yellow of the three city accents.
+const KING_COLOR = 1
+const KING_MARKER_SIZE = 1.04 // world units across, before the corner-up tilt
+const KING_MARKER_HOVER = 1.4 // rest height above the king's roof
+// Seconds for the king's damage flash to fade back to its own colour.
+const KING_HIT_FLASH = 0.45
+const WHITE = new Color(0xffffff)
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -70,7 +91,7 @@ export class City {
   //
   // Everything downstream derives from this - creep spawn ring, shadow bounds
   // and the zoom-out cap all read actualGridWidth rather than hardcoding it.
-  static CITY_SIZE_LOTS = 11
+  static CITY_SIZE_LOTS = 13
 
   constructor(scene, params) {
     this.scene = scene
@@ -129,7 +150,15 @@ export class City {
     this.enclosure = new Enclosure(this)
     this.tileBag = new TileBag()
     this.upkeep = new Upkeep(this)
+    this.rocks = new Rocks(this)
     this.introDone = false // set when startIntroAnimation's camera move lands
+    // The board is BUILT at CITY_SIZE_LOTS but only part of it is in play. The
+    // grid, the tower pool and the BatchedMesh are all sized once at init, so
+    // the board cannot actually change size at runtime - instead the full one
+    // exists from the start and an active region opens up a ring at a time as
+    // you clear boss rounds. The outermost ring of the 13 is never opened: it is
+    // margin, so creeps always have somewhere to spawn and walk in from.
+    this.visibleLots = START_VISIBLE_LOTS
 
     // The city grid: 2D array of lots (populated by initGrid).
     this.lots = []
@@ -158,8 +187,12 @@ export class City {
   async init() {
     await BlockGeometry.init()
     this.initGrid()
+    // Soldier and pickup shapes. After initGrid so cellUnit is known, and
+    // awaited here so Soldiers/LootBoxes find them ready when Demo builds them.
+    await ExtraGeometry.init(this.cellUnit)
     await this.initTowers()
     this.placeKing() // central king piece (must exist before the cluster seeds around it)
+    this.rocks.place(20) // scattered terrain, after the king so it can keep clear of it
     // no starting cluster — player builds from scratch around the king
     this.updateMatrices()
     this.renderer.recalculateVisibility()
@@ -230,6 +263,38 @@ export class City {
    * @param {number} gridZ - Z position in grid space (note: grid uses Y, world uses Z)
    * @returns {{x: number, z: number}} World position
    */
+  /** Half-extent of the playable area, in world units. */
+  get visibleHalf() { return (this.visibleLots * this.cellSize) / 2 }
+
+  /** Half-extent of the LARGEST play area the board will ever open up to. */
+  get maxPlayHalf() { return (MAX_VISIBLE_LOTS * this.cellSize) / 2 }
+
+  /** True if a cell is inside the part of the board currently in play. */
+  inPlayArea(gx, gy) {
+    const half = (this.visibleLots * this.lotCells) / 2
+    const cx = this.gridCellsX / 2, cy = this.gridCellsY / 2
+    return gx >= cx - half && gx < cx + half && gy >= cy - half && gy < cy + half
+  }
+
+  /**
+   * Open another ring of lots. Called when a boss round is cleared.
+   *
+   * Everything that draws or measures the board reads visibleLots, so this is
+   * just a number change plus a redraw - no grid rebuild, no re-pooling.
+   */
+  growPlayArea() {
+    if (this.visibleLots >= MAX_VISIBLE_LOTS) return false
+    this.visibleLots = Math.min(MAX_VISIBLE_LOTS, this.visibleLots + LOTS_PER_BOSS)
+    this.rebuildGrids()
+    this.lighting?.setBoardSize(this.visibleHalf, this.cellSize, EXPAND_TIME)
+    this.rocks.refresh() // boulders in the newly opened ring come into play
+    this.lootBoxes?.refresh() // ...and so do the crates sitting on it
+    this.creeps?.onBoardResized()
+    this.onBoardResized?.()
+    Sounds.play('board-expand', 1.0, 0, 0.7)
+    return true
+  }
+
   gridToWorld(gridX, gridZ) {
     return {
       x: gridX + this.gridOffsetX,
@@ -258,6 +323,8 @@ export class City {
     for (const [dx, dy] of cells) {
       const x = gx + dx, y = gy + dy
       if (x < 0 || y < 0 || x >= this.gridCellsX || y >= this.gridCellsY) return false
+      if (!this.inPlayArea(x, y)) return false // outside the open part of the board
+      if (this.rocks.blocks(x, y)) return false // a boulder is standing there
       if (this.occupied[y][x]) return false
       if (!this.cellLot(x, y).active) return false
       // A coloured tile can't enter a region already claimed by another colour.
@@ -381,9 +448,11 @@ export class City {
     // a "centre lot", which doesn't exist for an even lot count.
     const ccx = Math.floor(this.gridCellsX / 2)
     const ccy = Math.floor(this.gridCellsY / 2)
-    // One of the three light city accents, drawn per game, so the piece you're
-    // defending isn't the same colour every run.
-    const kingColor = MathUtils.randInt(0, this.accentColors.length - 1)
+    // Always yellow. It used to draw one of the three accents per run, which
+    // meant the thing you are defending shared a colour with ordinary towers -
+    // and a different one each game, so it never became recognisable. Fixed now,
+    // and the beam takes it too (see createKingBeam).
+    const kingColor = KING_COLOR
     // HOLE is an otherwise-unused top type, so the king gets a distinct roof
     // without being picked up by isGenerator/isTurret anywhere.
     const t = this.placeTileFree(ccx, ccy, [[0, 0]], {
@@ -395,6 +464,7 @@ export class City {
     this.king = t
     this.kingAlive = true
     this.createKingBeam()
+    this.createKingMarker()
   }
 
   /**
@@ -612,7 +682,7 @@ export class City {
       const dist = Math.hypot(center.x - gridCenterX, center.y - gridCenterY)
       tower.numFloors = 0
       return { tower, targetFloors, dist }
-    })
+    }).filter(Boolean)
     this.updateMatrices()
 
     // 2. Sort by distance (center first). Normalize the stagger against the
@@ -828,6 +898,10 @@ export class City {
    * Updates its matrices and re-evaluates power-line connectors.
    */
   onTowerChanged(tower) {
+    // Re-arm the king's low-health alarm once it has been built back out of
+    // range, so it fires again the next time the king is driven down there.
+    // Without this it would cry wolf exactly once per run.
+    if (tower?.king && tower.numFloors > KING_WARN_FLOORS) this._kingWarned = false
     this.updateTowerMatrices(tower)
     // The roof takes the shade of the floor it sits on, so the stack gradient
     // has to be redrawn whenever the height changes.
@@ -849,6 +923,25 @@ export class City {
     this.energy.refresh()
     this.rangeVisuals.refresh()
     this.lotGrowth.updateLotFills()
+  }
+
+  /**
+   * Recompute everything a power-up can have changed, and redraw it.
+   *
+   * A card mutates Buffs and nothing recalculates: a longer support reach does
+   * not relink trails until the next tower change, a wider shield keeps drawing
+   * its old ring because ring geometry is cached by floor count, and a bigger
+   * energy cap does not move the meter. Rather than have each card remember what
+   * it has to poke, this rebuilds the lot - it happens once, on a screen that is
+   * already paused.
+   */
+  refreshAfterBuff() {
+    this.rangeVisuals.invalidate() // cached ring geometry is now the wrong size
+    this.updateTowerVisuals() // relink trails, redraw rings, recompute income
+    this.enclosure.update()
+    this.energy.refreshManaStats() // energy/ammo caps
+    this.mana?.render()
+    for (const tower of this.towers) this.updateTowerMatrices(tower)
   }
 
   /** Turret range circles for the post-process coverage glow (called by Demo). */
@@ -889,6 +982,79 @@ export class City {
   }
 
   /** Set every instance color of a tower to a single color. */
+  /**
+   * Flash the king white when it takes a blow, fading back over KING_HIT_FLASH.
+   *
+   * The king is the one tower whose damage you have to notice from anywhere on
+   * the board, and it had no visual tell at all - only sound. It can't use the
+   * generators' pulse path, which tints `litColor` and the king has none, so it
+   * gets its own: lerp its base colour toward white by the envelope.
+   */
+  updateKingFlash(dt) {
+    const king = this.king
+    if (!king || !king.visible || !this._kingFlash) return
+    this._kingFlash = Math.max(0, this._kingFlash - dt / KING_HIT_FLASH)
+    if (!this._kingFlashColor) this._kingFlashColor = new Color()
+    this._kingFlashColor.copy(king.baseColor).lerp(WHITE, this._kingFlash * 0.85)
+    this.setTowerColor(king, this._kingFlashColor)
+    // Back to its own shading once the flash is spent, so the stack gradient
+    // returns rather than the whole tower being left one flat colour.
+    if (this._kingFlash === 0) this.renderer.shadeStack(king)
+  }
+
+  /** Kick the king's damage flash to full. Called from damageTower. */
+  flashKing() { this._kingFlash = 1 }
+
+  /**
+   * A cube standing on its corner, hovering and spinning over the king.
+   *
+   * The king is a one-cell tile in the middle of a board that fills the screen,
+   * and once walls go up around it there is nothing at eye level to say which
+   * tile it is - the beam reads from far away, but not up close, and the tile
+   * itself is the same yellow as barracks and shields. This is the near marker:
+   * the same corner-up spin the loot crates wore before they became stars, so
+   * the shape already reads as "the thing that matters here".
+   */
+  createKingMarker() {
+    if (!this.king) return
+    const geo = new BoxGeometry(KING_MARKER_SIZE, KING_MARKER_SIZE, KING_MARKER_SIZE)
+    // No emissive and NOT on the glow layer: it sits right over the king, and a
+    // bloomed marker smeared over the tile it is meant to point at.
+    const mat = new MeshStandardNodeMaterial({
+      color: this.accentColors[KING_COLOR].clone(),
+      roughness: 0.35,
+      metalness: 0.1,
+    })
+    mat.mrtNode = NO_AO_MRT()
+    const mesh = new Mesh(geo, mat)
+    // 45deg about Z stands it on an EDGE, then atan(1/sqrt2) about X tips that
+    // edge onto a POINT. YXZ order so both tilts land before the Y spin, which
+    // then turns it about world up instead of tumbling it.
+    mesh.rotation.order = 'YXZ'
+    mesh.rotation.set(-Math.atan(1 / Math.SQRT2), 0, Math.PI / 4)
+    mesh.castShadow = true
+    this.scene.add(mesh)
+    this.kingMarker = mesh
+  }
+
+  /** Hover, bob and spin the marker; parks it on the king's current roof. */
+  updateKingMarker(dt) {
+    const marker = this.kingMarker
+    if (!marker) return
+    const king = this.king
+    if (!king || !king.visible || !this.kingAlive) { marker.visible = false; return }
+    marker.visible = true
+    this._markerT = (this._markerT || 0) + dt
+    const c = king.box.getCenter(this.towerCenter)
+    marker.position.set(
+      c.x + this.gridOffsetX,
+      towerTopY(king, this.floorHeight) + KING_MARKER_HOVER
+        + Math.sin(this._markerT * 1.6) * 0.22,
+      c.y + this.gridOffsetZ
+    )
+    marker.rotation.y += 0.9 * dt
+  }
+
   setTowerColor(tower, color) {
     const mesh = this.towerMesh
     for (const idx of tower.floorInstances) mesh.setColorAt(idx, color)
@@ -901,6 +1067,8 @@ export class City {
     this.interaction.update(dt)
     this.energy.update(dt)
     this.upkeep.update(dt)
+    this.updateKingFlash(dt)
+    this.updateKingMarker(dt)
     this.flowView?.update()
     this.pathPreview?.update()
     this.updateKingBeam()
@@ -1040,7 +1208,7 @@ export class City {
    * stays 2px whether you're zoomed all the way in or out.
    */
   createBoardOutline() {
-    const hw = this.actualGridWidth / 2, hh = this.actualGridHeight / 2
+    const hw = this.visibleHalf, hh = this.visibleHalf
     const y = 0.02
     const geom = new LineGeometry()
     geom.setPositions([
@@ -1073,10 +1241,31 @@ export class City {
     if (this.boardOutline) this.boardOutline.material.resolution.set(w, h)
   }
 
+  /**
+   * Tear down the board's grid furniture and draw it again at the current size.
+   *
+   * Rebuilt rather than rescaled because the dot shader bakes the cell count
+   * into its UV multiply and GridHelper bakes its divisions into geometry -
+   * scaling either one would stretch the cells instead of adding more.
+   */
+  rebuildGrids() {
+    for (const key of ['boardOutline', 'cellGrid', 'dotMesh', 'lotGrid']) {
+      const obj = this[key]
+      if (!obj) continue
+      this.scene.remove(obj)
+      obj.geometry?.dispose()
+      obj.material?.dispose()
+      this[key] = null
+    }
+    this.createGrids()
+  }
+
   createGrids() {
+    this.lighting?.setBoardSize(this.visibleHalf, this.cellSize)
     this.createBoardOutline()
+    const span = this.visibleHalf * 2
     // Fine cell grid - centered at origin (same as lot grid). One line per buildable cell.
-    const cellGrid = new GridHelper(this.actualGridWidth, this.actualGridWidth / this.cellUnit, 0x888888, 0x888888)
+    const cellGrid = new GridHelper(span, span / this.cellUnit, 0x888888, 0x888888)
     cellGrid.material.transparent = true
     cellGrid.material.opacity = 0.5
     cellGrid.position.set(0, 0.01, 0)
@@ -1084,7 +1273,7 @@ export class City {
     this.cellGrid = cellGrid
 
     // Grid intersection dots using procedural plane shader
-    const dotPlaneGeometry = new PlaneGeometry(this.actualGridWidth, this.actualGridHeight)
+    const dotPlaneGeometry = new PlaneGeometry(span, span)
     dotPlaneGeometry.rotateX(-Math.PI / 2)
     const dotMaterial = new MeshBasicNodeMaterial()
     dotMaterial.transparent = true
@@ -1092,7 +1281,7 @@ export class City {
     dotMaterial.side = 2 // DoubleSide
 
     // Procedural dots at grid intersections (one per buildable cell, matching cell grid)
-    const cellCoord = uv().mul(this.actualGridWidth / this.cellUnit)
+    const cellCoord = uv().mul(span / this.cellUnit)
     const fractCoord = fract(cellCoord)
     const toGridX = min(fractCoord.x, float(1).sub(fractCoord.x))
     const toGridY = min(fractCoord.y, float(1).sub(fractCoord.y))
@@ -1113,7 +1302,7 @@ export class City {
     this.scene.add(this.dotMesh)
 
     // Coarse lot grid - centered at origin, lines at lot spacing intervals
-    const lotGrid = new GridHelper(this.actualGridWidth, this.numLotsX, 0x888888, 0x888888)
+    const lotGrid = new GridHelper(span, this.visibleLots, 0x888888, 0x888888)
     lotGrid.position.set(0, 0.02, 0)
     this.scene.add(lotGrid)
     this.lotGrid = lotGrid

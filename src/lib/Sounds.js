@@ -164,12 +164,15 @@ const CORE = new Set([
 const SIMPLE = [
   'pop', 'tick', 'roll', 'good', 'intro', 'error', 'pluck',
   'energy', 'power-down', 'spawn', 'step1', 'step2', 'break2', 'hit', 'dink',
-  'mortar-shoot', 'mortar-hit', 'warning1', 'success', 'shield-hit',
+  'mortar-shoot', 'mortar-hit', 'warning1', 'success', 'shield-hit', 'king-warning', 'pick-up',
+  'board-expand',
   // long-form event sounds
   'horn-boss', 'countdown', 'tick-fast', 'gen-online', 'sting',
-  'creep-warn', 'flyer-warn', 'snap', 'game-over', 'king-hit', 'level-complete', 'card-reveal',
-  // short alert blips, addressed individually so each threat type is learnable
-  'alert1', 'alert2', 'alert3',
+  'creep-alert', 'creep-alert-2', 'flyer-warn', 'snap', 'game-over', 'king-hit', 'king-danger', 'level-complete', 'card-reveal',
+  // short blips, addressed individually so each meaning is learnable
+  // energy-down.mp3 is deliberately NOT loaded: 'energy-down' is a voice above,
+  // and _resolve checks VOICES first, so the file could never be reached.
+  'alert2', 'energy-down-2',
 ]
 
 /**
@@ -206,18 +209,21 @@ const COOLDOWN = {
   'gen-expire': 0.25,
   'gen-online': 0.4,
   sting: 0.5,
-  // Threat blips: several bombers/lasers can spawn in the same burst, and one
-  // blip per creep would machine-gun. One per second is enough of a heads-up.
-  alert1: 1.2,
+  // Threat blips: several can fire in the same burst, and one per event would
+  // machine-gun. One per second is enough of a heads-up.
+  // The king-in-danger siren. It re-fires on its own 1.5s timer, so this only
+  // guards against a second source ever sharing it.
   alert2: 1.2,
-  alert3: 1.2,
+  'energy-down-2': 1.2,
+  // A swarm crosses the boundary within a second or two of itself; one blip per
+  // creep would machine-gun.
+  'creep-alert': 0.9,
+  'creep-alert-2': 0.9,
   // Generators tick income constantly, so the energy-gain blip has to be
   // throttled hard or it becomes a drone. Spending is player-driven and
   // discrete, so it stays ungated.
   'energy-up': 0.5,
   'energy-full': 2.0,
-  // Creep arrivals cluster at the start of a wave; one per creep is a swarm.
-  'creep-warn': 0.1,
   snap: 0.04, // fast drags cross cells quickly; just enough to stop a buzz
 
   spawn: 0.25, // now only big/giant, which are rare - it can breathe
@@ -269,7 +275,7 @@ class SoundsManager {
   loadDeferred(batch = 4, gapMs = 300) {
     const queue = Object.keys(this.sounds).filter(n => !CORE.has(n) && !this._unavailable.has(n))
     const priority = ['build-bed', 'tick-fast', 'horn1', 'horn2', 'horn3', 'riser1',
-      'creep-warn', 'spawn', 'step1', 'step2', 'shoot1', 'shoot2', 'shoot3']
+      'creep-alert', 'spawn', 'step1', 'step2', 'shoot1', 'shoot2', 'shoot3']
     queue.sort((a, b) => {
       const ia = priority.indexOf(a), ib = priority.indexOf(b)
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)

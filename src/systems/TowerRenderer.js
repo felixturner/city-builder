@@ -4,7 +4,7 @@ import { Tower } from '../Tower.js'
 import { ACCENT_COLORS } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, KING_HEALTH, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, KING_HEALTH, KING_WARN_FLOORS, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
 
 // Fallback only - the king normally wears one of the three accents.
 const KING_COLOR = ACCENT_COLORS[0]
@@ -242,10 +242,19 @@ export class TowerRenderer {
       city.onTowerChanged(tower)
       if (tower.king) {
         // Every block the king loses is its own hit, pitched up as its health
-        // goes so the last one sounds frantic. This replaces both the generic
-        // break thunk and the old last-two-floors alarm - one event, one sound.
+        // goes so the last one sounds frantic. This replaces the generic break
+        // thunk, which is suppressed for the king above.
         const hurt = 1 - tower.numFloors / KING_HEALTH // 0 fresh .. 1 dead
-        Sounds.play('king-hit', 0.92 + hurt * 0.5, 0.03, 0.6 + hurt * 0.3)
+        Sounds.play('king-danger', 0.92 + hurt * 0.5, 0.03, 0.6 + hurt * 0.3)
+        // Crossing INTO the last two floors gets its own alarm, over the hit.
+        // Fired on the crossing rather than while below the line, so it lands
+        // once as a state change instead of nagging every subsequent hit - and
+        // not at 0, where the game-over sting is the sound that matters.
+        if (tower.numFloors <= KING_WARN_FLOORS && tower.numFloors > 0
+          && !city._kingWarned) {
+          city._kingWarned = true
+          Sounds.play('king-warning', 1.0, 0, 0.45)
+        }
         if (tower.numFloors === 0) city.triggerGameOver()
       }
       return tower.numFloors

@@ -18,18 +18,20 @@ const FLOOR_PULSE_DECAY = 0.22
 // Mana per (enclosed cell x generator floor) for the pink area generators.
 // Cut 20% from 0.2: their output scales with enclosed AREA, so it climbs much
 // faster than the blue path generators as a city grows.
-// Cut 30% (0.08 -> 0.056). A sealed ring plus a couple of support towers was
-// enough to stop energy ever being the thing you were short of, and an economy
-// you can't run dry stops being a decision.
+// 0.08 -> 0.056 (-30%, so a sealed ring plus a couple of support towers stopped
+// being enough to make energy a non-issue) -> 0.07 (+25%) -> 0.056 (-20%) once
+// PROD_FACTOR had been raised twice and area generators were out-earning again.
 const ENCLOSURE_RATE = 0.056
 const PATH_RATE = 0.2 // mana per (footprint cell x trail length)
 // Volume of the per-arrival income blip. It fires several times a second at a
 // developed economy, so it sits well under the one-off cues.
-const INCOME_BLIP_VOLUME = 0.67
-// Global generator-production scale. Raised from 0.2 (+30%) when grey walls
-// stopped generating: generators are now the only thing producing energy besides
-// the king's trickle, so they carry the income walls used to supply.
-const PROD_FACTOR = 0.26
+const INCOME_BLIP_VOLUME = 0.54
+// Global generator-production scale, multiplying BOTH generator types. Raised
+// from 0.2 (+30%) when grey walls stopped generating - generators became the only
+// thing producing energy besides the king's trickle - then 0.26 -> 0.325 -> 0.39
+// (+25%, then +20%) to pay for levelling up towers, which went from 2 a floor to
+// the full tile price once the two were unified.
+const PROD_FACTOR = 0.39
 // Slow bonus the king trickles every GREY_INTERVAL, separate from what it earns
 // by sealing an enclosure. Smaller than the old flat income now that the king
 // has a real earning mechanic - it's the floor you can recover from, not a wage.

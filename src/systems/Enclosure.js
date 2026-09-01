@@ -110,6 +110,12 @@ export class Enclosure {
       this._markCells(t, wall, W, H)
     }
 
+    // Boulders seal like walls do, so a ring can be closed off using terrain.
+    const rocks = this.city.rocks
+    if (rocks?.blocked) {
+      for (let i = 0; i < wall.length; i++) if (rocks.blocked[i]) wall[i] = 1
+    }
+
     // 2. Flood-fill "outside" from the boundary through non-wall cells.
     const outside = new Uint8Array(W * H)
     const stack = []

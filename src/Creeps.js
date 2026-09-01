@@ -1,6 +1,8 @@
 import {
   Mesh,
   BoxGeometry,
+  MathUtils,
+  Raycaster,
   SphereGeometry,
   MeshStandardNodeMaterial,
   MeshBasicNodeMaterial,
@@ -13,15 +15,6 @@ import { AMMO_COLOR } from './Mana.js'
 import { isShield, shieldCharges, shieldRadiusCells } from './blockTypes.js'
 import { SHIELD_LINE } from './palette.js'
 
-// Distance from the city centre at which creeps appear, in world units.
-//
-// This used to be derived (actualGridWidth / 2 + 14), which meant a bigger board
-// pushed spawns further out and quietly made every wave slower to arrive. Fixed
-// now: 59 is what that formula produced on the 9-lot board. On an 11-lot board
-// (half-extent 55) that leaves only 4 units - two cells - of run-up outside the
-// buildable area, so creeps arrive at an edge wall almost immediately.
-const SPAWN_RING = 59
-
 // Flyers read as smaller than ground creeps - they are further from the camera
 // and not a thing you can wall against, so they should not loom.
 const BOMBER_SCALE = 0.7
@@ -32,6 +25,29 @@ const STEP_DZ = [0, 0, 1, -1]
 // How often a creep takes a step that doesn't get it closer. Small on purpose:
 // it should read as a wander, not as broken pathfinding.
 const MISSTEP_CHANCE = 0.12
+
+// Swarming. A wave used to arrive as an even trickle from random points down a
+// whole side, which read as weather rather than as an attack - nothing to brace
+// for and nothing to aim at. Creeps now arrive in clumps: several at once, from
+// one spot, then a lull.
+const SWARM_SIZE = [4, 9] // creeps per clump
+const SWARM_SPREAD_CELLS = 2.5 // cells either side of the clump's entry point
+const SWARM_GAP = 0.11 // seconds between creeps inside one clump
+const SWARM_SLOT_SPAN = 0.85 // clump slots stop this far through the attack window
+
+// Creeps claim the cell they are walking into and won't enter a claimed one, so
+// a swarm queues rather than stacking. After this many blocked attempts a creep
+// barges through anyway - see planStep.
+const MAX_WAIT_STEPS = 20
+
+// Shots a shooter or laser creep gets before it burns out. A magazine, so one
+// that nothing can reach can't stall the round forever.
+const MAX_CREEP_SHOTS = 12
+
+// The horn each clump after the first announces itself with. Pitched above the
+// wave horn (1.0) and well under its volume (0.55).
+const SWARM_HORN_RATE = 1.35
+const SWARM_HORN_VOLUME = 0.3
 
 // Damage a shield perimeter does to a creep crossing it (halved when the shield
 // has no support tower reaching it - see updateShieldBarriers).
@@ -138,24 +154,20 @@ export class Creeps {
 
     // The wave schedule lives in WaveClock; this file owns what SPAWNS, not when.
     this.clock = new WaveClock()
-    this.spawnTimer = 0
-    // The whole difficulty ramp lives in these numbers now that spawnBurst is
-    // gone. minInterval is no longer a ceiling on difficulty - it's the point
-    // where the curve changes shape (see spawnInterval).
-    // Roughly 40% fewer creeps than before (1.6 / 0.22). A wave used to arrive as
-    // a wall of diamonds you couldn't read - you knew you were losing, not what
-    // was happening. Each one hits correspondingly harder, so the pressure is
-    // unchanged; what changed is that you can now follow an individual creep.
-    this.startInterval = 2.7 // seconds between spawns right after grace
-    this.minInterval = 0.37 // cadence at the end of the opening ramp
-    // The ramp is measured in WAVES, not seconds. It used to be 420s/420s,
-    // which was exactly 7 wave cycles at the old 60s period - so lengthening
-    // the build phase silently made every wave land further along the curve.
-    // Levels are what the player sees and what the stat ramp already used;
-    // pacing now reads off the same clock.
-    this.rampWaves = 7 // waves to go from startInterval -> minInterval
-    this.halvingWaves = 7 // after the ramp, the gap halves every this many waves
-    this.absoluteMinInterval = 0.05 // engine backstop, not a design limit
+
+    // The wave currently being poured out: a plan drawn up when the attack phase
+    // opens (see _planWave), and the clumps from it that are mid-release.
+    this._plan = null
+    this._planIndex = 0
+    this._released = 0
+    this._bombers = null
+    this._bomberIndex = 0
+    this._active = []
+
+    // Creeps in a wave, as a straight line: creepsBase at level 1, plus
+    // creepsPerWave for every level after. Uncapped.
+    this.creepsBase = 8
+    this.creepsPerWave = 7
 
     // Creeps left alive past the spawn window eat into the next build phase -
     // the following wave still lands on schedule - so a slow clear costs you
@@ -207,39 +219,35 @@ export class Creeps {
 
     this.stepDuration = 0.30 // seconds to move one cell
     this.hopHeight = 0.6
-    // Spawn ring, always outside the board. It is a SQUARE ring (creeps appear
-    // at x = +/-reach or z = +/-reach), so it only has to clear the board's
-    // half-extent, not its corner distance.
+    // Spawn ring: one lot outside whatever part of the board is currently open.
+    // It is a SQUARE ring (creeps appear at x = +/-reach or z = +/-reach), so it
+    // only has to clear the half-extent, not the corner distance.
     //
-    // Held at the absolute value it had on the old 9-lot board rather than
-    // tracking the board size, so growing the city does not also lengthen every
-    // creep's walk in. The margin outside the buildable area is now thin - see
-    // SPAWN_RING - which is the deliberate trade.
-    this.reach = SPAWN_RING
-    // Half-extent of the buildable grid. Creeps spawn at `reach`, i.e. well
-    // outside this, and only count as having arrived once they cross it.
-    this.fieldHalf = city.actualGridWidth / 2
+    // It TRACKS the play area rather than sitting at a fixed radius: the board
+    // opens up a ring at a time as boss rounds are cleared, and creeps should
+    // always walk in from just beyond the edge you can see - not from where the
+    // edge used to be, and not from out in the dark.
+    this.onBoardResized()
 
-    this.knockInterval = 0.45 // seconds between knocks
+    this.knockInterval = 0.45 // seconds between knocks, for a normal creep at level 1
     this.knocksPerFloor = 3
     // Up from 4, to pay back the thinner spawn rate: fewer creeps, each of them
     // something you have to commit fire to rather than something that pops.
     this.hitsToKill = 7 // turret sphere hits needed to destroy a creep
 
     /**
-     * Difficulty ramp. Waves already arrive thicker over time (spawnInterval
-     * shortens and the nastier types unlock), but each individual creep was
-     * identical at wave 30 to wave 1 - so a city that could hold once could
-     * hold forever, and the only pressure was volume.
+     * Per-creep difficulty ramp, straight-line and uncapped: a creep is
+     * (1 + level x rate) times its base. Waves already arrive thicker over time
+     * (see creepsThisWave), but each individual creep used to be identical at
+     * wave 30 to wave 1 - so a city that could hold once could hold forever, and
+     * the only pressure was volume.
      *
-     * Both curves are capped: uncapped, a giant at 10x base HP times an
-     * unbounded multiplier stops being a fight and becomes a wall.
+     * Additive, not compounding, so the curve stays readable: level 10 is 2.4x,
+     * not 4.4x. These used to stop at 3x, which combined with a spawn-rate floor
+     * meant the game reached a steady state you could hold forever.
      */
-    // Uncapped on purpose: creeps keep getting tougher until they kill you.
-    // These used to stop at 3x, which combined with a spawn-rate floor meant
-    // the game reached a steady state you could hold forever.
-    this.hpPerWave = 0.16 // +16% health per wave, no ceiling
-    this.attackPerWave = 0.14 // +14% floors knocked per hit, no ceiling
+    this.hpPerWave = 0.16 // +16% of base health per level
+    this.attackPerWave = 0.14 // +14% of base swing rate per level
 
     // Ammo boxes: a dying creep leaves one 20% of the time.
     //
@@ -274,6 +282,16 @@ export class Creeps {
     })
   }
 
+  /**
+   * Re-derive the spawn ring after the play area grows. Called by City.
+   * One lot of run-up outside the visible edge - enough to see them coming and
+   * for the arrows to point somewhere, without a long walk in.
+   */
+  onBoardResized() {
+    this.fieldHalf = this.city.visibleHalf
+    this.reach = this.fieldHalf + this.city.cellSize
+  }
+
   // --- wave schedule: all of it lives in this.clock -------------------------
   get elapsed() { return this.clock.elapsed }
   set elapsed(v) { this.clock.elapsed = v }
@@ -296,32 +314,24 @@ export class Creeps {
   }
 
   /**
-   * Current seconds-between-spawns. LINEAR from startInterval to minInterval
-   * across rampWaves, and the only thing that grows wave size.
+   * How many creeps this wave sends - a straight line in the LEVEL number.
    *
-   * It used to ease in quadratically, which spends a quarter of the effect in
-   * the first half of the ramp - so the opening five waves each needed well
-   * under one turret to clear, and everything arrived at once near the end.
-   * Multiplied by a spawnBurst that STEPPED (x2 at 5min, x3 at 10min), that
-   * produced a flat stretch and then a cliff: wave 9 to wave 10 tripled.
-   * One continuous dial instead of two, one of them a step function.
+   * This is the number the player actually experiences, so this is the number
+   * that gets ramped. It used to be derived the other way round: the gap between
+   * spawns was ramped linearly and the count fell out as waveActive/gap. But a
+   * count is the reciprocal of a gap, so a straight line in one is a hyperbola
+   * in the other - every level subtracted the same 0.33s, which was a 14% cut
+   * early on and a 45% cut by level 7. Levels 1-6 added 18 creeps between them;
+   * level 7 alone added 22, and it landed like a wall.
+   *
+   * Boss levels get their bump from spawnBossWave, which drops its giants and
+   * escorts ON TOP of this - so the every-fourth-level spike is a separate,
+   * deliberate thing rather than an accident of the curve.
    */
-  get spawnInterval() {
-    const waves = this.waveProgress
-    // Opening ramp: linear down to minInterval. Unchanged - this stretch is
-    // tuned and the shape of the first seven waves depends on it.
-    if (waves <= this.rampWaves) {
-      return this.startInterval
-        + (this.minInterval - this.startInterval) * (waves / this.rampWaves)
-    }
-    // Past it, keep going: the gap halves every halvingWaves, so creep counts
-    // rise without bound. minInterval used to be a hard floor, which meant wave
-    // counts flatlined at 91 from wave 7 on and the only thing still growing
-    // was per-creep health. absoluteMinInterval is a backstop so the spawner
-    // can't melt the frame rate, not a difficulty ceiling.
-    const beyond = (waves - this.rampWaves) / this.halvingWaves
-    return Math.max(this.absoluteMinInterval, this.minInterval * Math.pow(0.5, beyond))
+  get creepsThisWave() {
+    return this.creepsBase + this.creepsPerWave * this.waveNumber
   }
+
 
   snap(v) {
     return Math.round(v / this.cell) * this.cell
@@ -343,16 +353,14 @@ export class Creeps {
     // Laser creeps stop at range and fire a turret-style beam at towers.
     const laser = !giant && !forceShooter && !big && !shooter && w >= this.laserUnlockWave && Math.random() < this.laserChance
     // Bombers fly across at altitude and drop bombs.
-    const bomber = !giant && !forceShooter && !big && !shooter && !laser && w >= this.bomberUnlockWave && Math.random() < this.bomberChance
+
     // Heads-up blips for the two threats you can't just out-wall: a bright high
     // one for the airborne bomber, a sharper mid one for the laser. Fixed per
     // type (not randomised) so they stay learnable, and quiet enough to sit
     // under the wave horn. Sounds.js rate-limits them, so a burst of bombers
     // gives one warning rather than five.
-    if (bomber) { this.spawnBomber(); return }
     const ramp = this.rampMul()
-    // Later bosses field tougher giants, not just more of them.
-    const bossMul = opts.bossTier ? 1 + 0.4 * (opts.bossTier - 1) : 1
+
     const scale = giant ? 3 : (big ? 1.4 : 0.7)
     const baseY = giant ? 3 : (big ? 1.5 : 0.8)
 
@@ -369,8 +377,13 @@ export class Creeps {
     mesh.rotation.y = Math.PI / 4 // diamond footprint, off-grid
 
     // Pick a point along one of the four map edges (forced for boss groups).
+    // opts.offset pins the along-edge coordinate so a swarm arrives as a clump
+    // instead of being scattered down the whole side; without it, anywhere.
     const r = this.reach
-    const t = this.snap((Math.random() * 2 - 1) * r)
+    const t = opts.offset === undefined
+      ? this.snap((Math.random() * 2 - 1) * r)
+      : this.snap(MathUtils.clamp(
+        opts.offset + MathUtils.randFloatSpread(SWARM_SPREAD_CELLS * this.cell), -r, r))
     const edge = opts.edge ?? this.currentWaveEdge()
     let x, z
     if (edge === 0) { x = -r; z = t }
@@ -408,24 +421,37 @@ export class Creeps {
       laser,
       giant,
       // Arrival sound, held until the creep crosses onto the playfield (see
-      // updateEntries). Rank-and-file creeps get the short creep-warn tick;
-      // spawn.mp3 is loud and full-bodied, so it's reserved for the rare big
-      // bodies where an announcement is actually warranted.
+      // updateEntries) - not fired at spawn, which happens off the board. Three
+      // tiers, so what arrived is audible without looking: rank-and-file get
+      // creep-alert, bigs the heavier creep-alert-2, and a giant the horn.
       entered: false,
       baseScale: scale, // spawn size; giants shrink from this as they take hits
       baseYSpawn: baseY, // resting height at spawn size, scaled down alongside it
-      entrySound: giant || big ? 'alert2' : 'creep-warn',
-      entryRate: giant ? 0.4 : (big ? 0.7 : 1.0),
-      // spawn.mp3 (big + giant) down 33% - fat arrivals were the loudest thing
-      // on the board. Normal creeps use creep-warn and are left alone.
-      entryVol: giant ? 0.67 : (big ? 0.31 : 0.22),
+      // A giant crossing onto the board gets the viking call - it is the one
+      // arrival worth stopping to look at, and a short blip undersold it. Bigs
+      // keep the blip, normal creeps the quiet warn.
+      entrySound: giant ? 'horn3' : (big ? 'creep-alert-2' : 'creep-alert'),
+      entryRate: giant ? 0.85 : (big ? 0.7 : 1.0),
+      entryVol: giant ? 0.8 : (big ? 0.31 : 0.22),
       shootTimer: 0,
+      shotsFired: 0,
       baseY,
       maxHits: Math.max(1, Math.round(
-        (giant ? this.hitsToKill * 10 : (big ? this.hitsToKill * 2 : this.hitsToKill))
-        * Buffs.creepHp * ramp.hp * bossMul
+        (giant ? this.hitsToKill * 8 : (big ? this.hitsToKill * 2 : this.hitsToKill))
+        * Buffs.creepHp * ramp.hp
       )),
-      knockFloors: Math.max(1, Math.round((giant ? 4 : (big ? 2 : 1)) * ramp.atk)),
+      // Everything knocks one floor. Size and level buy a FASTER swing rather
+      // than a bigger one: floors-per-hit multiplied out badly, because it
+      // multiplied against the attack ramp too - by level 12 a big took a whole
+      // five-storey tower off in a single blow, which is a deletion, not a
+      // fight. Speed scales the same pressure without the discontinuity.
+      //
+      // Giants swing at the same 2x as bigs, not 4x. At 4x their rate compounded
+      // with the level ramp into a level-16 giant stripping a five-storey tower
+      // in half a second - two independent 4x advantages multiplying. Their 8x
+      // health is what makes them a boss; the swing does not need to as well.
+      attackRate: giant || big ? 2 : 1, // swings per second, relative to normal
+      atkSpeed: ramp.atk, // the level ramp, also a rate
       stepMul: giant ? 1.8 : 1, // giants lumber slower (was 2.2 - turrets got too long on them)
       kingSeeker,
     })
@@ -441,9 +467,25 @@ export class Creeps {
   spawnBossWave(waveIdx) {
     const o = this.bossOrdinal(waveIdx)
     const edge = this.waveEdges(waveIdx)[0] // all come in from the same side
-    const escort = 3 + 4 * o
-    for (let i = 0; i < o; i++) this.spawn({ giant: true, edge, bossTier: o })
-    for (let i = 0; i < escort; i++) this.spawn({ forceShooter: true, edge })
+    // Just the giants. A boss round is an ordinary round with bosses ADDED - it
+    // used to also throw in 3 + 4n shooter escorts, which made boss levels a
+    // spike in ordinary creeps as well and muddied what the round actually was.
+    // The normal wave still runs alongside this on its usual schedule.
+    for (let i = 0; i < o; i++) this.spawn({ giant: true, edge })
+  }
+
+  /**
+   * Where along an edge a clump enters.
+   *
+   * Two random numbers rather than one, which gives a triangular distribution
+   * peaked at the middle of the side. Flat, clumps landed out by the corners as
+   * often as in front of you - so the arrow pointed at a side while the creeps
+   * came in around its far end. Measured against the visible half, not the spawn
+   * ring, so nothing enters beyond the board's own corners.
+   */
+  edgeOffset() {
+    const spread = (Math.random() + Math.random() - 1) // -1..1, peaked at 0
+    return this.snap(spread * this.fieldHalf)
   }
 
   /** An edge for a creep spawning in the wave now in progress. */
@@ -486,8 +528,10 @@ export class Creeps {
       Sounds.play(c.entrySound, c.entryRate, 0.12, c.entryVol)
       // Flyers get their own call over the top - they cross the whole map at
       // altitude, so this is the only warning you get that one is up there.
+      // Laser creeps used to double up with alert2 here; that sound is the
+      // king-in-danger siren and nothing else now, so it can't be diluted by a
+      // routine arrival.
       if (c.bomber) Sounds.play('flyer-warn', 1.0, 0.03, 0.22)
-      else if (c.laser) Sounds.play('alert2', 1.0, 0.04, 0.26)
     }
   }
 
@@ -547,17 +591,24 @@ export class Creeps {
     mesh.castShadow = true
     mesh.scale.setScalar(BOMBER_SCALE)
 
-    // Fly along one axis, crossing the map. The cross-axis offset stays within
-    // the center lot (world origin) so the path always passes over the middle.
-    const off = this.snap((Math.random() * 2 - 1) * this.city.lotSize * 0.4)
-    const alongX = Math.random() < 0.5
-    const dir = Math.random() < 0.5 ? 1 : -1
-    let x, z, vx = 0, vz = 0
-    if (alongX) { x = -dir * r; z = off; vx = dir * this.flySpeed }
-    else { x = off; z = -dir * r; vz = dir * this.flySpeed }
+    // Enter anywhere on the ring and cross to the far side, aimed just off the
+    // centre. They used to fly one of four axis-aligned lanes, so every bomber
+    // run looked like the last and you could learn the four lines; a free
+    // heading means the diagonal crossings are the common case.
+    const angle = Math.random() * Math.PI * 2
+    const x = Math.cos(angle) * r
+    const z = Math.sin(angle) * r
+    const aim = this.city.lotSize * 0.4
+    const dx = (Math.random() * 2 - 1) * aim - x
+    const dz = (Math.random() * 2 - 1) * aim - z
+    const len = Math.hypot(dx, dz) || 1
+    const vx = (dx / len) * this.flySpeed
+    const vz = (dz / len) * this.flySpeed
 
     mesh.position.set(x, this.bomberY, z)
-    mesh.rotation.set(Math.PI / 4, alongX ? 0 : Math.PI / 2, Math.PI / 4)
+    // Yaw onto the heading; the 45deg tilts are what give the body its diamond
+    // silhouette from above.
+    mesh.rotation.set(Math.PI / 4, Math.atan2(dx, dz), Math.PI / 4)
     this.scene.add(mesh)
 
     this.creeps.push({
@@ -573,7 +624,7 @@ export class Creeps {
       shooter: false,
       bomber: true,
       entered: false,
-      entrySound: 'creep-warn',
+      entrySound: 'creep-alert',
       entryRate: 0.8,
       entryVol: 0.3,
       vx, vz,
@@ -582,7 +633,8 @@ export class Creeps {
       shootTimer: 0,
       baseY: this.bomberY,
       maxHits: Math.max(1, Math.round(this.hitsToKill * Buffs.creepHp * this.rampMul().hp)),
-      knockFloors: 1,
+      attackRate: 1,
+      atkSpeed: 1,
     })
   }
 
@@ -641,6 +693,17 @@ export class Creeps {
    * the wall from outside it instead of standing a metre inside the block it's
    * demolishing. Giants shrink as they're damaged, so a hurt one closes in.
    */
+  /**
+   * Seconds between this creep's blows.
+   *
+   * Both scalars are RATES - bigger means faster - so they divide. Naming them
+   * as multipliers on the interval instead reads backwards, which is how a 4x
+   * giant got tuned in without anyone noticing what it multiplied out to.
+   */
+  knockTime(c) {
+    return this.knockInterval / ((c.attackRate || 1) * (c.atkSpeed || 1))
+  }
+
   attackStandoff(c) {
     return Math.max(this.cell * 0.5, Creeps.radiusOf(c) + this.cell * 0.2)
   }
@@ -670,12 +733,16 @@ export class Creeps {
 
   /** Pick the tallest standing tower, lightly biased toward nearby ones. */
   acquireTarget(c) {
+    // Shooters and lasers stand off and fire, so they need a clear line; melee
+    // creeps attack whatever they walk into and don't.
+    const needLOS = c.shooter || c.laser
     let best = null
     let bestScore = -Infinity
     const tw = new Vector2()
     for (const tower of this.city.towers) {
       if (!tower.visible) continue
       this.towerWorld(tower, tw)
+      if (needLOS && !this.hasLOS(c, tower)) continue // shooting through a wall
       const dx = tw.x - c.toX
       const dz = tw.y - c.toZ
       const distCells = Math.sqrt(dx * dx + dz * dz) / this.cell
@@ -687,6 +754,36 @@ export class Creeps {
     }
     c.target = best
     return best
+  }
+
+  /**
+   * Clear line from a creep to a tower - no other tower standing between them.
+   *
+   * Turrets have had this since they existed (Turrets.hasLOS); the creeps that
+   * shoot back did not, so they happily fired through your walls. Same approach:
+   * raycast the tower BatchedMesh, with a margin at each end so the shooter's own
+   * cell and the target's don't count as blockers.
+   */
+  hasLOS(c, tower) {
+    const mesh = this.city.towerMesh
+    if (!mesh) return true
+    if (!this._losRay) {
+      this._losRay = new Raycaster()
+      this._losFrom = new Vector3()
+      this._losDir = new Vector3()
+    }
+    this.towerWorld(tower, this._sv)
+    const ty = Math.max(0.5, tower.numFloors * 0.5) * this.city.floorHeight
+    this._losFrom.set(c.mesh.position.x, c.baseY + 0.6, c.mesh.position.z)
+    this._losDir.set(this._sv.x - this._losFrom.x, ty - this._losFrom.y, this._sv.y - this._losFrom.z)
+    const dist = this._losDir.length()
+    const margin = this.city.cellUnit * 0.7
+    if (dist <= margin * 2) return true
+    this._losDir.divideScalar(dist)
+    this._losRay.set(this._losFrom, this._losDir)
+    this._losRay.near = margin
+    this._losRay.far = dist - margin
+    return this._losRay.intersectObject(mesh, false).length === 0
   }
 
   /**
@@ -708,18 +805,59 @@ export class Creeps {
       // follow whatever flow exists (king if reachable, else nearest gen).
       const followFlow = dist[i] >= 1 && (ftk[i] || !c.kingSeeker)
       if (followFlow) {
-        const step = this.pickFlowStep(cell, i, dist, fdx, fdz)
+        // A creep that has been stuck for a while stops respecting the queue.
+        // Two creeps can want each other's cell and each wait on the other, and
+        // one stalled creep would hold up everything behind it - better a rare
+        // overlap than a column frozen for the rest of the round.
+        const desperate = (c.waited || 0) >= MAX_WAIT_STEPS
+        const step = this.pickFlowStep(cell, i, dist, fdx, fdz, desperate)
+        if (!step) { c.waited = (c.waited || 0) + 1; return 'wait' }
+        c.waited = 0
         const nx = c.toX + step[0] * this.cell
         const nz = c.toZ + step[1] * this.cell
         for (const tower of city.towers) {
           if (!tower.visible) continue
           if (this.towerDist(tower, nx, nz) < this.attackStandoff(c)) { c.target = tower; return 'attack' }
         }
+        // Claim the new cell and release the old one straight away, so a creep
+        // planned later in the same frame sees this one as taken.
+        const W = city.gridCellsX
+        this._occupied?.delete(cell.gy * W + cell.gx)
+        const to = city.worldToCell(nx, nz)
+        if (to) this._occupied?.add(to.gy * W + to.gx)
         c.fromX = c.toX; c.fromZ = c.toZ; c.toX = nx; c.toZ = nz; c.t = 0
         return 'move'
       }
     }
     return this._planStepGreedy(c)
+  }
+
+  /**
+   * Which cells are spoken for, by the cell each creep is walking INTO.
+   *
+   * Keyed on the destination rather than the current position because a creep
+   * mid-hop is between two cells and it is the one it is heading for that must
+   * not be taken - claiming on arrival would let two creeps commit to the same
+   * cell on the same frame and land on top of each other.
+   *
+   * Rebuilt wholesale each frame (one pass over the creeps, cheap) rather than
+   * maintained incrementally, so a creep dying or being spliced out can never
+   * leave a phantom claim that blocks a cell for the rest of the run.
+   */
+  rebuildOccupancy() {
+    const occupied = this._occupied || (this._occupied = new Set())
+    occupied.clear()
+    const W = this.city.gridCellsX
+    for (const creep of this.creeps) {
+      if (creep.bomber || creep.giant) continue // airborne, or too big to queue
+      const cell = this.city.worldToCell(creep.toX, creep.toZ)
+      if (cell) occupied.add(cell.gy * W + cell.gx)
+    }
+  }
+
+  /** True if a ground creep is already heading for this cell. */
+  cellTaken(gx, gy) {
+    return !!this._occupied && this._occupied.has(gy * this.city.gridCellsX + gx)
   }
 
   /**
@@ -741,7 +879,7 @@ export class Creeps {
    * queue: it breaks the lockstep that sets in once several creeps do share a
    * corridor. They are walking, not pathfinding, and it costs one cell.
    */
-  pickFlowStep(cell, i, dist, fdx, fdz) {
+  pickFlowStep(cell, i, dist, fdx, fdz, ignoreTaken = false) {
     const W = this.city.gridCellsX, H = this.city.gridCellsY
     const here = dist[i]
     const closer = [], worse = []
@@ -750,11 +888,15 @@ export class Creeps {
       if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
       const nd = dist[ny * W + nx]
       if (nd < 0) continue // wall, or no path from there
+      if (!ignoreTaken && this.cellTaken(nx, ny)) continue // someone's already going there
       ;(nd < here ? closer : worse).push(d)
     }
-    // Nothing better adjacent (shouldn't happen while dist >= 1): trust the field.
-    if (closer.length === 0) return [fdx[i], fdz[i]]
-    const pool = (worse.length && Math.random() < MISSTEP_CHANCE) ? worse : closer
+    // Every way forward is either walled or spoken for: hold position and try
+    // again next step. Waiting a beat is what makes a swarm queue up behind its
+    // own front rank instead of piling into one cell.
+    if (closer.length === 0 && worse.length === 0) return null
+    const pool = (closer.length === 0 || (worse.length && Math.random() < MISSTEP_CHANCE))
+      ? worse : closer
     const pick = pool[Math.floor(Math.random() * pool.length)]
     return [STEP_DX[pick], STEP_DZ[pick]]
   }
@@ -779,13 +921,19 @@ export class Creeps {
     }
 
     // Step along whichever axis is further from the goal (ties -> x).
-    let stepX = 0
-    let stepZ = 0
-    if (Math.abs(dx) >= Math.abs(dz)) stepX = Math.sign(dx) * this.cell
-    else stepZ = Math.sign(dz) * this.cell
+    const preferX = Math.abs(dx) >= Math.abs(dz)
+    let nx = x + (preferX ? Math.sign(dx) * this.cell : 0)
+    let nz = z + (preferX ? 0 : Math.sign(dz) * this.cell)
 
-    const nx = x + stepX
-    const nz = z + stepZ
+    // Rocks are indestructible, so walking into one and attacking it would stall
+    // the creep for the rest of the run. Try the other axis instead; if that is
+    // rock too (two boulders cornering a creep - rare) take the first step
+    // anyway, since a moment of overlap beats a permanent stall.
+    if (this.city.rocks.blocksWorld(nx, nz)) {
+      const ax = x + (preferX ? 0 : Math.sign(dx) * this.cell)
+      const az = z + (preferX ? Math.sign(dz) * this.cell : 0)
+      if (!this.city.rocks.blocksWorld(ax, az)) { nx = ax; nz = az }
+    }
 
     // If the next cell is occupied by a standing tower, attack it instead.
     for (const tower of this.city.towers) {
@@ -976,7 +1124,12 @@ export class Creeps {
   start() {
     this.started = true
     this.clock.reset()
-    this.spawnTimer = 0
+    this._plan = null
+    this._planIndex = 0
+    this._released = 0
+    this._bombers = null
+    this._bomberIndex = 0
+    this._active = []
     this._lastWave = -1
     this._quietTimer = 0
     this.audio.reset()
@@ -989,19 +1142,108 @@ export class Creeps {
   advanceSpawns(dt) {
     this.clock.advance(dt)
     if (!this.spawnEnabled) return
-    if (!this.isSpawning) { this.spawnTimer = 0; return }
 
-    // First frame of this cycle's attack phase: a boss wave drops its group.
+    if (!this.isSpawning) {
+      this._plan = null // next attack phase draws up a fresh one
+      this._bombers = null
+      this._active.length = 0
+      return
+    }
+
+    // First frame of this cycle's attack phase: draw up the wave, and drop a
+    // boss group on top if it's a boss round.
     const waveIdx = this.waveNumber
     if (waveIdx !== this._lastWave) {
       this._lastWave = waveIdx
+      this._planWave()
       if (this.isBossWave(waveIdx)) this.spawnBossWave(waveIdx)
     }
-    this.spawnTimer += dt
-    if (this.spawnTimer >= this.spawnInterval) {
-      this.spawnTimer -= this.spawnInterval
-      this.spawn()
+
+    const phase = this.clock.cyclePhase - this.clock.buildTime // 0..waveActive
+    // Release any clump whose slot has arrived. More than one can be pouring at
+    // once on a busy level, which is what turns a long line of clumps into a
+    // continuous press rather than a stutter.
+    while (this._plan && this._planIndex < this._plan.length
+      && this._plan[this._planIndex].at <= phase) {
+      this._release(this._plan[this._planIndex++])
     }
+
+    while (this._bombers && this._bomberIndex < this._bombers.length
+      && this._bombers[this._bomberIndex] <= phase) {
+      this._bomberIndex++
+      this.spawnBomber()
+    }
+
+    for (let i = this._active.length - 1; i >= 0; i--) {
+      const clump = this._active[i]
+      clump.timer += dt
+      while (clump.left > 0 && clump.timer >= SWARM_GAP) {
+        clump.timer -= SWARM_GAP
+        this.spawn({ edge: clump.edge, offset: clump.offset })
+        clump.left--
+      }
+      if (clump.left <= 0) this._active.splice(i, 1)
+    }
+  }
+
+  /**
+   * Draw up this wave: split creepsThisWave into clumps and give each a slot in
+   * the attack window.
+   *
+   * The whole wave is decided up front rather than dribbled out against a
+   * running average. That average was the previous approach - a spawn interval,
+   * with clump sizes and rests derived from it so the mean rate worked out - and
+   * it only ever approximated the intended count, since whatever was mid-pour
+   * when the window shut simply never arrived. Planning it means the number that
+   * spawns is exactly the number the level says.
+   *
+   * Slots stop at SPREAD of the way through so the last clump finishes inside
+   * the window instead of trailing into your build time.
+   */
+  _planWave() {
+    const total = this.creepsThisWave
+    const sizes = []
+    for (let left = total; left > 0;) {
+      const size = Math.min(left, MathUtils.randInt(SWARM_SIZE[0], SWARM_SIZE[1]))
+      sizes.push(size)
+      left -= size
+    }
+    const span = this.waveActive * SWARM_SLOT_SPAN
+    // Round-robin across the wave's edges rather than rolling each clump: with a
+    // random pick, a two-front wave could send every clump down one side and
+    // leave the other arrow pointing at nothing.
+    const edges = this.waveEdges(this.waveNumber)
+    this._plan = sizes.map((size, i) => ({
+      size,
+      at: (i / Math.max(1, sizes.length - 1)) * span,
+      edge: edges[i % edges.length],
+      offset: this.edgeOffset(),
+    }))
+    this._planIndex = 0
+    this._released = 0
+
+    // Bombers are scheduled here rather than rolled per creep inside a clump.
+    // Rolled, they inherited the clumps' timing and arrived in a knot near the
+    // start of the wave; a flyer's whole job is to turn up when you are already
+    // busy, so they get their own slots evenly across the WHOLE window.
+    this._bombers = []
+    if (this.waveNumber >= this.bomberUnlockWave) {
+      const n = Math.round(total * this.bomberChance)
+      for (let i = 0; i < n; i++) {
+        const t = ((i + 0.5) / n) * this.waveActive
+        this._bombers.push(t + MathUtils.randFloatSpread(this.waveActive / (n * 2)))
+      }
+    }
+    this._bomberIndex = 0
+  }
+
+  /** Start a planned clump pouring, and sound its horn. */
+  _release(clump) {
+    this._active.push({ ...clump, left: clump.size, timer: SWARM_GAP })
+    // A war horn per clump, but not the first of a wave: that one lands on the
+    // same frame as the wave horn, and two at once is a muddle.
+    if (this._released > 0) Sounds.play('horn', SWARM_HORN_RATE, 0.06, SWARM_HORN_VOLUME)
+    this._released++
   }
 
   /**
@@ -1028,6 +1270,7 @@ export class Creeps {
     this.audio.update(dt)
     this.updateEntries()
 
+    this.rebuildOccupancy()
     this.updateShieldBarriers()
     this.updateShots(dt)
     this.updateAmmoBoxes(dt)
@@ -1099,6 +1342,16 @@ export class Creeps {
           c.shootTimer -= this.shootInterval
           if (c.laser) this.fireLaser(c, target)
           else this.fireShot(c, target)
+          // Shooters carry a magazine. Without one, a shooter parked out of reach
+          // of every turret and soldier plinks away for the rest of the run - the
+          // round never ends, the music never drops, and there is nothing you can
+          // do about it. Spent, it goes up like any other death, and drops ammo.
+          if (++c.shotsFired >= MAX_CREEP_SHOTS) {
+            this.rollAmmoDrop(c)
+            this.explode(c)
+            this.scene.remove(c.mesh)
+            this.creeps.splice(i, 1)
+          }
         }
         continue
       }
@@ -1120,27 +1373,34 @@ export class Creeps {
         const len = Math.hypot(dx, dz) || 1
 
         c.attackTimer += dt
-        const phase = Math.min(1, c.attackTimer / this.knockInterval)
+        const phase = Math.min(1, c.attackTimer / this.knockTime(c))
         const lunge = Math.sin(phase * Math.PI) * this.cell * 0.35
         c.mesh.position.x = c.toX + (dx / len) * lunge
         c.mesh.position.z = c.toZ + (dz / len) * lunge
         c.mesh.position.y = c.baseY
 
-        if (c.attackTimer >= this.knockInterval) {
-          c.attackTimer -= this.knockInterval
-          Sounds.play('attack', 1.0, 0.2, 0.6)
+        if (c.attackTimer >= this.knockTime(c)) {
+          c.attackTimer -= this.knockTime(c)
+          // Every blow lands, but only every knocksPerFloor-th one costs a
+          // floor - so the king gets two sounds: king-hit per blow, and
+          // king-danger from damageTower when a level actually goes.
+          if (target.king) {
+            Sounds.play('king-hit', 1.0, 0.06, 0.55)
+            this.city.flashKing() // visible tell for the one tower that matters
+          } else Sounds.play('attack', 1.0, 0.2, 0.6)
           c.knocks++
           if (c.knocks >= this.knocksPerFloor) {
-            // Big creeps hit harder (knock multiple floors).
-            for (let n = 0; n < c.knockFloors; n++) this.city.renderer.damageTower(target)
-            // Job done: the creep bursts into debris after landing its kill.
-            // It rolls for ammo like any other death: with turrets dry, creeps
-            // reaching your walls become the way back into ammo, so running out
-            // is a setback rather than an unrecoverable state.
-            this.rollAmmoDrop(c)
-            this.explode(c)
-            this.scene.remove(c.mesh)
-            this.creeps.splice(i, 1)
+            // Take the floor and keep going. Creeps used to burst after landing
+            // a single one, which made health almost meaningless against your
+            // walls: a giant with eight times the hit points still traded itself
+            // for exactly one block, same as the weakest creep on the board. Now
+            // a creep keeps swinging until something kills it, so HP is what
+            // decides how much damage it gets to do.
+            c.knocks = 0
+            this.city.renderer.damageTower(target)
+            // Its target may have just been destroyed outright - go and find
+            // something else rather than swinging at a hole.
+            if (!target.visible) { c.state = 'march'; c.target = null; c.t = 1 }
             continue
           }
         }
@@ -1171,6 +1431,7 @@ export class Creeps {
           c.attackTimer = 0
           continue
         }
+        if (r === 'wait') continue // nowhere free to step; hold and retry next frame
         // freshly entered the new cell: footstep
         Sounds.play(Math.random() < 0.5 ? 'step1' : 'step2', 1.0, 0.2, 0.4)
       }
@@ -1186,7 +1447,9 @@ export class Creeps {
     // Re-arm / fire the king-proximity siren on a cooldown.
     this._kingWarnTimer = (this._kingWarnTimer || 0) - dt
     if (creepNearKing) {
-      if (this._kingWarnTimer <= 0) { Sounds.play('spawn', 0.8, 0, 0.7); this._kingWarnTimer = 1.5 }
+      // alert2 rather than a pitched-down 'spawn': this is a threat blip, and it
+      // was borrowing a sound whose job is announcing arrivals.
+      if (this._kingWarnTimer <= 0) { Sounds.play('alert2', 1.0, 0.04, 0.7); this._kingWarnTimer = 1.5 }
     } else {
       this._kingWarnTimer = 0 // ready to fire the instant a creep gets close again
     }

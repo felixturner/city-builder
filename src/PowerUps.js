@@ -203,6 +203,9 @@ export class PowerUpScreen {
     card.apply(this)
     this.taken.set(card.id, (this.taken.get(card.id) || 0) + 1)
     Sounds.play('good', 1.0, 0.05, 0.7)
+    // Buffs are read all over the place but recalculated nowhere, so the board
+    // has to be rebuilt for the card to visibly do anything.
+    this.demo.city.refreshAfterBuff()
     this._close()
   }
 

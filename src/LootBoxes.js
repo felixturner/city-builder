@@ -4,6 +4,7 @@ import { Sounds } from './lib/Sounds.js'
 import { ACCENT_COLORS } from './palette.js'
 import { ENERGY_COLOR, AMMO_COLOR } from './Mana.js'
 import { glow, NO_AO_MRT } from './fx.js'
+import { ExtraGeometry } from './lib/ExtraGeometry.js'
 
 /**
  * LootBoxes - crates scattered over the board that pay out energy or ammo when
@@ -19,11 +20,11 @@ import { glow, NO_AO_MRT } from './fx.js'
  */
 
 const COUNT = 8 // one per angular slice, so they can't all cluster on one side
-const SIZE = 0.735 // world units across (1.5 -> 1.05 -> another 30% off)
-// Stand the cube on a vertex so it reads as a gem rather than a crate: 45deg
-// about Z stands it on an EDGE, then atan(1/sqrt2) about X tips that edge onto
-// a point. The mesh uses YXZ order so the Z tilt and the X tip both land before
-// the Y spin, which then turns it about world up instead of tumbling it.
+const SIZE = 0.735 // world units across, for the fallback cube
+// Corner-up tilt for the FALLBACK cube only: 45deg about Z stands it on an edge,
+// then atan(1/sqrt2) about X tips that edge onto a point. The star model needs
+// none of this - it lies flat and spins, which never goes edge-on to a camera
+// looking down at the board.
 const CORNER_TILT_Z = Math.PI / 4
 const CORNER_TILT_X = -Math.atan(1 / Math.SQRT2) // ~-35.26deg
 const MIN_R = 0.30 // placement band, as a fraction of the grid half-extent...
@@ -43,15 +44,25 @@ export class LootBoxes {
     this.city = city
     this.demo = demo
     this.boxes = []
-    this.geo = new BoxGeometry(SIZE, SIZE, SIZE)
+    // The star from game-extra.glb, or the old cube if it didn't load. Its
+    // authored grey is ignored - the crate takes a city accent, as before.
+    this.geo = ExtraGeometry.star || new BoxGeometry(SIZE, SIZE, SIZE)
+    this.usingStar = !!ExtraGeometry.star
     this.elapsed = 0
   }
 
-  /** Scatter the crates: one per 360/COUNT slice, at a random angle and radius
-   *  inside that slice, nudged to the nearest free cell. */
+  /**
+   * Scatter the crates: one per 360/COUNT slice, at a random angle and radius
+   * inside that slice, nudged to the nearest free cell.
+   *
+   * Spread across the LARGEST play area the board will ever reach, like the
+   * rocks - so a ring that opens after a boss round arrives with crates already
+   * on it, rather than every crate being crowded into the opening 5x5. The ones
+   * out of bounds are switched off until their ring opens (see refresh).
+   */
   place() {
     const city = this.city
-    const half = city.actualGridWidth / 2
+    const half = city.maxPlayHalf
     for (let i = 0; i < COUNT; i++) {
       const a0 = (i / COUNT) * Math.PI * 2
       const ang = a0 + Math.random() * (Math.PI * 2 / COUNT)
@@ -105,15 +116,34 @@ export class LootBoxes {
     mat.mrtNode = NO_AO_MRT()
     const mesh = glow(new Mesh(this.geo, mat))
     mesh.rotation.order = 'YXZ' // spin about world up, not the tilted axis
-    mesh.rotation.set(CORNER_TILT_X, Math.random() * Math.PI * 2, CORNER_TILT_Z)
+    const spin = Math.random() * Math.PI * 2 // so they don't turn in lockstep
+    if (this.usingStar) mesh.rotation.set(0, spin, 0)
+    else mesh.rotation.set(CORNER_TILT_X, spin, CORNER_TILT_Z)
     mesh.position.set(x, HOVER_Y, z)
     mesh.castShadow = true
     this.scene.add(mesh)
     this.boxes.push({
       mesh, mat, colorIndex, x, z,
       phase: Math.random() * Math.PI * 2, // so they don't bob in lockstep
+      active: true, // set properly by refresh()
       opening: false,
     })
+  }
+
+  /**
+   * Switch crates on or off by whether their ring has opened yet.
+   *
+   * An out-of-bounds crate is hidden AND inert: it doesn't bob, doesn't spin,
+   * and can't be claimed. Without the inert half it could be sealed by walls it
+   * is nowhere near - the enclosure fill covers the whole grid, not just the
+   * part you can build on - and pay out from ground you have never seen.
+   */
+  refresh() {
+    for (const b of this.boxes) {
+      const cell = this.city.worldToCell(b.x, b.z)
+      b.active = !!cell && this.city.inPlayArea(cell.gx, cell.gy)
+      b.mesh.visible = b.active
+    }
   }
 
   /** True if a crate is sitting on this cell. Placement checks this: a wall
@@ -141,6 +171,8 @@ export class LootBoxes {
       const b = this.boxes[i]
       if (b.opening) continue // gsap owns its transform until it bursts
 
+      if (!b.active) continue // its ring hasn't opened yet
+
       b.mesh.position.y = HOVER_Y + Math.sin(this.elapsed * BOB_SPEED + b.phase) * BOB_HEIGHT
       b.mesh.rotation.y += SPIN_SPEED * dt
 
@@ -152,7 +184,7 @@ export class LootBoxes {
   open(b, i) {
     b.opening = true
     this.boxes.splice(i, 1) // out of the update loop; gsap drives it from here
-    Sounds.play('alert3', 1.2, 0.05, 0.4)
+    Sounds.play('energy-down-2', 1.2, 0.05, 0.4) // was alert3
 
     const m = b.mesh
     const tl = gsap.timeline()
@@ -184,7 +216,7 @@ export class LootBoxes {
         debris.spawn(b.x, HOVER_Y, b.z, 1.2, c, CONFETTI_PER_COLOUR)
       }
     }
-    Sounds.play('level-complete', 1.15, 0.02, 0.5)
+    Sounds.play('pick-up', 1.0, 0.04, 0.7)
     this.payOut(b)
   }
 

@@ -1,3 +1,4 @@
+import gsap from 'gsap'
 import {
   Vector3,
   Box3,
@@ -36,12 +37,28 @@ export class Lighting {
     scene.background = texture
     scene.environment = texture
 
-    const groundGeom = new PlaneGeometry(420, 420, 1, 1)
-    groundGeom.rotateX(-Math.PI * 0.5)
-    const groundMat = new MeshStandardNodeMaterial({ color: 0x999999 })
-    const groundMesh = new Mesh(groundGeom, groundMat)
-    groundMesh.receiveShadow = true
-    scene.add(groundMesh)
+    // Three grounds, stacked, each a step darker as it leaves play:
+    //
+    //   BOUNDS      the buildable board. Grid, dots and outline are drawn on it.
+    //   OUTER FIELD one lot of apron. Creeps walk in across it; you cannot build
+    //               on it. 20% darker than the bounds, so where your board stops
+    //               is readable without needing to find the outline.
+    //   BEYOND      everything else, darker again - out of the game entirely.
+    //
+    // Each sits slightly lower than the one on top of it; at equal heights they
+    // z-fight. Both inner planes are unit-sized and scaled by setBoardSize.
+    const plane = (color, y, size = 1) => {
+      const geom = new PlaneGeometry(size, size, 1, 1)
+      geom.rotateX(-Math.PI * 0.5)
+      const mesh = new Mesh(geom, new MeshStandardNodeMaterial({ color }))
+      mesh.position.y = y
+      mesh.receiveShadow = true
+      scene.add(mesh)
+      return mesh
+    }
+    this.beyondGround = plane(0x44444a, -0.04, 420)
+    this.outerField = plane(0x7a7a7a, -0.02)
+    this.boundsGround = plane(0x999999, 0)
 
     // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)
     // Wide enough for a 10-lot board (100x100, so -50..50) plus the creep
@@ -85,6 +102,31 @@ export class Lighting {
   }
 
   // Compute shadow camera frustum to cover scene from any light angle
+  /**
+   * Size the two inner grounds: the bounds to `half`, and the outer field to
+   * `half + margin`. Called at init and whenever the play area grows.
+   */
+  setBoardSize(half, margin = 0, duration = 0) {
+    if (!this.boundsGround) return
+    const bounds = half * 2
+    const outer = (half + margin) * 2
+    if (duration <= 0) {
+      this.boundsGround.scale.set(bounds, 1, bounds)
+      this.outerField.scale.set(outer, 1, outer)
+      return
+    }
+    // Ease the ground outward rather than snapping. Growing the board is one of
+    // the few unambiguously good things that happens in a run - it should look
+    // like ground being won, not like a frame dropped.
+    this._growTween?.kill()
+    this._growTween = gsap.to([this.boundsGround.scale, this.outerField.scale], {
+      duration,
+      ease: 'power2.out',
+      x: (i) => (i === 0 ? bounds : outer),
+      z: (i) => (i === 0 ? bounds : outer),
+    })
+  }
+
   updateShadowFrustum() {
     const light = this.dirLight
     const bounds = this.sceneBounds
