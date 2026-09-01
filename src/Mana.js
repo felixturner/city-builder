@@ -49,7 +49,7 @@ export class Mana {
       top: '20px',
       zIndex: '500',
       pointerEvents: 'none',
-      font: '600 16px ui-monospace, Menlo, monospace',
+      font: '600 13px Inter, system-ui, sans-serif', // matches the pause / fast-forward chips
       color: '#fff',
       textShadow: '0 1px 3px rgba(0,0,0,0.7)',
       lineHeight: '1.5',

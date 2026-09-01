@@ -4,11 +4,10 @@ import {
 } from 'three/webgpu'
 import { fxMaterial } from '../fx.js'
 // Dark orange - reads as a hazard marker without competing with the three city
-// accents, which every other coloured thing on the board already uses.
+// accents, which every other coloured thing on the board already uses. One flat
+// colour for every arrow: the field is a direction read, and shading it by
+// destination or by distance made brightness a second thing to decode.
 const FLOW_COLOR = new Color(0xcc5500)
-// Same hue, well down in value: creeps here can't reach the king and are
-// heading for a generator instead.
-const FLOW_DIVERTED = new Color(0x5c3a1c)
 
 /**
  * The creep flow field, drawn on the ground as a field of little arrows.
@@ -26,9 +25,8 @@ const FLOW_DIVERTED = new Color(0x5c3a1c)
  * shape of the decision.
  *
  * Arrows are one InstancedMesh, rebuilt only when the field is recomputed (which
- * is on tower changes, not per frame). Colour separates the two destinations the
- * field encodes: cells whose flow leads to the KING, and cells that lead to a
- * generator instead because the king is walled off from them.
+ * is on tower changes, not per frame), and all one colour - the arrow direction
+ * is the whole message.
  */
 
 const ARROW = 0.52 // arrow length as a fraction of a cell
@@ -38,7 +36,7 @@ export class FlowFieldView {
   constructor(city, creeps) {
     this.city = city
     this.creeps = creeps
-    this.enabled = false // off until asked for - see GUI 'Creep Flow'
+    this.enabled = true // on by default - toggle with GUI 'Creep Flow'
     this.mesh = null
     this._key = null
     this._dummy = new Object3D()
@@ -81,7 +79,7 @@ export class FlowFieldView {
     const city = this.city
     const W = city.gridCellsX, H = city.gridCellsY
     const cu = city.cellUnit
-    const { dist, dx, dz, toKing } = city.flow.fields(false)
+    const { dist, dx, dz } = city.flow.fields(false)
 
     // Count first so the InstancedMesh is sized once. Cells with no route, and
     // the goal cells themselves, get no arrow - there is nowhere to point.
@@ -104,19 +102,7 @@ export class FlowFieldView {
     }
     if (count === 0) return
 
-    // Longest route on the board, so brightness can fade with distance from the
-    // goal - the field then reads as flowing INWARD at a glance.
-    let longest = 1
-    for (let i = 0; i < W * H; i++) if (dist[i] > longest && inPlay(i)) longest = dist[i]
-
     const dummy = this._dummy
-    // Cells whose flow reaches the KING are the full orange; cells where the king
-    // is walled off from them, so creeps divert to a generator instead, are
-    // dimmed. That difference is the single most useful thing the field shows -
-    // it is how you tell at a glance whether your enclosure has sealed the king
-    // and sent the whole wave after your generators.
-    const kingCol = FLOW_COLOR
-    const genCol = FLOW_DIVERTED
     let k = 0
     for (let gy = 0; gy < H; gy++) {
       for (let gx = 0; gx < W; gx++) {
@@ -127,10 +113,7 @@ export class FlowFieldView {
         dummy.scale.setScalar(cu * ARROW)
         dummy.updateMatrix()
         this.mesh.setMatrixAt(k, dummy.matrix)
-        // Bright near the goal, fading out toward the edges of the board.
-        const nearness = 1 - dist[i] / longest
-        this._colour.copy(toKing[i] ? kingCol : genCol).multiplyScalar(0.25 + nearness * 0.75)
-        this.mesh.setColorAt(k, this._colour)
+        this.mesh.setColorAt(k, FLOW_COLOR)
         k++
       }
     }

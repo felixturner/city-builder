@@ -43,7 +43,7 @@ export class FloatingText {
     Object.assign(el.style, {
       position: 'absolute',
       transform: 'translate(-50%, -50%) scale(0)',
-      font: '700 22px ui-monospace, Menlo, monospace',
+      font: '700 22px Inter, system-ui, sans-serif',
       color,
       textShadow: '0 1px 3px rgba(0,0,0,0.85)',
       whiteSpace: 'nowrap',

@@ -197,10 +197,9 @@ export class Turrets {
    * World height of the turret model sitting on top of `tower` (0 if it isn't a
    * turret, or the models haven't loaded).
    *
-   * The model stands ON the roof block, so on a level-0 turret it is the whole
-   * of what you can see - the tower's own box is a sliver of roof tile at ground
-   * level, and a click aimed at the gun sailed clean over it. Nothing could be
-   * built back up once it had been knocked to zero.
+   * The model stands ON the roof block, so on a one-floor turret it is most of
+   * what you can see - and a click aimed at the gun sails clean over the block
+   * unless the model's height is added to the pick box.
    */
   modelHeight(tower) {
     const proto = tower.typeTop === Turrets.MORTAR_TYPE ? this.mortarProto

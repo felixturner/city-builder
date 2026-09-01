@@ -575,7 +575,7 @@ export class Demo {
       right: 'calc(50% + 17vw + 10px)', // just left of the 34vw centered timeline
       zIndex: '600',
       padding: '5px 12px',
-      font: '600 13px system-ui, sans-serif',
+      font: '600 13px Inter, system-ui, sans-serif',
       color: '#fff',
       background: 'rgba(20,20,28,0.8)',
       border: '1px solid rgba(255,255,255,0.35)',
@@ -625,8 +625,8 @@ export class Demo {
     if (this.kingDead) return
     this.kingDead = true
     this.gameOverDelay = Demo.GAME_OVER_DELAY
-    // 3.2s long, peaking at 1.46s - it plays out across the GAME_OVER_DELAY
-    // window and lands just as the panel appears.
+    // Plays out across the GAME_OVER_DELAY window while the creeps finish the
+    // job, and has decayed by the time the score panel goes up.
     Sounds.play('game-over', 1.0, 0, 0.85)
   }
 
@@ -653,7 +653,7 @@ export class Demo {
     const title = document.createElement('div')
     title.textContent = 'GAME OVER'
     Object.assign(title.style, {
-      color: ENERGY_COLOR, font: '800 72px ui-monospace, Menlo, monospace',
+      color: ENERGY_COLOR, font: '800 72px Inter, system-ui, sans-serif',
       letterSpacing: '2px', textShadow: TEXT_SHADOW,
     })
 
@@ -671,12 +671,12 @@ export class Demo {
     const scoreEl = document.createElement('div')
     scoreEl.textContent = `score: ${final}`
     Object.assign(scoreEl.style, {
-      color: '#fff', font: '700 30px ui-monospace, Menlo, monospace', textShadow: TEXT_SHADOW,
+      color: '#fff', font: '700 30px Inter, system-ui, sans-serif', textShadow: TEXT_SHADOW,
     })
     const bestEl = document.createElement('div')
     bestEl.textContent = isBest ? `★ new best ★` : `best: ${best}`
     Object.assign(bestEl.style, {
-      color: isBest ? ENERGY_COLOR : '#dfdfdf', font: '600 20px ui-monospace, Menlo, monospace',
+      color: isBest ? ENERGY_COLOR : '#dfdfdf', font: '600 20px Inter, system-ui, sans-serif',
       textShadow: TEXT_SHADOW,
     })
     stats.appendChild(scoreEl)
@@ -685,7 +685,7 @@ export class Demo {
     const btn = document.createElement('button')
     btn.textContent = 'Restart'
     Object.assign(btn.style, {
-      padding: '12px 36px', font: '600 18px ui-monospace, monospace', color: '#fff',
+      padding: '12px 36px', font: '600 18px Inter, system-ui, sans-serif', color: '#fff',
       background: 'rgba(0,0,0,0.35)', border: '2px solid #fff', borderRadius: '24px',
       cursor: 'pointer', textShadow: TEXT_SHADOW,
       pointerEvents: 'auto', // the panel itself is click-through; the button isn't
@@ -708,7 +708,7 @@ export class Demo {
       left: 'calc(50% + 17vw + 10px)', // just right of the 34vw centered timeline
       zIndex: '600',
       padding: '5px 12px',
-      font: '600 13px system-ui, sans-serif',
+      font: '600 13px Inter, system-ui, sans-serif',
       color: '#fff',
       background: 'rgba(20,20,28,0.8)',
       border: '1px solid rgba(255,255,255,0.35)',

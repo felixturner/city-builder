@@ -72,14 +72,11 @@ export class Tower {
     this.typeBottom = 0 // Base block geometry type
     this.typeTop = 0    // Top block geometry type
     this.box = new Box2()
-    this.numFloors = 0  // Primary height variable (integer floor count)
+    this.numFloors = 0  // Height in floors. A LIVE tile is always >= 1; 0 only ever means a pooled/hidden slot.
     this.rotation = 0
     this.topColorIndex = 0
     this.topColor = Tower.COLORS[this.topColorIndex]
     this.baseColor = Tower.BASE_COLOR
-    // For dynamic height recalculation
-    this.cityNoiseVal = 0
-    this.randFactor = 0
     this.skipFactor = 0 // For realtime visibility toggle
     this.colorIndex = 0 // Hover color index
     this.visible = true
@@ -654,40 +651,6 @@ export class Tower {
 
       // Animate the tower back up with the new floor emerging
       this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers, onComplete)
-    })
-  }
-
-  /**
-   * Handle right-click on tower - delete all floors
-   * @param {City} city - The city instance (for towerMesh and gridToWorld)
-   * @param {number} floorHeight - Height of each floor
-   * @param {Debris} debris - Debris system for spawning particles
-   * @param {Tower[]} allTowers - All towers for debris collision
-   * @param {Function} onComplete - Called when animation completes
-   */
-  handleRightClick(city, floorHeight, debris, allTowers, onComplete) {
-    const mesh = city.towerMesh
-    const numFloors = this.numFloors
-
-    // Only delete if tower has at least 1 floor
-    if (numFloors < 1) return
-
-    // Get tower info for debris - convert grid coords to world coords
-    const baseColor = this.isLit && this.litColor ? this.litColor : this.baseColor
-    const debrisColor = Tower.lightenColor(baseColor)
-    const center = this.box.getCenter(new Vector2())
-    const world = city.gridToWorld(center.x, center.y)
-    const size = this.box.getSize(new Vector2())
-    const radius = Math.max(size.x, size.y) / 2
-
-    // Tiny bricks disabled for now (perf)
-    // debris.setupNearbyCollisions(this, allTowers, floorHeight, city)
-    // debris.spawn(world.x, numFloors * floorHeight, world.z, radius, debrisColor)
-
-    // Animate the deletion
-    this.animateDelete(mesh, floorHeight, numFloors, () => {
-      this.numFloors = 0 // No floors, just roof
-      onComplete?.()
     })
   }
 

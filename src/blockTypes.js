@@ -136,3 +136,7 @@ export const KING_HEALTH = 5
 
 /** Floors at or below which the king raises its own alarm. */
 export const KING_WARN_FLOORS = 2
+
+/** Radius, in cells, of the king's danger zone: a creep inside it sets off the
+ *  proximity siren, and the yellow ring on the ground draws exactly this. */
+export const KING_WARN_CELLS = 3

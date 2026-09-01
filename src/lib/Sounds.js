@@ -380,6 +380,30 @@ class SoundsManager {
     return id
   }
 
+  /**
+   * Start a sound looping, or leave it alone if it is already running.
+   *
+   * For alarms that describe a STATE rather than an event: the caller checks its
+   * condition every frame and calls this while it holds, then stop()/fadeOut()
+   * when it clears - no timers, and no way to end up with two of them layered.
+   * Registered in _active like play(), so it stops the same way.
+   */
+  loop(name, volume = 1.0, rate = 1.0) {
+    if (this.mutedSounds.has(name) || this._unavailable.has(name)) return
+    if (this._active[name]) return // already ringing
+    const { sound, key } = this._resolve(name)
+    if (!sound) {
+      console.warn(`Sound "${name}" not found`)
+      return
+    }
+    const id = this._trimmed.has(key) ? sound.play('play') : sound.play()
+    sound.loop(true, id)
+    sound.rate(rate, id)
+    sound.volume(volume, id)
+    this._active[name] = { sound, id }
+    return id
+  }
+
   /** Beat period (seconds) of a rhythmic bed, or 0 if it isn't one. */
   beatOf(name) { return CADENCE[name]?.beat || 0 }
 

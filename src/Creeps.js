@@ -12,7 +12,7 @@ import {
 } from 'three/webgpu'
 import { Sounds, BOSS_HORN_PREROLL, MAX_RISER_PREROLL } from './lib/Sounds.js'
 import { AMMO_COLOR } from './Mana.js'
-import { isShield, shieldCharges, shieldRadiusCells } from './blockTypes.js'
+import { isShield, shieldCharges, shieldRadiusCells, KING_WARN_CELLS } from './blockTypes.js'
 import { SHIELD_LINE } from './palette.js'
 
 // Flyers read as smaller than ground creeps - they are further from the camera
@@ -22,9 +22,11 @@ const BOMBER_SCALE = 0.7
 // Cell-neighbour offsets, in the same order for both axes (right, left, down, up).
 const STEP_DX = [1, -1, 0, 0]
 const STEP_DZ = [0, 0, 1, -1]
-// How often a creep takes a step that doesn't get it closer. Small on purpose:
-// it should read as a wander, not as broken pathfinding.
-const MISSTEP_CHANCE = 0.12
+// How often a creep takes a step that doesn't get it closer - a wander, not
+// broken pathfinding. Off for now: with it on, creeps visibly drift off a clear
+// line to the king. The random tie-break in pickFlowStep still spreads a column
+// into staircases without ever costing a step.
+const MISSTEP_CHANCE = 0
 
 // Swarming. A wave used to arrive as an even trickle from random points down a
 // whole side, which read as weather rather than as an attack - nothing to brace
@@ -62,6 +64,17 @@ const SHIELD_DAMAGE = 2
 // Health a creep loses for each floor it knocks down. Walls charge an entry fee
 // rather than being free to chew through.
 const WALL_BITE = 2
+// Damage one dropped bomb does to the tower it lands on - the same heavy hit a
+// creep laser lands, and twice what a bite is worth.
+const BOMB_DAMAGE = 2
+// Damage one melee bite does to the block it lands on. This is the unit the
+// rest of the numbers are priced against: a block has 3 hit points, so three
+// bites cost a floor.
+const BITE_DAMAGE = 1
+
+// What a big creep shrinks to once it is down to half health: 0.5 of its spawn
+// size, which is exactly a normal marcher.
+const BIG_HURT_SCALE = 0.5
 
 // Damage flash: hot orange, and how long it lingers.
 const HIT_FLASH_COLOR = 0xff7a1a
@@ -76,7 +89,7 @@ const HIT_SHAKE_ANGLE = 0.3 // radians of tilt at the start of the shake
 // Seconds a creep glows shield-yellow after a barrier burns it.
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
-import { fxMaterial, glow, unglow } from './fx.js'
+import { fxMaterial, glow, unglow, NO_AO_MRT } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 import { advanceHop, towerWorldCenter } from './lib/gridUnit.js'
 import { WaveAudio } from './systems/WaveAudio.js'
@@ -96,14 +109,17 @@ export class Creeps {
     this.creeps = []
 
     this.geo = new BoxGeometry(2, 2, 2)
-    // King-seekers read near-black; gen-seekers a slightly lighter dark grey.
+    // King-seekers read purple; gen-seekers stay the near-black marcher colour.
+    // The two behave differently only once the king is walled off - one keeps
+    // smashing toward it, the other peels away to a generator - so it has to be
+    // readable at a glance which half of a wave is coming for the king.
     this.mat = new MeshStandardNodeMaterial({
-      color: new Color(0x0a0a0e),
+      color: new Color(0x7b2ff7),
       roughness: 0.55,
       metalness: 0,
     })
     this.matGen = new MeshStandardNodeMaterial({
-      color: new Color(0x33333a),
+      color: new Color(0x1a1a20),
       roughness: 0.55,
       metalness: 0,
     })
@@ -116,7 +132,7 @@ export class Creeps {
     // Laser creeps: stop at range and fire a turret-style beam at towers.
     this.laserMat = new MeshStandardNodeMaterial({ color: new Color(0xb01f4a), roughness: 0.4, metalness: 0.15 })
     this.creepLaserColor = new Color(0xff2e5e) // the beam colour
-    this.laserDamage = 1
+    this.laserDamage = 2 // heavier than a bite: two of these take a block
     this.beamPool = new BeamPool(scene, { radius: 0.16, duration: 0.16 })
     this._beamFrom = new Vector3()
     this._beamTo = new Vector3()
@@ -260,14 +276,16 @@ export class Creeps {
     this.onBoardResized()
 
     this.knockInterval = 0.45 // seconds between knocks, for a normal creep at level 1
-    this.knocksPerFloor = 3
-    // Back to 4 from 7. The 7 was one half of a trade - ~40% fewer creeps, each
-    // ~75% tougher, for the same wave health in a wave you could actually follow
-    // - and the other half of it didn't survive: the spawn-gap ramp it was
-    // priced against was replaced by a creep-count line that put the numbers
-    // back. A creep that soaks seven shots when there are plenty of them is just
-    // a slog.
-    this.hitPoints = 4 // turret sphere hits needed to destroy a creep
+    // One rule for all combat: attacks carry damage, things have hit points, and
+    // damage accumulates until it covers them. A regular creep bite is 1 damage
+    // and a block has 3 hit points, so three bites cost a floor.
+    //
+    // 4 is what a regular creep is worth against the turret line: a peg shot is
+    // 1 damage, so it takes four of them, and that is the number the fire rates
+    // were priced against. Bigs and giants are the same creep with more of it
+    // (x2 and x8 below), and the per-level ramp multiplies this rather than
+    // replacing it.
+    this.hitPoints = 4 // damage needed to destroy a regular creep
 
     /**
      * Per-creep difficulty ramp, straight-line and uncapped: a creep is
@@ -285,15 +303,18 @@ export class Creeps {
 
     // Ammo boxes: a dying creep leaves one 20% of the time.
     //
-    // 5 a box priced this to break even exactly: 5 x 0.2 = 1.0 ammo per kill,
-    // and a 4-hit creep costs 4 peg shots at 0.25. It went to 8 when hitPoints
-    // was 7 and a kill cost 1.75, which 5 could not fund.
+    // Kills pay NOTHING. The loop used to refund more than a kill cost (0.2 x 8
+    // against a 1.0 kill), so ammo sat pinned at the cap all run - a number on
+    // the HUD rather than a constraint. Halving it only slowed that down; every
+    // shot fired still partly paid for itself, which is what made the whole
+    // resource inert.
     //
-    // hitPoints is back to 4, so 8 is no longer break-even - it pays 1.6 against
-    // a 1.0 kill, a 60% surplus, and turret fire funds itself with room to
-    // spare. Left high on purpose: ammo starvation was never the pressure the
-    // game wanted. Drop it back to 5 to make ammo bite again.
-    this.ammoDropChance = 0.2
+    // So ammo now comes from ONE place: path generators, which supply it the way
+    // enclosure generators supply energy (see EnergySystem). Shooting is a pure
+    // drain, and how much you can shoot is decided by what you built - not by
+    // how much you already shot. Crates and the Deep Magazines card still top it
+    // up, but neither is a supply line.
+    this.ammoDropChance = 0
     this.ammoDropAmount = 8
     this.ammoBoxGeo = new BoxGeometry(1.1, 1.1, 1.1)
     this.ammoBoxMat = new MeshStandardNodeMaterial({
@@ -316,6 +337,10 @@ export class Creeps {
       roughness: 0.4,
       metalness: 0,
     })
+    // Both flash materials get drawn into the glow target, which has two colour
+    // attachments - a material with no mrtNode writes one, and a pipeline whose
+    // outputs don't cover the attachments takes the whole command buffer down.
+    this.shieldFlashMat.mrtNode = NO_AO_MRT()
     // Ordinary damage flash: hot orange, bright enough to bloom. Creeps are near
     // black, so a hit had no visual tell at all beyond the stone thunk - you
     // could not see which of a dozen creeps your turrets were actually working
@@ -326,6 +351,7 @@ export class Creeps {
       roughness: 0.4,
       metalness: 0,
     })
+    this.hitFlashMat.mrtNode = NO_AO_MRT()
   }
 
   /**
@@ -486,8 +512,8 @@ export class Creeps {
         (giant ? this.hitPoints * 8 : (big ? this.hitPoints * 2 : this.hitPoints))
         * Buffs.creepHp * ramp.hp
       )),
-      // Everything knocks one floor. Size and level buy a FASTER swing rather
-      // than a bigger one: floors-per-hit multiplied out badly, because it
+      // Every bite is BITE_DAMAGE, whatever the creep. Size and level buy a
+      // FASTER swing rather than a bigger one: floors-per-hit multiplied out badly, because it
       // multiplied against the attack ramp too - by level 12 a big took a whole
       // five-storey tower off in a single blow, which is a deletion, not a
       // fight. Speed scales the same pressure without the discontinuity.
@@ -706,7 +732,7 @@ export class Creeps {
       b.mesh.rotation.z += dt * 6
       if (b.y <= 0.4) {
         const tower = this.towerAt(b.x, b.z)
-        if (tower) this.city.renderer.damageTower(tower)
+        if (tower) this.city.renderer.damageTower(tower, BOMB_DAMAGE)
         const debris = this.city.debris
         if (debris) debris.spawn(b.x, 0.5, b.z, 0.9, this._black, 10)
         Sounds.play('break2', 0.9, 0.2)
@@ -833,24 +859,27 @@ export class Creeps {
   }
 
   /**
-   * Plan the next cell. Follow the city flow field around walls toward the king
-   * (gens/turrets are second-priority goals); attack a tower stepped into. Falls
-   * back to a greedy beeline that smashes walls toward the king when no flow path
-   * exists. Returns 'move', 'attack', or 'done'.
+   * Plan the next cell. Two behaviours, split by creep at spawn:
+   *
+   *  - KING-SEEKERS (purple, half the wave, and every giant) bulldoze: a greedy
+   *    beeline at the king that stops and smashes whatever stands in the line,
+   *    wall or not. They used to do this only when the king was sealed off, so
+   *    with an open board every creep in the game was a flow-follower and the
+   *    walls you built between them and the king were simply walked around.
+   *  - Everything else follows the flow field: around walls to the king if it is
+   *    reachable, to the nearest generator if it is not.
+   *
+   * Returns 'move', 'attack', 'wait' or 'done'.
    */
   planStep(c) {
     const city = this.city
-    // Giants are too big for gaps: they bulldoze straight toward the king.
-    if (c.giant) return this._planStepGreedy(c)
+    if (c.giant || c.kingSeeker) return this._planStepGreedy(c)
     const cell = city.worldToCell(c.toX, c.toZ)
     if (cell && city.flow.ready) {
       const i = cell.gy * city.gridCellsX + cell.gx
       // Big creeps get the wide-corridor field (1-cell gaps closed off).
-      const { dist, dx: fdx, dz: fdz, toKing: ftk } = city.flow.fields(c.big)
-      // King-seekers ignore gen flow (they'd rather smash toward the king); others
-      // follow whatever flow exists (king if reachable, else nearest gen).
-      const followFlow = dist[i] >= 1 && (ftk[i] || !c.kingSeeker)
-      if (followFlow) {
+      const { dist, dx: fdx, dz: fdz } = city.flow.fields(c.big)
+      if (dist[i] >= 1) {
         // A creep that has been stuck for a while stops respecting the queue.
         // Two creeps can want each other's cell and each wait on the other, and
         // one stalled creep would hold up everything behind it - better a rare
@@ -861,10 +890,15 @@ export class Creeps {
         c.waited = 0
         const nx = c.toX + step[0] * this.cell
         const nz = c.toZ + step[1] * this.cell
-        for (const tower of city.towers) {
-          if (!tower.visible) continue
-          if (this.towerDist(tower, nx, nz) < this.attackStandoff(c)) { c.target = tower; return 'attack' }
-        }
+        // Attack only what is actually IN THE WAY - the tile the creep is about
+        // to step into. This used to be a standoff test against every tower on
+        // the board, and the standoff (1.1 world units for a normal creep) is
+        // wider than the half cell of clearance a road has, so a creep walking
+        // past a wall stopped and chewed on it even with an open road to the
+        // king. The flow field already routes around walls, so the only tower a
+        // flow step can walk into is a goal: the king, or a generator.
+        const blocking = this.towerAt(nx, nz)
+        if (blocking) { c.target = blocking; return 'attack' }
         // Claim the new cell and release the old one straight away, so a creep
         // planned later in the same frame sees this one as taken.
         const W = city.gridCellsX
@@ -998,6 +1032,17 @@ export class Creeps {
     return 'move'
   }
 
+  /**
+   * Resize a creep to `f` of its spawn size, keeping it on the ground (baseY
+   * tracks the scale) and its seeker dot at a constant apparent size.
+   */
+  _rescale(creep, f) {
+    const s = creep.baseScale * f
+    creep.mesh.scale.setScalar(s)
+    creep.baseY = creep.baseYSpawn * f
+    if (creep.typeDot) creep.typeDot.scale.setScalar(1 / s)
+  }
+
   /** Apply turret damage; explode + remove the creep once it reaches max HP. */
   hit(creep, dmg = 1) {
     creep.hits += dmg
@@ -1010,11 +1055,13 @@ export class Creeps {
     // without a health bar. baseY tracks the scale so it stays on the ground,
     // and the seeker dot is counter-scaled to hold its apparent size.
     if (creep.giant && creep.baseScale) {
-      const hp = Math.max(0, 1 - creep.hits / creep.maxHits)
-      const s = creep.baseScale * (0.45 + 0.55 * hp)
-      creep.mesh.scale.setScalar(s)
-      creep.baseY = creep.baseYSpawn * (s / creep.baseScale)
-      if (creep.typeDot) creep.typeDot.scale.setScalar(1 / s)
+      this._rescale(creep, 0.45 + 0.55 * Math.max(0, 1 - creep.hits / creep.maxHits))
+    } else if (creep.big && creep.baseScale) {
+      // A big does it in one step at half health rather than on a curve: it is
+      // small enough that a gradual squeeze reads as nothing, and dropping it to
+      // exactly a marcher's size makes "this one is nearly dead" a shape you
+      // already know rather than a size you have to compare against its friends.
+      if (creep.hits >= creep.maxHits / 2) this._rescale(creep, BIG_HURT_SCALE)
     }
     // Float a "-N" damage caption above the creep.
     const ft = this.city.floatingText
@@ -1139,7 +1186,7 @@ export class Creeps {
     const ty = Math.max(0.5, target.numFloors * 0.5) * this.city.floorHeight
     this._beamTo.set(this._sv.x, ty, this._sv.y)
     this.beamPool.fire(this._beamFrom, this._beamTo, this.creepLaserColor)
-    for (let n = 0; n < this.laserDamage; n++) this.city.renderer.damageTower(target)
+    this.city.renderer.damageTower(target, this.laserDamage)
     Sounds.play('shoot', 0.6, 0.2, 0.3)
   }
 
@@ -1379,7 +1426,10 @@ export class Creeps {
       this.towerWorld(this.city.king, this._sv)
       kingWX = this._sv.x; kingWZ = this._sv.y; kingHere = true
     }
-    const warnR2 = (3 * this.cell) * (3 * this.cell)
+    // Same radius the yellow ring on the ground draws (City.createKingRing), so
+    // the siren fires exactly when a creep crosses the line you can see.
+    const warnR = KING_WARN_CELLS * this.cell
+    const warnR2 = warnR * warnR
     let creepNearKing = false
 
     const showTypeArrows = !!this.city.flow.debugEnabled
@@ -1481,23 +1531,27 @@ export class Creeps {
 
         if (c.attackTimer >= this.knockTime(c)) {
           c.attackTimer -= this.knockTime(c)
-          // Every blow lands, but only every knocksPerFloor-th one costs a
-          // floor - so the king gets two sounds: king-hit per blow, and
-          // king-danger from damageTower when a level actually goes.
+          // Every blow goes through damageTower, which owns the one rule for how
+          // many knocks a floor costs - creeps used to keep a second count of
+          // their own, so a bite that didn't happen to be the third one never
+          // reached the tile at all and it sat there unflashed and unshaken
+          // while a creep visibly chewed on it.
           if (target.king) {
             Sounds.play('king-hit', 1.0, 0.06, 0.55)
             this.city.flashKing() // visible tell for the one tower that matters
           } else Sounds.play('attack', 1.0, 0.2, 0.6)
-          c.knocks++
-          if (c.knocks >= this.knocksPerFloor) {
+          const before = target.numFloors
+          const after = this.city.renderer.damageTower(target, BITE_DAMAGE)
+          // A floor came off - or the tile was a bare roof and went entirely,
+          // which costs the creep the same as any other block.
+          if (after < before || !target.visible) {
             // Take the floor and keep going. Creeps used to burst after landing
             // a single one, which made health almost meaningless against your
             // walls: a giant with eight times the hit points still traded itself
             // for exactly one block, same as the weakest creep on the board. Now
             // a creep keeps swinging until something kills it, so HP is what
             // decides how much damage it gets to do.
-            c.knocks = 0
-            this.city.renderer.damageTower(target)
+            //
             // Breaking a floor costs the creep health, the same way a soldier
             // and a creep both bleed when they trade blows. Without it a creep
             // that reached your walls was pure profit for the attacker: it could

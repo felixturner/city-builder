@@ -111,7 +111,7 @@ export class LotGrowth {
   /**
    * Empty-lot pull: every dormant lot with a strong-enough active neighbour
    * activates. Collected first, then activated, so one event can spawn a full
-   * ring without a fresh (level-0) lot stalling its neighbours.
+   * ring without a freshly activated lot stalling its neighbours.
    */
   trySpawnLots() {
     if (!this.city.lots.length) return

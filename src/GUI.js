@@ -21,12 +21,6 @@ export class GUIManager {
       fov: 20,
     },
     scene: {
-      noiseScale: 0.015,
-      noiseSubtract: 0.15,
-      noiseHeight: 27,
-      randHeight: 5,
-      randHeightPower: 6.5,
-      centerFalloff: 1,
       skipChance: 0.1,
     },
     lighting: {
@@ -59,8 +53,8 @@ export class GUIManager {
       // Both off by default: they are readouts for reasoning about the maze, and
       // three thousand arrows plus a bright route line over the board is a lot
       // to look at when you just want to see the city. Toggle them on to plan.
-      creepFlow: false,
-      creepPath: false,
+      creepFlow: true,
+      creepPath: true,
       bloom: true,
       bloomStrength: 0.77,
       bloomRadius: 0.49,
@@ -155,12 +149,7 @@ export class GUIManager {
     })
 
     // Action buttons
-    viewFolder.add({ regenCity: () => {
-      demo.city.regenerate()
-      demo.trails.generatePaths(30)
-    } }, 'regenCity').name('Regen City')
     viewFolder.add({ replayBuild: () => {
-      demo.city.generator.recalculateHeights()
       demo.city.renderer.recalculateVisibility()
       demo.postFX.fadeOpacity.value = 0
       demo.fadeIn(1000)
@@ -198,30 +187,6 @@ export class GUIManager {
 
     // City folder
     const cityFolder = viewFolder.addFolder('City').close()
-    cityFolder.add(allParams.scene, 'noiseScale', 0.005, 0.05, 0.005).name('Noise Scale').onChange((v) => {
-      demo.city.noiseFrequency = v
-      demo.city.generator.recalculateNoise()
-    })
-    cityFolder.add(allParams.scene, 'noiseSubtract', 0, 0.5, 0.05).name('Noise Subtract').onChange((v) => {
-      demo.city.noiseSubtract = v
-      demo.city.generator.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'noiseHeight', 0, 50, 1).name('Noise Height').onChange((v) => {
-      demo.city.heightNoiseScale = v
-      demo.city.generator.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'randHeight', 0, 25, 1).name('Rand Height').onChange((v) => {
-      demo.city.randHeightAmount = v
-      demo.city.generator.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'randHeightPower', 1, 10, 0.5).name('Rand Height Pow').onChange((v) => {
-      demo.city.randHeightPower = v
-      demo.city.generator.recalculateHeights()
-    })
-    cityFolder.add(allParams.scene, 'centerFalloff', 0, 1, 0.05).name('Center Falloff').onChange((v) => {
-      demo.city.centerFalloff = v
-      demo.city.generator.recalculateHeights()
-    })
     cityFolder.add(allParams.scene, 'skipChance', 0, 1, 0.05).name('Skip Chance').onChange((v) => {
       demo.city.skipChance = v
       demo.city.renderer.recalculateVisibility()

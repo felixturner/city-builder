@@ -17,6 +17,7 @@ import {
   MeshStandardNodeMaterial,
   ArrowHelper,
   CircleGeometry,
+  RingGeometry,
   Group,
 } from 'three/webgpu'
 import { Line2 } from 'three/examples/jsm/lines/webgpu/Line2.js'
@@ -29,7 +30,6 @@ import { ExtraGeometry } from './lib/ExtraGeometry.js'
 import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
 import { Debris } from './lib/Debris.js'
 import { Sounds } from './lib/Sounds.js'
-import FastSimplexNoise from '@webvoxel/fast-simplex-noise'
 import { EnergySystem } from './systems/EnergySystem.js'
 import { FlowField } from './systems/FlowField.js'
 import { Enclosure } from './systems/Enclosure.js'
@@ -39,11 +39,10 @@ import { Rocks } from './systems/Rocks.js'
 import { RangeVisuals } from './systems/RangeVisuals.js'
 import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
-import { CityGenerator } from './systems/CityGenerator.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { ACCENT_COLORS } from './palette.js'
+import { ACCENT_COLORS, SHIELD_LINE } from './palette.js'
 import { Buffs } from './buffs.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_WARN_FLOORS } from './blockTypes.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_WARN_FLOORS, KING_WARN_CELLS } from './blockTypes.js'
 import { fxMaterial, glow, NO_AO_MRT } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
@@ -73,8 +72,11 @@ const LOTS_PER_BOSS = 2 // rings opened per boss round cleared
 const KING_COLOR = 1
 const KING_MARKER_SIZE = 1.04 // world units across, before the corner-up tilt
 const KING_MARKER_HOVER = 1.4 // rest height above the king's roof
-// Seconds for the king's damage flash to fade back to its own colour.
+// Seconds for a damage flash to fade back to the tower's own colour. The king
+// holds its flash longer - its hits are the ones you have to notice from the
+// far side of the board, so it stays lit after an ordinary wall has settled.
 const KING_HIT_FLASH = 0.45
+const TOWER_HIT_FLASH = 0.22
 const WHITE = new Color(0xffffff)
 
 // Rotate a vec3 around Y axis by angle (in radians)
@@ -112,20 +114,6 @@ export class City {
     this.towerSize = new Vector2(1, 1)
     this.towerCenter = new Vector2()
 
-    // City height distribution noise - lower frequency for larger "neighborhoods"
-    this.noiseFrequency = params.scene.noiseScale
-    this.cityNoise = new FastSimplexNoise({
-      frequency: this.noiseFrequency,
-      octaves: 3,
-      min: 0,
-      max: 1,
-      persistence: 0.6,
-    })
-    this.heightNoiseScale = params.scene.noiseHeight
-    this.randHeightAmount = params.scene.randHeight
-    this.randHeightPower = params.scene.randHeightPower
-    this.noiseSubtract = params.scene.noiseSubtract
-    this.centerFalloff = params.scene.centerFalloff
     this.skipChance = params.scene.skipChance
 
     this.actualGridWidth = 0
@@ -186,7 +174,6 @@ export class City {
     this.interaction = new TowerInteraction(this)
 
     // Procedural lot generation: footprints, types, and heights.
-    this.generator = new CityGenerator(this)
 
     // Runtime tower visuals: accent coloring, visibility, reroll, empty-tower
     // lifecycle (on the shared BatchedMesh built in initTowers).
@@ -462,8 +449,10 @@ export class City {
   /**
    * Place a palette tile freely into empty cells. `cells` is the footprint
    * (offsets from gx,gy); `opts` carries render info: { tetro?: {name,rot},
-   * typeTop, colorIndex, topColorIndex }. Grabs a pooled tower, builds it at
-   * level 0. Returns the tower or null if the pool is exhausted.
+   * typeTop, colorIndex, topColorIndex }. Grabs a pooled tower and builds it at
+   * level 1 - a tile is a block with a roof on it or it is nothing at all, so
+   * there is no roof-only state to place into. Returns the tower or null if the
+   * pool is exhausted.
    */
   placeTileFree(gx, gy, cells, opts, silent = false) {
     const t = this.towerPool.pop()
@@ -489,7 +478,7 @@ export class City {
     t.emptyTower = false
     t.placed = true
     t.visible = true
-    t.numFloors = 0
+    t.numFloors = 1 // one block + roof: the smallest a live tile ever gets
     t.rotation = opts.rotation || 0 // corner-shaped roofs (shield/barracks) have a facing
     t.resetAnimation() // belt and braces: nothing in-flight from a previous life
     t.skipFactor = 2 // always passes visibility
@@ -587,6 +576,7 @@ export class City {
     this.king = t
     this.kingAlive = true
     this.createKingBeam()
+    this.createKingRing()
     this.createKingMarker()
   }
 
@@ -636,9 +626,16 @@ export class City {
     // the eye away from the one animation that only plays once.
     if (!king || !king.visible || !this.kingAlive || !this.introDone) {
       beam.visible = false
+      if (this.kingRing) this.kingRing.visible = false
+      this._kingShown = false
       return
     }
-    beam.visible = true
+    // First frame it is allowed to show: kick it in rather than having it appear
+    // between one frame and the next.
+    if (!this._kingShown) { this._kingShown = true; this.flickerKingBeam() }
+    // While the flicker is running it owns visibility - this would otherwise
+    // switch the beam back on between the timeline's own frames.
+    if (!this._kingFlicker) beam.visible = true
     const c = king.box.getCenter(this.towerCenter)
     // Rooted at ground level rather than on the roof, so it reads as coming out
     // of the tower rather than hovering above it - and it no longer bobs up and
@@ -648,12 +645,66 @@ export class City {
       this.kingBeamHeight / 2,
       c.y + this.gridOffsetZ
     )
+    // The danger ring shares the beam's fate: same king, same visibility rules,
+    // and the board can grow underneath both of them.
+    if (this.kingRing) {
+      if (!this._kingFlicker) this.kingRing.visible = true
+      this.kingRing.position.set(c.x + this.gridOffsetX, 0.04, c.y + this.gridOffsetZ)
+    }
+  }
+
+  /**
+   * Strike the king's beam and danger ring in like a tube light coming on.
+   *
+   * The beam is the one thing on the board that says "this is what you are
+   * defending", and it used to simply be there the frame the intro finished.
+   * A few stutters and a chime make it an event you look at - and it lights the
+   * ring at the same time, so the two read as one thing switching on.
+   */
+  flickerKingBeam() {
+    const parts = [this.kingBeam, this.kingRing].filter(Boolean)
+    if (!parts.length) return
+    this._kingFlicker = true
+    Sounds.play('good')
+    // Uneven on/off times: an even stutter reads as a strobe rather than
+    // something struggling to catch.
+    const tl = gsap.timeline({ onComplete: () => { this._kingFlicker = false } })
+    for (const [t, on] of [
+      [0, true], [0.05, false], [0.09, true], [0.14, false],
+      [0.22, true], [0.26, false], [0.36, true],
+    ]) tl.set(parts, { visible: on }, t)
+  }
+
+  /**
+   * The king's danger zone, drawn as a thin yellow ring on the ground.
+   *
+   * The proximity siren fires when a creep is within KING_WARN_CELLS of the
+   * king, and until now that line was audible only - you heard that something
+   * had got close without being able to see where "close" started. Same radius,
+   * same constant, so the ring is the sound made visible.
+   */
+  createKingRing() {
+    if (!this.king) return
+    const r = KING_WARN_CELLS * this.cellUnit
+    const geo = new RingGeometry(r - 0.08, r + 0.08, 96)
+    const mat = fxMaterial(new MeshBasicNodeMaterial({
+      color: new Color(SHIELD_LINE), opacity: 0.75,
+    }))
+    const mesh = glow(new Mesh(geo, mat))
+    mesh.rotation.x = -Math.PI / 2 // RingGeometry lives in XY; lie it flat
+    mesh.renderOrder = -1 // under the turret/shield rings, like the other ground art
+    this.scene.add(mesh)
+    this.kingRing = mesh
   }
 
   /** Fire the game-over hook once (the king died). */
   triggerGameOver() {
     if (!this.kingAlive) return
     this.kingAlive = false
+    // Kill the last-two-floors alarm if it's still ringing: it warns about a
+    // king that is about to die, and once it has, it is playing over the
+    // game-over sting and saying something that stopped being true.
+    Sounds.fadeOut('king-warning', 0.25)
     this.onGameOver?.()
   }
 
@@ -968,30 +1019,6 @@ export class City {
     }
   }
 
-  regenerate() {
-    // Re-randomize all tower properties and recalculate the city. Skip the free-
-    // placement pool (dormant) and player-placed tiles - only the pre-built
-    // center lot regenerates.
-    for (const tower of this.towers) {
-      if (tower.dormant || tower.placed) continue
-      tower.randFactor = MathUtils.randFloat(0, 1)
-      tower.skipFactor = MathUtils.randFloat(0, 1)
-      tower.colorIndex = MathUtils.randInt(0, 2)
-      tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
-      // Reset to base colors first
-      tower.isLit = false
-      for (const idx of tower.floorInstances) {
-        this.towerMesh.setColorAt(idx, tower.baseColor)
-      }
-      this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
-    }
-    // Regenerate noise with new seed
-    this.generator.recalculateNoise()
-    this.renderer.recalculateVisibility()
-    // Re-apply lit towers
-    this.renderer.applyLitTowers()
-  }
-
   setupEnvRotation() {
     const mat = this.towerMaterial
     const angle = this.envRotation
@@ -1021,10 +1048,6 @@ export class City {
    * Updates its matrices and re-evaluates power-line connectors.
    */
   onTowerChanged(tower) {
-    // Re-arm the king's low-health alarm once it has been built back out of
-    // range, so it fires again the next time the king is driven down there.
-    // Without this it would cry wolf exactly once per run.
-    if (tower?.king && tower.numFloors > KING_WARN_FLOORS) this._kingWarned = false
     this.updateTowerMatrices(tower)
     // The roof takes the shade of the floor it sits on, so the stack gradient
     // has to be redrawn whenever the height changes.
@@ -1106,27 +1129,61 @@ export class City {
 
   /** Set every instance color of a tower to a single color. */
   /**
-   * Flash the king white when it takes a blow, fading back over KING_HIT_FLASH.
+   * Flash a tower white when it takes a blow, fading back over its own duration.
    *
-   * The king is the one tower whose damage you have to notice from anywhere on
-   * the board, and it had no visual tell at all - only sound. It can't use the
-   * generators' pulse path, which tints `litColor` and the king has none, so it
-   * gets its own: lerp its base colour toward white by the envelope.
+   * A tile being chewed on had no colour tell at all - only the shake and a
+   * thunk - so a wall under attack looked the same as one nobody had touched.
+   * The tint can't go through the generators' pulse path, which needs a
+   * `litColor` that walls and the king don't have: lerp the tower's own base
+   * colour toward white by the envelope instead.
    */
-  updateKingFlash(dt) {
-    const king = this.king
-    if (!king || !king.visible || !this._kingFlash) return
-    this._kingFlash = Math.max(0, this._kingFlash - dt / KING_HIT_FLASH)
-    if (!this._kingFlashColor) this._kingFlashColor = new Color()
-    this._kingFlashColor.copy(king.baseColor).lerp(WHITE, this._kingFlash * 0.85)
-    this.setTowerColor(king, this._kingFlashColor)
-    // Back to its own shading once the flash is spent, so the stack gradient
-    // returns rather than the whole tower being left one flat colour.
-    if (this._kingFlash === 0) this.renderer.shadeStack(king)
+  updateHitFlashes(dt) {
+    if (!this._hitFlashes || this._hitFlashes.size === 0) return
+    if (!this._flashColor) this._flashColor = new Color()
+    for (const [tower, f] of this._hitFlashes) {
+      // A flashing tile can be destroyed mid-fade - its instances go back to the
+      // pool and are handed straight out as some other tower, so writing colours
+      // to them would tint an unrelated tile.
+      if (!tower.visible) { this._hitFlashes.delete(tower); continue }
+      f.t = Math.max(0, f.t - dt / f.dur)
+      this._flashColor.copy(tower.baseColor).lerp(WHITE, f.t * 0.85)
+      this.setTowerColor(tower, this._flashColor)
+      // Back to its own shading once the flash is spent, so the stack gradient
+      // returns rather than the whole tower being left one flat colour.
+      if (f.t === 0) {
+        this.renderer.shadeStack(tower)
+        this._hitFlashes.delete(tower)
+      }
+    }
   }
 
-  /** Kick the king's damage flash to full. Called from damageTower. */
-  flashKing() { this._kingFlash = 1 }
+  /** Kick a tower's damage flash to full. Called from damageTower. */
+  flashTower(tower, dur = TOWER_HIT_FLASH) {
+    if (!tower || !tower.visible) return
+    if (!this._hitFlashes) this._hitFlashes = new Map()
+    const f = this._hitFlashes.get(tower)
+    if (f) { f.t = 1; f.dur = dur } else this._hitFlashes.set(tower, { t: 1, dur })
+  }
+
+  /** Kick the king's (longer) damage flash to full. */
+  flashKing() { this.flashTower(this.king, KING_HIT_FLASH) }
+
+  /**
+   * The king's low-health siren, held for as long as the king is in trouble.
+   *
+   * A state, not an event: it used to fire once on the crossing into the last
+   * two floors, which said "this just happened" about a condition that then sat
+   * there for the rest of the round. Now it loops while the king is at or below
+   * KING_WARN_FLOORS and stops the moment it is built back up - or dies, where
+   * triggerGameOver fades it out under the sting.
+   */
+  updateKingAlarm() {
+    const king = this.king
+    const on = !!king && king.visible && this.kingAlive && this.introDone
+      && king.numFloors <= KING_WARN_FLOORS
+    if (on) Sounds.loop('king-warning', 0.45)
+    else Sounds.stop('king-warning')
+  }
 
   /**
    * A cube standing on its corner, hovering and spinning over the king.
@@ -1190,7 +1247,8 @@ export class City {
     this.interaction.update(dt)
     this.energy.update(dt)
     this.upkeep.update(dt)
-    this.updateKingFlash(dt)
+    this.updateHitFlashes(dt)
+    this.updateKingAlarm()
     this.updateKingMarker(dt)
     this.flowView?.update()
     this.pathPreview?.update()
@@ -1304,7 +1362,7 @@ export class City {
       }
     }
 
-    // A visible tower always shows its roof (even at level 0, roof-only).
+    // A visible tower always shows its roof.
     towerMesh.setVisibleAt(tower.roofInstance, true)
 
     // Skip roof matrix if animation is in progress (roof controlled by GSAP)

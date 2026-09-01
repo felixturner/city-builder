@@ -46,10 +46,8 @@ export class TowerInteraction {
     for (const tower of city.towers) {
       if (!tower.visible) continue
       // Box top = real geometry top, PLUS the turret model standing on it. A
-      // 0-floor tower is just the thin roof tile, so on a level-0 turret the
-      // only thing on screen is the gun - and every click aimed at it passed
-      // over the sliver of box at ground level and hit the floor instead, which
-      // is why a turret knocked down to zero could never be built back up.
+      // one-floor turret is mostly gun: without the model's height in the box,
+      // clicks aimed at the barrel sailed over the block and hit the ground.
       const top = towerTopY(tower, city.floorHeight)
         + (isTurret(tower) ? (city.turrets?.modelHeight(tower) || 0) : 0)
       this._pickBox.min.set(tower.box.min.x + city.gridOffsetX, 0, tower.box.min.y + city.gridOffsetZ)
@@ -168,19 +166,12 @@ export class TowerInteraction {
   }
 
   /** Right-click a tower to demolish it (any tile, including the pre-built center
-   *  lot): built tiles stagger-delete then free their cell; flat tiles pop. */
+   *  lot): the stack falls floor by floor, then the cell is freed. */
   onRightClick(intersection) {
     const city = this.city
     const tower = this.towerFor(intersection)
     if (!tower || !tower.visible || tower.king) return // the king can't be demolished
-    if (tower.numFloors >= 1) {
-      tower.animateDelete(city.towerMesh, city.floorHeight, tower.numFloors, () => city.demolishTower(tower))
-    } else {
-      const c = tower.box.getCenter(city.towerCenter)
-      city.debris.spawn(c.x + city.gridOffsetX, 0.5, c.y + city.gridOffsetZ, 0.8, tower.litColor || tower.baseColor, 10)
-      Sounds.play('break2', 1.0, 0.2)
-      city.demolishTower(tower)
-    }
+    tower.animateDelete(city.towerMesh, city.floorHeight, tower.numFloors, () => city.demolishTower(tower))
   }
 
   /** Hide the tower and spin a radial build-wheel; finishReroll() on completion. */
@@ -223,7 +214,7 @@ export class TowerInteraction {
     const city = this.city
     tower.emptyTower = false
     tower.visible = true
-    tower.numFloors = 0
+    tower.numFloors = 1 // same as a freshly dropped tile: one block + roof
     city.renderer.rerollTower(tower)
     city.updateTowerMatrices(tower)
     Sounds.play('pop', 0.8, 0.15, 0.7)

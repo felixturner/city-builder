@@ -4,13 +4,18 @@ import { Tower } from '../Tower.js'
 import { ACCENT_COLORS } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, KING_WARN_FLOORS, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
 
 // Fallback only - the king normally wears one of the three accents.
 // Damage rattle on a tile that just took a blow. World units of horizontal
 // jitter, decaying to nothing over HIT_SHAKE_TIME.
 const HIT_SHAKE = 0.18
 const HIT_SHAKE_TIME = 0.18
+// Hit points of a single tower block. All combat runs on one rule: an attack
+// carries a damage number, a thing has hit points, and damage accumulates until
+// it covers them - then a creep dies or a tower loses a floor. A regular creep
+// bite is 1 damage, so three of them cost a block.
+const BLOCK_HP = 3
 
 const KING_COLOR = ACCENT_COLORS[0]
 
@@ -143,8 +148,7 @@ export class TowerRenderer {
       mesh.setColorAt(tower.floorInstances[f], this._shade)
     }
     // The roof caps the stack, so it matches the highest block UNDER it - index
-    // numFloors - 1, not numFloors. A roof-only tower (0 floors) takes floor 0's
-    // shade. ROOF_SHADE_BIAS then compensates for the roof mesh catching more
+    // numFloors - 1, not numFloors. ROOF_SHADE_BIAS then compensates for the roof mesh catching more
     // light than the wall's side faces.
     Tower.roofShade(tower, base, this._shade)
     mesh.setColorAt(tower.roofInstance, this._shade)
@@ -219,29 +223,34 @@ export class TowerRenderer {
   }
 
   /**
-   * Knock a tower down one floor, or destroy a level-0 tower. Returns the new
-   * floor count. Destroyed tiles free their cell and vanish (no empty slots).
+   * Deal `dmg` to a tower: knock it down one floor once the damage on its top
+   * block covers BLOCK_HP. Taking the LAST block destroys the tile outright -
+   * there is no roof-only level 0 to sit at, so a tower is either standing with
+   * at least one floor or gone. Returns the new floor count; destroyed tiles
+   * free their cells and vanish (no empty slots).
    */
-  damageTower(tower) {
+  damageTower(tower, dmg = 1) {
     const city = this.city
     if (!tower || !tower.visible) return 0
 
-    // Reinforced walls soak blows rather than inflating the floor count, so a
-    // tower never keeps phantom health after a buff is recalculated. (Shields
-    // used to double this; they burn creeps at the perimeter now instead.)
-    // Every blow rattles the tile, soaked or not - a soaked hit is still a hit
-    // landing, and it is the one case with no other visual tell at all.
+    // Every blow rattles the tile AND flashes it white, whether or not it takes
+    // a floor with it - a hit that only bites into the block's health is still a
+    // hit landing, and it is the one case with no other visual tell at all.
+    // The king flashes longer; Creeps kicks that one itself.
     this.shakeTower(tower)
+    if (!tower.king) city.flashTower(tower)
 
-    let soak = 1
-    if (isGrey(tower)) soak *= 1 + Buffs.wallHits
-    if (soak > 1) {
-      tower.soakHits = (tower.soakHits || 0) + 1
-      if (tower.soakHits % soak !== 0) {
-        Sounds.play('dink', 1.6, 0.1, 0.35)
-        return tower.numFloors
-      }
+    // Reinforced walls raise the hit points of a grey block rather than handing
+    // the tower extra floors, so a tower never keeps phantom health after a buff
+    // is recalculated. Damage carries over between floors: overkill on the last
+    // block of a level is spent on the next one rather than thrown away.
+    const blockHp = BLOCK_HP + (isGrey(tower) ? Buffs.wallHits : 0)
+    tower.dmg = (tower.dmg || 0) + dmg
+    if (tower.dmg < blockHp) {
+      Sounds.play('dink', 1.6, 0.1, 0.35)
+      return tower.numFloors
     }
+    tower.dmg -= blockHp
 
     const center = tower.box.getCenter(city.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * city.floorHeight
@@ -249,7 +258,7 @@ export class TowerRenderer {
     city.debris.spawn(center.x + city.gridOffsetX, y, center.y + city.gridOffsetZ, 0.8, color, 10)
     if (!tower.king) Sounds.play('break2', 1.0, 0.2)
 
-    if (tower.numFloors >= 1) {
+    if (tower.numFloors > 1) {
       tower.numFloors -= 1
       city.onTowerChanged(tower)
       if (tower.king) {
@@ -258,29 +267,17 @@ export class TowerRenderer {
         // thunk, which is suppressed for the king above.
         const hurt = 1 - tower.numFloors / KING_HEALTH // 0 fresh .. 1 dead
         Sounds.play('king-danger', 0.92 + hurt * 0.5, 0.03, 0.6 + hurt * 0.3)
-        // Crossing INTO the last two floors gets its own alarm, over the hit.
-        // Fired on the crossing rather than while below the line, so it lands
-        // once as a state change instead of nagging every subsequent hit - and
-        // not at 0, where the game-over sting is the sound that matters.
-        if (tower.numFloors <= KING_WARN_FLOORS && tower.numFloors > 0
-          && !city._kingWarned) {
-          city._kingWarned = true
-          Sounds.play('king-warning', 1.0, 0, 0.45)
-        }
-        if (tower.numFloors === 0) city.triggerGameOver()
+        // The low-health siren is a STATE, not an event: City.updateKingAlarm
+        // keeps it looping for as long as the king is down here, so there is
+        // nothing to fire on the crossing.
       }
       return tower.numFloors
     }
-    // Level 0 is a thin roof, not immortality: EVERY type goes to nothing from
-    // here - walls, generators, turrets and the king alike. The king used to be
-    // exempt, so once its last floor went it sat on the board as an
-    // indestructible roof tile for the rest of the run.
-    //
-    // triggerGameOver is idempotent (it checks kingAlive), so firing it again
-    // here is harmless - the real trigger already happened when the king's last
-    // floor came off, above.
+    // That was the last block: the tile goes, whatever it is - wall, generator,
+    // turret or king. Losing the king's last block IS the loss, so the game-over
+    // hook fires here rather than at some roof-only state below it.
     if (tower.king) city.triggerGameOver()
-    // Destroyed at level 0: free its cell(s) and remove it (debris already spawned).
+    // Free its cell(s) and remove it (debris already spawned above).
     city.demolishTower(tower)
     return 0
   }

@@ -229,13 +229,13 @@ export class PowerUpScreen {
       display: 'flex', flexDirection: 'column', alignItems: 'center',
       justifyContent: 'center', gap: '22px',
       background: 'rgba(8,10,14,0.55)', backdropFilter: 'blur(3px)',
-      font: '600 16px ui-monospace, Menlo, monospace',
+      font: '600 16px Inter, system-ui, sans-serif',
     })
 
     const title = document.createElement('div')
     title.textContent = 'CHOOSE AN UPGRADE'
     Object.assign(title.style, {
-      color: '#fff', font: '800 28px ui-monospace, Menlo, monospace',
+      color: '#fff', font: '800 28px Inter, system-ui, sans-serif',
       letterSpacing: '3px', textShadow: '0 2px 12px rgba(0,0,0,0.9)',
     })
     el.appendChild(title)
@@ -256,11 +256,11 @@ export class PowerUpScreen {
       })
       const h = document.createElement('div')
       h.textContent = c.title
-      Object.assign(h.style, { color: c.color, font: '700 16px ui-monospace, Menlo, monospace' })
+      Object.assign(h.style, { color: c.color, font: '700 16px Inter, system-ui, sans-serif' })
       const d = document.createElement('div')
       d.textContent = c.desc
       Object.assign(d.style, {
-        color: '#cfd4dd', font: '500 13px ui-monospace, Menlo, monospace',
+        color: '#cfd4dd', font: '500 13px Inter, system-ui, sans-serif',
         lineHeight: '1.45', whiteSpace: 'normal',
       })
       card.appendChild(h)

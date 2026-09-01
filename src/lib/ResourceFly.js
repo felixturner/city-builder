@@ -3,15 +3,23 @@ import gsap from 'gsap'
 import { ENERGY_COLOR } from '../palette.js'
 
 /**
- * ResourceFly - little coloured boxes that fly from a world position up to a
- * HUD meter, so income reads as something arriving somewhere rather than a
- * number quietly changing in the corner.
+ * ResourceFly - little coloured boxes that pop out of a generator, rise, and
+ * burst, so income reads as something being produced rather than a number
+ * quietly changing in the corner.
+ *
+ * They used to fly all the way to the HUD meter. At a developed economy that is
+ * several boxes a second all converging on the same corner of the screen, which
+ * drew the eye away from the board and turned the top-left into a stream of
+ * traffic. Popping in place says the same thing where you are already looking.
  *
  * The world anchor is projected to the screen ONCE at spawn and the rest is a
- * 2D tween. The generator that produced it may be demolished mid-flight (they
- * expire constantly), and a box chasing a dead tower's position looks wrong -
- * once it's launched it belongs to the screen, not the scene.
+ * 2D tween. The generator that produced it may be demolished mid-animation
+ * (they expire constantly), and a box chasing a dead tower's position looks
+ * wrong - once it's launched it belongs to the screen, not the scene.
  */
+// Screen pixels the box rises before it bursts.
+const RISE = 34
+
 export class ResourceFly {
   constructor() {
     this._v = new Vector3()
@@ -25,23 +33,18 @@ export class ResourceFly {
   }
 
   /**
-   * Launch a box from a world position toward a HUD element.
+   * Pop a box out of a world position.
    * @param {Camera} camera - to project the start point
-   * @param {HTMLElement} targetEl - element to fly to (its centre)
    * @param {string} color - CSS colour
    * @param {number} [size] - box edge in px
    * @param {number} [delay] - seconds to wait before launching
    */
-  spawn(x, y, z, camera, targetEl, color = ENERGY_COLOR, size = 9, delay = 0) {
-    if (!camera || !targetEl) return
+  spawn(x, y, z, camera, color = ENERGY_COLOR, size = 9, delay = 0) {
+    if (!camera) return
     this._v.set(x, y, z).project(camera)
     if (this._v.z > 1) return // behind the camera; nothing to see
     const sx = (this._v.x * 0.5 + 0.5) * window.innerWidth
     const sy = (-this._v.y * 0.5 + 0.5) * window.innerHeight
-
-    const r = targetEl.getBoundingClientRect()
-    const tx = r.left + r.width / 2
-    const ty = r.top + r.height / 2
 
     const el = document.createElement('div')
     Object.assign(el.style, {
@@ -57,14 +60,14 @@ export class ResourceFly {
     this.container.appendChild(el)
 
     const done = () => { if (el.parentNode) this.container.removeChild(el) }
+    // Pop up, then burst. Three beats: it appears, it leaves the building, it
+    // goes off. The rise is straight up in SCREEN space, so it reads the same
+    // whichever way the board is turned.
     const tl = gsap.timeline({ delay, onComplete: done })
     tl.to(el, { scale: 1, duration: 0.14, ease: 'back.out(2.5)' })
-      // Rise a little first so it reads as leaving the building, then cut across.
-      .to(el, { top: `${sy - 26}px`, duration: 0.22, ease: 'power2.out' }, 0)
-      .to(el, {
-        left: `${tx}px`, top: `${ty}px`,
-        duration: 0.55, ease: 'power2.inOut',
-      }, 0.22)
-      .to(el, { scale: 0.3, opacity: 0, duration: 0.16, ease: 'power2.in' }, '-=0.16')
+      .to(el, { top: `${sy - RISE}px`, duration: 0.3, ease: 'power2.out' }, 0)
+      // The burst overshoots well past full size as it goes transparent, so the
+      // eye reads a flash rather than a box shrinking away.
+      .to(el, { scale: 2.6, opacity: 0, duration: 0.22, ease: 'power2.out' }, 0.3)
   }
 }

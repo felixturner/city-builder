@@ -133,15 +133,26 @@ export class TilePalette {
     for (let i = 0; i < SLOTS; i++) this._buildSlot()
     // Little reroll-all button in the top-right corner of the tray.
     const reroll = this.rerollBtn = document.createElement('button')
-    reroll.textContent = '×'
     reroll.title = `Reroll all tiles (${REROLL_COST})`
     Object.assign(reroll.style, {
       position: 'absolute', top: '-18px', right: '-18px',
       width: '44px', height: '44px', borderRadius: '50%', padding: '0',
       background: 'rgba(40,40,52,0.95)', color: '#fff', border: '1px solid rgba(255,255,255,0.45)',
-      font: '700 30px ui-monospace, monospace', lineHeight: '1', cursor: 'pointer',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '1',
+      cursor: 'pointer', zIndex: '1',
     })
+    // The cross is two rotated bars, not a '×' glyph. A character sits wherever
+    // its own font's metrics put it inside the line box - it rode high the
+    // moment the UI moved off the old monospace stack - whereas two bars centred
+    // on the button are centred whatever the font is doing.
+    for (const deg of [45, -45]) {
+      const bar = document.createElement('div')
+      Object.assign(bar.style, {
+        position: 'absolute', top: '50%', left: '50%', width: '17px', height: '2px',
+        background: '#fff', borderRadius: '1px',
+        transform: `translate(-50%, -50%) rotate(${deg}deg)`,
+      })
+      reroll.appendChild(bar)
+    }
     reroll.addEventListener('click', () => { if (!this.demo.buildLocked) this._rerollAll() })
     wrap.appendChild(reroll)
 
@@ -153,7 +164,7 @@ export class TilePalette {
     Object.assign(cost.style, {
       position: 'absolute', top: '26px', right: '-18px', width: '44px',
       textAlign: 'center', pointerEvents: 'none',
-      font: '700 12px ui-monospace, monospace', color: '#fff',
+      font: '700 12px Inter, system-ui, sans-serif', color: '#fff',
       textShadow: '0 1px 3px rgba(0,0,0,0.9)',
     })
     wrap.appendChild(cost)
@@ -293,7 +304,7 @@ export class TilePalette {
     const costEl = document.createElement('div')
     Object.assign(costEl.style, {
       position: 'absolute', bottom: '1px', left: '0', width: '100%', textAlign: 'center',
-      font: '700 12px ui-monospace, Menlo, monospace', color: '#fff',
+      font: '700 12px Inter, system-ui, sans-serif', color: '#fff',
       textShadow: '0 1px 2px rgba(0,0,0,0.95)', pointerEvents: 'none',
     })
     el.appendChild(costEl)
