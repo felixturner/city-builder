@@ -1,6 +1,6 @@
 import { Tower } from '../Tower.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
-import { TopType, isGenerator, isTurret } from '../blockTypes.js'
+import { TopType, isGenerator, isTurret, isBarracks, isShield } from '../blockTypes.js'
 
 // Icon geometry, shared with the tray DOM that hosts these canvases.
 export const ICON = 72 // palette icon canvas size (px)
@@ -27,8 +27,8 @@ export function cellBounds(cells) {
 /** CSS colour for a tile's icon. */
 export function tileColor(tile, accents) {
   if (tile.wall) return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
-  if (isGenerator(tile)) return `#${accents[tile.colorIndex].getHexString()}`
-  if (isTurret(tile)) return '#9aa0aa'
+  if (isGenerator(tile) || isShield(tile)) return `#${accents[tile.colorIndex].getHexString()}`
+  if (isTurret(tile) || isBarracks(tile)) return '#9aa0aa'
   return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
 }
 
@@ -61,44 +61,6 @@ function drawTetromino(ctx, tile, accents) {
 }
 
 
-/**
- * Shield (Tri_Top) and barracks (Quart_Top) drawn as they sit on the board.
- *
- * Both are the same unit square cut across the same diagonal - one straight,
- * one curved - and in the GLB both keep their corner at (-X, +Z). Under the
- * opening camera that corner reads as the BOTTOM-RIGHT of the icon, so that
- * is where it goes. (The triangle used to be isoceles with its apex at the
- * top CENTRE, which is not a shape the game contains at all.)
- *
- * Drawn about the centre of the footprint so it stays centred in its cell at
- * every rotation - `turns` is the same quarter-turn count the placed tile
- * gets, so icon and board agree however the tile or the camera is turned.
- */
-function drawRoofShape(ctx, tile, accents, ox, oy, fw, fh, turns = 0) {
-  const h = Math.min(fw, fh) / 2
-  ctx.save()
-  ctx.translate(ox + fw / 2, oy + fh / 2)
-  // Canvas y points down, so a positive angle here turns the same way a
-  // positive tile rotation turns the footprint on the board.
-  ctx.rotate((turns % 4) * Math.PI / 2)
-  ctx.fillStyle = tileColor(tile, accents)
-  ctx.beginPath()
-  if (tile.typeTop === TopType.SHIELD) {
-    ctx.moveTo(h, h) // the right angle
-    ctx.lineTo(-h, h)
-    ctx.lineTo(h, -h)
-  } else {
-    ctx.moveTo(h, h) // centre of the quarter disc
-    ctx.arc(h, h, h * 2, Math.PI, Math.PI * 1.5)
-  }
-  ctx.closePath()
-  ctx.fill()
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)'
-  ctx.lineWidth = 1.5
-  ctx.stroke()
-  ctx.restore()
-}
-
 function drawRectTile(ctx, tile, accents) {
   const fw = tile.w * CELL
   const fh = tile.h * CELL
@@ -110,18 +72,25 @@ function drawRectTile(ctx, tile, accents) {
   const raised = 'rgba(255,255,255,0.32)'
   const recess = 'rgba(0,0,0,0.3)'
 
-  // Shield and barracks ARE their roof shape seen from above, drawn at full
-  // tile size. Everything else is a square footprint with a glyph on it, so
-  // those get the square first and the glyph on top.
-  if (tile.typeTop === TopType.SHIELD || tile.typeTop === TopType.BARRACKS) {
-    drawRoofShape(ctx, tile, accents, ox, oy, fw, fh, tile.rot || 0)
-    return
-  }
-
   ctx.fillStyle = tileColor(tile, accents)
   ctx.fillRect(ox, oy, fw, fh)
 
-  if (tile.typeTop === TopType.PATH_GENERATOR) {
+  if (tile.typeTop === TopType.SHIELD) {
+    // Hole top, same as the king: a dark through-hole in the accent square.
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'
+    ctx.beginPath(); ctx.arc(cx, cy, m * 0.24, 0, Math.PI * 2); ctx.fill()
+  } else if (tile.typeTop === TopType.BARRACKS) {
+    // Grey divot top with the little lookout soldier sitting in it.
+    ctx.fillStyle = recess
+    ctx.beginPath(); ctx.arc(cx, cy, m * 0.26, 0, Math.PI * 2); ctx.fill()
+    const s = m * 0.13
+    ctx.fillStyle = raised
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.rotate(Math.PI / 4) // same quarter-turn stance the soldier mesh keeps
+    ctx.fillRect(-s, -s, s * 2, s * 2)
+    ctx.restore()
+  } else if (tile.typeTop === TopType.PATH_GENERATOR) {
     const pe = m * 0.28, pt = m * 0.1
     ctx.fillStyle = recess
     ctx.fillRect(cx - pe, cy - pt, pe * 2, pt * 2)

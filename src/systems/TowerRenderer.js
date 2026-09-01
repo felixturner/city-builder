@@ -4,7 +4,7 @@ import { Tower } from '../Tower.js'
 import { ACCENT_COLORS } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, BARRACKS_COLOR, SHIELD_COLOR } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, SHIELD_COLOR } from '../blockTypes.js'
 
 // Fallback only - the king normally wears one of the three accents.
 // Damage rattle on a tile that just took a blow. World units of horizontal
@@ -188,8 +188,19 @@ export class TowerRenderer {
       return
     }
 
-    if (isBarracks(tower) || isShield(tower)) {
-      const accent = city.accentColors[isShield(tower) ? SHIELD_COLOR : BARRACKS_COLOR]
+    if (isBarracks(tower)) {
+      // Barracks wear turret grey - the rooftop soldier is what identifies them.
+      tower.isLit = false
+      tower.litColor = null
+      tower.laserColor = null
+      tower.baseColor = this.turretColor
+      tower.topColor = this.turretColor
+      this.shadeStack(tower)
+      return
+    }
+
+    if (isShield(tower)) {
+      const accent = city.accentColors[SHIELD_COLOR]
       tower.isLit = false
       tower.litColor = null
       tower.laserColor = null

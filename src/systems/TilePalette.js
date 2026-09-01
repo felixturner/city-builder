@@ -7,7 +7,7 @@ import { ENERGY_COLOR, AMMO_COLOR } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
 import { costKey, priceOfTile } from './tileCost.js'
-import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex, BARRACKS_COLOR } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex } from '../blockTypes.js'
 
 const SLOTS = 4
 const REFILL_TIME = 1.33 // seconds for a used/discarded palette slot to refill
@@ -89,9 +89,9 @@ export class TilePalette {
   /** The tile's block colour as a THREE.Color (matches its palette icon). */
   _tileColor3(tile, out) {
     if (tile.wall) { out.copy(Tower.COLORS[tile.topColorIndex]); return out }
-    if (isGenerator(tile) || isBarracks(tile) || isShield(tile)) {
+    if (isGenerator(tile) || isShield(tile)) {
       out.copy(this.city.accentColors[tile.colorIndex])
-    } else if (isTurret(tile)) {
+    } else if (isTurret(tile) || isBarracks(tile)) {
       out.set(0x9aa0aa)
     } else {
       out.copy(Tower.COLORS[tile.topColorIndex])
@@ -476,15 +476,11 @@ export class TilePalette {
   /**
    * World Y rotation for a non-wall tile's roof, in radians.
    *
-   * Only the two corner-shaped roofs have a facing worth turning - shield
-   * (triangle) and barracks (quarter circle). It is NEGATIVE because a tile's
-   * quarter turns run the opposite way to three.js's Y rotation: the tetromino
-   * states step +X -> +Z, whereas rotation.y = +90deg sends +X -> -Z.
+   * Every non-wall roof is now rotation-symmetric (the shield wears the hole
+   * top, the barracks the divot top), so there is no facing worth turning.
    */
   _roofRotation(tile, rot) {
-    if (tile.typeTop !== TopType.SHIELD && tile.typeTop !== TopType.BARRACKS) return 0
-    const turns = ((rot % 4) + 4) % 4
-    return -turns * (Math.PI / 2)
+    return 0
   }
 
   /** Ghost geometry for a tile at a rotation (tetromino body / scaled block). */

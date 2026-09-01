@@ -23,11 +23,10 @@ export const TopType = {
 }
 
 // Role -> top geometry index (decoupled). All three turrets render the divot top;
-// the enclosure generator renders the (freed) peg top; the barracks takes the
-// triangular Quart_Top, which nothing else uses.
-// ...and the shield takes the true triangular Tri_Top (geometry 9), which the
-// barracks' curved Quart_Top is not.
-const ROOF_GEOM = [0, 1, 2, 4, 4, 5, 3, 4, 1, 9]
+// the enclosure generator renders the (freed) peg top; the barracks wears the
+// same divot top as the turrets (its rooftop soldier tells it apart) and the
+// shield wears the hole top, same as the king.
+const ROOF_GEOM = [0, 1, 2, 4, 4, 5, 3, 4, 4, 2]
 export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 
 // Each generator type has ONE fixed accent colour (index into City.accentColors:

@@ -38,7 +38,7 @@ export class ExtraGeometry {
     if (unit) this.unit = this._bake(unit, { height: cellUnit * 0.9, sitOnGround: true })
 
     const star = find('star_red')
-    if (star) this.star = this._bake(star, { height: cellUnit * 0.75, standUp: true })
+    if (star) this.star = this._bake(star, { width: cellUnit * 0.75, lieFlat: true, sitOnGround: true })
 
     // Boulders, scaled by FOOTPRINT rather than height: they are wider than they
     // are tall and are meant to fill a cell, so matching heights would leave the
@@ -54,25 +54,25 @@ export class ExtraGeometry {
   /**
    * Bake a mesh's world transform into its geometry and normalise it.
    *
-   * `standUp` turns the shape so its thinnest axis is HORIZONTAL - the star is a
-   * flat cutout, and it has to stand on its edge for a spin about Y to sweep it
-   * round the way a pickup should. Lying flat, the same spin just turns it in its
-   * own plane like a starfish.
+   * `lieFlat` turns the shape so its thinnest axis is VERTICAL - the star is a
+   * flat cutout, and lying flat it spins about Y in its own plane like a
+   * starfish on the floor.
    *
    * It measures the shape rather than hard-coding a rotation, so it stays correct
    * if the model is re-exported at a different orientation.
    */
-  static _bake(mesh, { height, width, sitOnGround = false, standUp = false }) {
+  static _bake(mesh, { height, width, sitOnGround = false, lieFlat = false }) {
     const geo = mesh.geometry.clone()
     geo.applyMatrix4(mesh.matrixWorld)
     if (!geo.attributes.normal) geo.computeVertexNormals()
     geo.deleteAttribute('uv') // textures are ignored; don't ship the coords
 
-    if (standUp) {
+    if (lieFlat) {
       const size = new Box3().setFromBufferAttribute(geo.attributes.position).getSize(new Vector3())
-      // Only act if the flat face is currently pointing up; if the thin axis is
-      // already X or Z the shape is standing already.
-      if (size.y < size.x && size.y < size.z) {
+      // Only act if the thin axis is horizontal; thin-axis-Y is lying flat already.
+      if (size.x < size.y && size.x < size.z) {
+        geo.applyMatrix4(new Matrix4().makeRotationZ(Math.PI / 2))
+      } else if (size.z < size.y && size.z < size.x) {
         geo.applyMatrix4(new Matrix4().makeRotationX(Math.PI / 2))
       }
     }

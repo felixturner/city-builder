@@ -1,9 +1,8 @@
 import { Mesh, BoxGeometry, MeshStandardNodeMaterial, Vector2, Color } from 'three/webgpu'
 import { Sounds } from './lib/Sounds.js'
-import { isBarracks, BARRACKS_COLOR } from './blockTypes.js'
+import { isBarracks, towerTopY } from './blockTypes.js'
 import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
-import { Tower } from './Tower.js'
 import { ExtraGeometry } from './lib/ExtraGeometry.js'
 import { advanceHop, snapToCell, towerWorldCenter } from './lib/gridUnit.js'
 
@@ -59,14 +58,14 @@ export class Soldiers {
     // still wears the city's flat wall grey and reads as one of yours.
     this.geo = ExtraGeometry.unit || new BoxGeometry(2, 2, 2)
     this.usingModel = !!ExtraGeometry.unit
-    // The same grey the walls are built from, so a soldier reads as a piece of
-    // your city that got up and walked - and, more usefully, so the only
-    // coloured things moving on the board are creeps.
+    // The same grey the turret/barracks tiles wear, so a soldier reads as a
+    // piece of its barracks that got up and walked - and, more usefully, so the
+    // only coloured things moving on the board are creeps.
     //
     // No emissive: with bloom in the pipeline anything emissive smears, and the
     // loot crate is the only thing meant to.
     this.mat = new MeshStandardNodeMaterial({
-      color: Tower.BASE_COLOR.clone(),
+      color: new Color(0xbbbbbb), // TowerRenderer.turretColor
       roughness: 0.5,
       metalness: 0,
     })
@@ -74,6 +73,36 @@ export class Soldiers {
     this._c = new Vector2()
     this.cell = city.cellUnit
     this.baseY = 0.6
+    // One decorative soldier perched on each barracks roof (barracks tower -> mesh).
+    this.sitters = new Map()
+  }
+
+  /**
+   * Keep a lookout soldier sitting in each barracks' roof divot. Pure garnish -
+   * it fights nothing and counts toward no garrison - but it is what visually
+   * separates a barracks from a turret now that both wear the grey divot top.
+   */
+  updateSitters() {
+    for (const t of this.city.towers) {
+      if (!t.visible || !isBarracks(t) || t.numFloors < 1) continue
+      let mesh = this.sitters.get(t)
+      if (!mesh) {
+        mesh = new Mesh(this.geo, this.mat)
+        if (!this.usingModel) mesh.scale.setScalar(SIZE)
+        mesh.castShadow = true
+        mesh.rotation.y = Math.PI / 4
+        this.scene.add(mesh)
+        this.sitters.set(t, mesh)
+      }
+      // Re-place every frame: the roof height moves as floors are bought/lost.
+      this.towerWorld(t, this._c)
+      mesh.position.set(this._c.x, towerTopY(t, this.city.floorHeight) - 0.15, this._c.y)
+    }
+    for (const [t, mesh] of this.sitters) {
+      if (t.visible && isBarracks(t) && t.numFloors >= 1) continue
+      this.scene.remove(mesh)
+      this.sitters.delete(t)
+    }
   }
 
   /** World-space centre of a tower. */
@@ -229,7 +258,7 @@ export class Soldiers {
 
   kill(s, i) {
     this.city.debris?.spawn(s.mesh.position.x, this.baseY, s.mesh.position.z, 0.4,
-      this.city.accentColors[BARRACKS_COLOR], 5)
+      this.mat.color, 5)
     this.scene.remove(s.mesh)
     this.soldiers.splice(i, 1)
     Sounds.play('break2', 1.4, 0.2, 0.22)
@@ -237,6 +266,7 @@ export class Soldiers {
 
   update(dt) {
     this.updateGarrisons(dt)
+    this.updateSitters()
 
     for (let i = this.soldiers.length - 1; i >= 0; i--) {
       const s = this.soldiers[i]
