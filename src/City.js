@@ -32,6 +32,7 @@ import { Debris } from './lib/Debris.js'
 import { Sounds } from './lib/Sounds.js'
 import { EnergySystem } from './systems/EnergySystem.js'
 import { FlowField } from './systems/FlowField.js'
+import { Occupancy } from './systems/Occupancy.js'
 import { Enclosure } from './systems/Enclosure.js'
 import { TileBag } from './systems/TileBag.js'
 import { Upkeep } from './systems/Upkeep.js'
@@ -181,6 +182,8 @@ export class City {
 
     // Ground rings for zones of control + turret range, and the turret-circle
     // data for the post-process coverage glow.
+    // One claim per cell, shared by creeps and soldiers alike.
+    this.occupancy = new Occupancy(this)
     this.rangeVisuals = new RangeVisuals(this)
   }
 
@@ -1085,7 +1088,7 @@ export class City {
     this.rangeVisuals.invalidate() // cached ring geometry is now the wrong size
     this.updateTowerVisuals() // relink trails, redraw rings, recompute income
     this.enclosure.update()
-    this.energy.refreshManaStats() // energy/ammo caps
+    this.energy.refreshManaStats() // energy cap
     this.mana?.render()
     for (const tower of this.towers) this.updateTowerMatrices(tower)
   }
@@ -1251,7 +1254,6 @@ export class City {
     this.updateKingAlarm()
     this.updateKingMarker(dt)
     this.flowView?.update()
-    this.pathPreview?.update()
     this.updateKingBeam()
   }
 

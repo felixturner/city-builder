@@ -26,10 +26,23 @@ export class WaveClock {
     // lead because their riser needs more runway - see WaveAudio.
     this.countdownLead = 10
     this.bossCountdownLead = 15
+
+    // Seed for the edge hash, re-rolled per run. The hash has to stay a pure
+    // function of the wave index - the arrows and the spawner both ask for it
+    // every frame and have to agree - but nothing says every RUN should get the
+    // same answers. Without this, wave 1 came from the same side every game.
+    this.rerollSeed()
   }
 
   advance(dt) { this.elapsed += dt }
-  reset() { this.elapsed = 0 }
+
+  /** New run: back to zero, and a fresh set of sides to be attacked from. */
+  reset() {
+    this.elapsed = 0
+    this.rerollSeed()
+  }
+
+  rerollSeed() { this.seed = Math.floor(Math.random() * 0x10000) }
 
   /** Seconds of build at the start of each cycle, before the wave lands. */
   get buildTime() { return this.wavePeriod - this.waveActive }
@@ -72,14 +85,15 @@ export class WaveClock {
    * before it happens - the incoming arrows have to know the direction while the
    * wave is still being counted down, so it cannot be rolled at spawn time.
    *
-   * The hash is a cheap deterministic scramble on the wave index: same wave,
-   * same answer however many times it is asked, and the arrows ask every frame.
+   * The hash is a cheap deterministic scramble on the wave index plus this run's
+   * seed: same wave, same answer however many times it is asked (the arrows ask
+   * every frame), but a different sequence of sides from one run to the next.
    * Boss rounds stay on a single side - the whole point of a boss group is that
    * it arrives as one mass.
    */
   waveEdges(waveIdx) {
     if (waveIdx < 0) return [0]
-    const hash = Math.abs(Math.imul(waveIdx + 1, 2654435761)) // Knuth
+    const hash = Math.abs(Math.imul(waveIdx + 1 + this.seed, 2654435761)) // Knuth
     const first = hash % 4
     // Every third wave opens a second front, on any other edge - including the
     // opposite one, so a wave can genuinely come at you from both sides.

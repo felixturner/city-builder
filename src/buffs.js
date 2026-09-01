@@ -21,7 +21,6 @@ export const Buffs = {
   fireRate: 1, // multiplier on turret cooldowns (lower = faster)
   paletteSlots: 0, // extra palette slots
   refillRate: 1, // multiplier on palette refill time (lower = faster)
-  ammoMax: 0, // extra ammo capacity
   energyMax: 0, // extra energy capacity
   soldierHp: 0, // extra soldier hit points
   squadPerFloor: 0, // extra soldiers per barracks floor
@@ -39,7 +38,6 @@ export function resetBuffs() {
   Buffs.fireRate = 1
   Buffs.paletteSlots = 0
   Buffs.refillRate = 1
-  Buffs.ammoMax = 0
   Buffs.energyMax = 0
   Buffs.soldierHp = 0
   Buffs.squadPerFloor = 0

@@ -2,12 +2,12 @@ import { Mesh, BoxGeometry, MeshStandardNodeMaterial, Color } from 'three/webgpu
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ACCENT_COLORS } from './palette.js'
-import { ENERGY_COLOR, AMMO_COLOR } from './Mana.js'
+import { ENERGY_COLOR } from './Mana.js'
 import { glow, NO_AO_MRT } from './fx.js'
 import { ExtraGeometry } from './lib/ExtraGeometry.js'
 
 /**
- * LootBoxes - crates scattered over the board that pay out energy or ammo when
+ * LootBoxes - crates scattered over the board that pay out energy when
  * you WALL THEM IN.
  *
  * A crate is a thing you have to notice, reach and enclose, so the reward is
@@ -221,7 +221,8 @@ export class LootBoxes {
   }
 
   /**
-   * A crate pays energy or ammo, one or the other, at random.
+   * A crate pays energy. It used to flip a coin between energy and ammo; ammo is
+   * gone, so there is only one currency left to pay in.
    *
    * Upgrade cards moved back onto boss rounds, so a crate is a resource pickup
    * now - which suits what it costs: walling one in is a deliberate detour off
@@ -237,16 +238,10 @@ export class LootBoxes {
     if (!mana) return
     const level = (this.demo.creeps?.waveNumber ?? 0) + 1
     const amount = CRATE_REWARD * level
-    const ammo = Math.random() < 0.5
-
-    if (ammo) mana.addAmmo(amount)
-    else mana.add(amount)
+    mana.add(amount)
 
     this.city.floatingText?.spawn(
-      b.x, HOVER_Y + 1.2, b.z,
-      `+${amount} ${ammo ? 'ammo' : 'energy'}`,
-      ammo ? AMMO_COLOR : ENERGY_COLOR,
-      0, null
+      b.x, HOVER_Y + 1.2, b.z, `+${amount} energy`, ENERGY_COLOR, 0, null
     )
   }
 }

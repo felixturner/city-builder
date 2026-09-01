@@ -1,5 +1,5 @@
 import { Sounds } from './lib/Sounds.js'
-import { ENERGY_COLOR, AMMO_COLOR } from './palette.js'
+import { ENERGY_COLOR } from './palette.js'
 import { Buffs } from './buffs.js'
 
 // Set false to remove the energy cap (energy is balanced by spend, not a ceiling).
@@ -11,29 +11,25 @@ const SCORE_BLIP_EVERY = 10
 
 // Resource colours come from the shared three-accent palette; re-exported here
 // because most callers already import them from Mana.
-export { ENERGY_COLOR, AMMO_COLOR } from './palette.js'
+export { ENERGY_COLOR } from './palette.js'
 
 /**
- * Mana - resource HUD (top-left): two metered resources plus the score.
+ * Mana - resource HUD (top-left): one metered resource plus the score.
  *   energy: current / max  (max = baseMax + population)  - spent on building
- *   ammo:   current / max                                - spent by turrets
  *   score:  whole seconds survived (ticks up during play, freezes on game over)
  *   level:  wave number, 1-based (Creeps.waveNumber + 1)
  *
- * Each resource gets a progress bar directly above its readout. Grey blocks
- * generate energy and raise its cap (City calls setStats); ammo comes only from
- * boxes dropped by dying creeps, so sustained fire depends on killing things.
+ * Energy gets a progress bar directly above its readout, and grey blocks
+ * generate it and raise its cap (City calls setStats). Turrets used to run on a
+ * second resource with its own bar, its own supply line and its own cap; they
+ * fire for free now, so energy is the whole economy.
  */
 export class Mana {
-  constructor(baseMax = 100, initial = 100, ammoMax = 50, ammoInitial = 30) {
+  constructor(baseMax = 100, initial = 100) {
     this.baseMax = baseMax
     this.population = 0
     this.max = baseMax
     this.current = Math.min(initial, this.max)
-    this.ammoMax = ammoMax
-    // Ammo is fractional under the hood (a peg shot costs a quarter) but only
-    // ever displayed rounded down - see render().
-    this.ammo = Math.min(ammoInitial, ammoMax)
     this.elapsed = 0 // survival time = score
     this.level = 1 // 1-based wave number, pushed in by Demo each frame
     this._build()
@@ -76,24 +72,17 @@ export class Mana {
     }
 
     const e = bar(ENERGY_COLOR)
-    const a = bar(AMMO_COLOR)
     this.energyFill = e.fill
-    this.ammoFill = a.fill
-    this.energyBar = e.track // ResourceFly aims income boxes at these
-    this.ammoBar = a.track
+    this.energyBar = e.track // ResourceFly aims income boxes at this
 
     this.energyEl = document.createElement('div')
-    this.ammoEl = document.createElement('div')
     this.scoreEl = document.createElement('div')
     this.levelEl = document.createElement('div')
     this.energyEl.style.color = ENERGY_COLOR
-    this.ammoEl.style.color = AMMO_COLOR
 
-    // Each bar sits directly above the number it describes.
+    // The bar sits directly above the number it describes.
     el.appendChild(e.track)
     el.appendChild(this.energyEl)
-    el.appendChild(a.track)
-    el.appendChild(this.ammoEl)
     el.appendChild(this.scoreEl)
     el.appendChild(this.levelEl)
 
@@ -119,14 +108,11 @@ export class Mana {
   }
 
   render() {
-    const ammoCap = this.ammoMax + Buffs.ammoMax
     this.energyEl.textContent = `energy: ${Math.floor(this.current)} /${this.max}`
-    this.ammoEl.textContent = `ammo:   ${Math.floor(this.ammo)} /${ammoCap}`
     this.scoreEl.textContent = `score:  ${Math.floor(this.elapsed)}`
     this.levelEl.textContent = `level:  ${this.level}`
     const pct = (v, m) => `${Math.max(0, Math.min(100, (v / m) * 100))}%`
     this.energyFill.style.width = pct(this.current, this.max)
-    this.ammoFill.style.width = pct(this.ammo, ammoCap)
   }
 
   /** Set the displayed level (1-based wave). No-op when unchanged. */
@@ -180,23 +166,6 @@ export class Mana {
       if (CAP_ENABLED && !wasFull && this.current >= this.max) Sounds.play('energy-full')
       else Sounds.play('energy-up') // throttled in Sounds.js
     }
-    this.render()
-  }
-
-  // -- Ammo -------------------------------------------------------------------
-
-  /** Spend ammo. Silent: turrets fire several times a second and the gunfire is
-   *  the feedback. Returns false when there isn't enough. */
-  spendAmmo(amount = 1) {
-    if (this.ammo < amount) return false
-    this.ammo -= amount
-    this.render()
-    return true
-  }
-
-  /** Collect an ammo box. */
-  addAmmo(amount = 5) {
-    this.ammo = Math.min(this.ammoMax + Buffs.ammoMax, this.ammo + amount)
     this.render()
   }
 }

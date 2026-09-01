@@ -1,6 +1,6 @@
 import { Vector2, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
-import { ENERGY_COLOR, AMMO_COLOR } from '../Mana.js'
+import { ENERGY_COLOR } from '../Mana.js'
 import { Buffs } from '../buffs.js'
 import {
   isPathGenerator, claimsEnclosure, isGrey, towerArea, towerTopY,
@@ -22,24 +22,18 @@ const FLOOR_PULSE_DECAY = 0.22
 // being enough to make energy a non-issue) -> 0.07 (+25%) -> 0.056 (-20%) once
 // PROD_FACTOR had been raised twice and area generators were out-earning again.
 const ENCLOSURE_RATE = 0.056
-// AMMO per (footprint cell x trail length) for the blue path generators.
+// Energy per (footprint cell x trail length) for the blue path generators.
 //
-// Path generators pay AMMO, not energy. Both colours used to feed one bar,
-// which made blue a strictly worse pink - its rate had been cut over and over
-// for exactly that reason. Now they run the two halves of the economy: seal
-// ground to build, link support towers to shoot.
-//
-// Sized for the ammo economy, which runs at a completely different scale from
-// energy: a peg shot costs 0.25 and the magazine caps at 50, where energy is
-// spent in tens and capped in the hundreds. The old energy rate (0.2, then
-// 0.14) poured several ammo a SECOND into a bar a firing turret drains at
-// 0.71/s - which is why ammo never went down.
-//
-// At 0.075 a pair of 3-storey plus-blocks six cells apart pays about 0.18 a
-// tick each way, so three linked generators supply roughly three quarters of
-// one peg turret firing flat out. It still scales combinatorially with the
-// number of same-colour generators in reach.
-const PATH_AMMO_RATE = 0.075
+// 0.075 -> 0.3 (4x) when ammo went away. That 0.075 was priced against a
+// magazine of 50 rounds a firing turret drained at 0.71/s, not against build
+// costs in the tens: paid into the energy bar it earned about a tenth of what
+// the same tile earns as a sealed enclosure, which made blue a strictly worse
+// pink again. At 0.3 a linked pair of 1x1s six cells apart pays ~0.7 a tick
+// each way, and a network still scales combinatorially with how many
+// same-colour generators are in reach - so four of them beat two by more than
+// double. The two colours are two ways to earn the one currency now: seal
+// ground, or link a network.
+const PATH_LINK_RATE = 0.3
 // Volume of the per-arrival income blip. It fires several times a second at a
 // developed economy, so it sits well under the one-off cues.
 const INCOME_BLIP_VOLUME = 0.54
@@ -218,8 +212,8 @@ export class EnergySystem {
     let mana = 0
     const contrib = new Map()
     for (const [a, b, dist] of pairs) {
-      const pa = this.area(a) * dist * PATH_AMMO_RATE * PROD_FACTOR * Buffs.genRate
-      const pb = this.area(b) * dist * PATH_AMMO_RATE * PROD_FACTOR * Buffs.genRate
+      const pa = this.area(a) * dist * PATH_LINK_RATE * PROD_FACTOR * Buffs.genRate
+      const pb = this.area(b) * dist * PATH_LINK_RATE * PROD_FACTOR * Buffs.genRate
       mana += pa + pb
       contrib.set(a, (contrib.get(a) || 0) + pa)
       contrib.set(b, (contrib.get(b) || 0) + pb)
@@ -315,7 +309,7 @@ export class EnergySystem {
    * The generator's lifespan is charged ONCE here, not per arrival - the pulses
    * used to be one-per-tick, so this is where a per-tick charge would go.
    */
-  scheduleIncome(tower, amt, span = GEN_INTERVAL, kind = 'energy') {
+  scheduleIncome(tower, amt, span = GEN_INTERVAL) {
     const city = this.city
     // One unit per slot, until the slots would be closer together than
     // MIN_SPAWN_GAP; past that each slot carries more than 1.
@@ -339,7 +333,7 @@ export class EnergySystem {
       left -= give
       this.pulseEvents.push({
         members: [tower], t: phase + i * gap, amt: give, sound: 'dink',
-        kind, color: kind === 'ammo' ? AMMO_COLOR : ENERGY_COLOR, cx, cy, cz,
+        color: ENERGY_COLOR, cx, cy, cz,
       })
     }
   }
@@ -351,25 +345,26 @@ export class EnergySystem {
 
     // Generator mana tick: schedule each unit's flash at a random offset.
     const genMana = this.pathGenMana + this.enclosureGenMana
-    // Cache live income/sec for price scaling. ENERGY only - build costs are
-    // paid in energy, so ammo production has no business inflating them.
-    this.incomePerSecValue = this.enclosureGenMana / GEN_INTERVAL
+    // Cache live income/sec for price scaling. Both generator types count now
+    // that they both pay energy - path output used to be ammo, which had no
+    // business inflating prices paid in the other currency.
+    this.incomePerSecValue = genMana / GEN_INTERVAL
       + (city.king && city.king.visible ? KING_BONUS : 0) / GREY_INTERVAL
     if (genMana > 0) {
       this.manaTimer += dt
       while (this.manaTimer >= GEN_INTERVAL) {
         this.manaTimer -= GEN_INTERVAL
-        // Path-generator output is fractional AMMO, so it is carried on the
-        // generator until it adds up to a whole unit. Rounding each tick would
-        // either round a small network down to nothing forever, or round it up
-        // to a unit a tick - which is the flood this replaced.
+        // Path-generator output is fractional, so it is carried on the generator
+        // until it adds up to a whole unit. Rounding each tick would either
+        // round a small network down to nothing forever, or round it up to a
+        // unit a tick - which is the flood this replaced.
         for (const [tower, amt] of this.pathGenContribution) {
           if (!(amt > 0) || !tower.visible) continue
-          tower.ammoCarry = (tower.ammoCarry || 0) + amt
-          const whole = Math.floor(tower.ammoCarry)
+          tower.manaCarry = (tower.manaCarry || 0) + amt
+          const whole = Math.floor(tower.manaCarry)
           if (whole >= 1) {
-            tower.ammoCarry -= whole
-            this.scheduleIncome(tower, whole, GEN_INTERVAL, 'ammo')
+            tower.manaCarry -= whole
+            this.scheduleIncome(tower, whole)
           }
         }
         for (const t of this.enclosureGens) {
@@ -393,8 +388,7 @@ export class EnergySystem {
         }
         // The resource lands at the moment its caption pops, not up front, so
         // the bar climbs in step with the bleeps.
-        if (e.kind === 'ammo') city.mana.addAmmo(e.amt)
-        else city.mana.add(e.amt)
+        city.mana.add(e.amt)
         // No "+N" caption here any more: the flying box and the bar climbing
         // already say it, and at full income the board was carpeted in them.
         // The sound the caption used to carry fires on its own.

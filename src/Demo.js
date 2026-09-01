@@ -36,7 +36,6 @@ import { Turrets } from './Turrets.js'
 import { CreepTimeline } from './CreepTimeline.js'
 import { WaveArrows } from './WaveArrows.js'
 import { FlowFieldView } from './systems/FlowFieldView.js'
-import { PathPreview } from './systems/PathPreview.js'
 import { FloatingText } from './FloatingText.js'
 import { TilePalette } from './systems/TilePalette.js'
 
@@ -227,7 +226,6 @@ export class Demo {
     // authoring rather than as hit points in the way.
     this.city.flowView = new FlowFieldView(this.city, this.creeps)
     // ...and the single traced route for the wave that's actually next.
-    this.city.pathPreview = new PathPreview(this.city, this.creeps)
 
     // Friendly units raised by barracks tiles
     this.soldiers = new Soldiers(this.scene, this.city, this.creeps)

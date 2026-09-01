@@ -3,7 +3,7 @@ import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
 import { Buffs } from '../buffs.js'
-import { ENERGY_COLOR, AMMO_COLOR } from '../palette.js'
+import { ENERGY_COLOR, PINK } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
 import { costKey, priceOfTile } from './tileCost.js'
@@ -282,7 +282,7 @@ export class TilePalette {
     if (!slot.costEl) return
     if (!slot.tile) { slot.costEl.textContent = ''; return }
     slot.costEl.textContent = `${this._tileCost(slot.tile)}`
-    slot.costEl.style.color = this._affordable(slot.tile) ? '#fff' : AMMO_COLOR
+    slot.costEl.style.color = this._affordable(slot.tile) ? '#fff' : PINK
   }
 
   // ---- icon drawing -----------------------------------------------------------

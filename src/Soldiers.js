@@ -96,18 +96,16 @@ export class Soldiers {
   }
 
   /**
-   * True if another soldier already holds this cell. A soldier's claim is its
-   * DESTINATION (toX/toZ), not where it currently is: two of them mid-hop into
-   * the same cell would otherwise both pass the test and land on top of each
-   * other. Claiming the target on departure means the cell is reserved for the
-   * whole hop.
+   * True if another UNIT already holds this cell - soldier or creep alike.
+   *
+   * This used to scan the soldier list only, so a soldier and a creep stood in
+   * the same cell quite happily. It now reads City.occupancy, the one register
+   * every walking thing claims into, where a claim is on the cell a unit is
+   * walking INTO rather than the one it stands in: two units mid-hop toward the
+   * same cell would otherwise both pass the test and land on top of each other.
    */
   taken(x, z, except) {
-    for (const o of this.soldiers) {
-      if (o === except) continue
-      if (Math.abs(o.toX - x) < 0.1 && Math.abs(o.toZ - z) < 0.1) return true
-    }
-    return false
+    return this.city.occupancy.takenWorld(x, z, except)
   }
 
   /** A cell a soldier may move into: on the board, not a building, unclaimed. */
@@ -174,6 +172,9 @@ export class Soldiers {
       hp: SOLDIER_HP + Buffs.soldierHp, target: null, attackTimer: 0, pause: 0,
       fromX: home.x, fromZ: home.y, toX: sx, toZ: sz, t: 0,
     })
+    // Claim the cell it is stepping out onto - it was spawned after this frame's
+    // register was built, so nothing else knows about it yet.
+    this.city.occupancy.claimWorld(sx, sz, this.soldiers[this.soldiers.length - 1])
     Sounds.play('pop', 1.6, 0.15, 0.18)
   }
 
@@ -196,6 +197,11 @@ export class Soldiers {
     const nx = s.toX + dx * this.cell
     const nz = s.toZ + dz * this.cell
     if (!this.cellFree(nx, nz, s)) return false
+    // Release the cell being left and claim the one being entered right away, so
+    // a unit planned later in the same frame sees this one as taken.
+    const occ = this.city.occupancy
+    occ.releaseWorld(s.toX, s.toZ, s)
+    occ.claimWorld(nx, nz, s)
     s.fromX = s.toX; s.fromZ = s.toZ
     s.toX = nx; s.toZ = nz
     s.t = 0

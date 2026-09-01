@@ -11,7 +11,6 @@ import {
   Color,
 } from 'three/webgpu'
 import { Sounds, BOSS_HORN_PREROLL, MAX_RISER_PREROLL } from './lib/Sounds.js'
-import { AMMO_COLOR } from './Mana.js'
 import { isShield, shieldCharges, shieldRadiusCells, KING_WARN_CELLS } from './blockTypes.js'
 import { SHIELD_LINE } from './palette.js'
 
@@ -109,25 +108,27 @@ export class Creeps {
     this.creeps = []
 
     this.geo = new BoxGeometry(2, 2, 2)
-    // King-seekers read purple; gen-seekers stay the near-black marcher colour.
-    // The two behave differently only once the king is walled off - one keeps
-    // smashing toward it, the other peels away to a generator - so it has to be
-    // readable at a glance which half of a wave is coming for the king.
-    this.mat = new MeshStandardNodeMaterial({
-      color: new Color(0x7b2ff7),
-      roughness: 0.55,
-      metalness: 0,
-    })
-    this.matGen = new MeshStandardNodeMaterial({
+    // Two kinds of creep, and the colour is the tell:
+    //   SMASHERS (near-black) bulldoze - a straight line at the king, attacking
+    //     whatever stands on it, so your walls are something they chew through.
+    //   SEEKERS (purple) read the flow field - they thread the gaps you left to
+    //     reach the king, and peel off to a generator if you have sealed it.
+    // Half a wave is each, and every giant is a smasher.
+    this.smasherMat = new MeshStandardNodeMaterial({
       color: new Color(0x1a1a20),
       roughness: 0.55,
       metalness: 0,
     })
-    // F-mode seeker dot above each creep: red = king-seeker, green = gen-seeker.
+    this.seekerMat = new MeshStandardNodeMaterial({
+      color: new Color(0x7b2ff7),
+      roughness: 0.55,
+      metalness: 0,
+    })
+    // F-mode type dot above each creep: red = smasher, green = seeker.
     // depthTest off so it stays visible even when the creep is behind a tower.
     this.dotGeo = new SphereGeometry(0.34, 12, 8)
-    this.dotKingMat = new MeshBasicNodeMaterial({ color: new Color(0xff2020), depthTest: false })
-    this.dotGenMat = new MeshBasicNodeMaterial({ color: new Color(0x22ff22), depthTest: false })
+    this.dotSmasherMat = new MeshBasicNodeMaterial({ color: new Color(0xff2020), depthTest: false })
+    this.dotSeekerMat = new MeshBasicNodeMaterial({ color: new Color(0x22ff22), depthTest: false })
 
     // Laser creeps: stop at range and fire a turret-style beam at towers.
     this.laserMat = new MeshStandardNodeMaterial({ color: new Color(0xb01f4a), roughness: 0.4, metalness: 0.15 })
@@ -137,13 +138,13 @@ export class Creeps {
     this._beamFrom = new Vector3()
     this._beamTo = new Vector3()
     // Shooter creeps read deep orange so they're distinguishable from marchers;
-    // gen-seeker shooters are a lighter orange (matching the body lightness rule).
-    this.shooterMat = new MeshStandardNodeMaterial({
+    // seeker shooters are a lighter orange (matching the body lightness rule).
+    this.shooterSmasherMat = new MeshStandardNodeMaterial({
       color: new Color(0xd2531e),
       roughness: 0.5,
       metalness: 0,
     })
-    this.shooterMatGen = new MeshStandardNodeMaterial({
+    this.shooterSeekerMat = new MeshStandardNodeMaterial({
       color: new Color(0xef8a4d),
       roughness: 0.5,
       metalness: 0,
@@ -240,9 +241,9 @@ export class Creeps {
     this._quietTimer = 0
     this.bigChance = 0.1 // fraction of creeps that are big (once they unlock)
     this.bigUnlockWave = 1 // no big creeps before this wave (level 2)
-    // Fraction of creeps that doggedly smash toward the king (ignoring gens) when
-    // it's walled off, rather than diverting to a reachable gen.
-    this.kingSeekerChance = 0.5
+    // Fraction of creeps that are SMASHERS: a greedy beeline at the king through
+    // whatever is in the way. The rest are seekers, who path around it.
+    this.smasherChance = 0.5
 
     // Shooter creeps: stop at range and lob little blocks at towers.
     this.shooterChance = 0.1 // fraction of creeps that are shooters
@@ -300,30 +301,6 @@ export class Creeps {
      */
     this.hpPerWave = 0.16 // +16% of base health per level
     this.attackPerWave = 0.14 // +14% of base swing rate per level
-
-    // Ammo boxes: a dying creep leaves one 20% of the time.
-    //
-    // Kills pay NOTHING. The loop used to refund more than a kill cost (0.2 x 8
-    // against a 1.0 kill), so ammo sat pinned at the cap all run - a number on
-    // the HUD rather than a constraint. Halving it only slowed that down; every
-    // shot fired still partly paid for itself, which is what made the whole
-    // resource inert.
-    //
-    // So ammo now comes from ONE place: path generators, which supply it the way
-    // enclosure generators supply energy (see EnergySystem). Shooting is a pure
-    // drain, and how much you can shoot is decided by what you built - not by
-    // how much you already shot. Crates and the Deep Magazines card still top it
-    // up, but neither is a supply line.
-    this.ammoDropChance = 0
-    this.ammoDropAmount = 8
-    this.ammoBoxGeo = new BoxGeometry(1.1, 1.1, 1.1)
-    this.ammoBoxMat = new MeshStandardNodeMaterial({
-      color: new Color(AMMO_COLOR),
-      emissive: new Color(AMMO_COLOR).multiplyScalar(0.45),
-      roughness: 0.35,
-      metalness: 0,
-    })
-    this.ammoBoxes = []
 
     this._p = new Vector2()
     this._sv = new Vector2()
@@ -436,13 +413,12 @@ export class Creeps {
     const scale = giant ? 3 : (big ? 1.4 : 0.7)
     const baseY = giant ? 3 : (big ? 1.5 : 0.8)
 
-    // King-seekers ignore the gen flow and smash walls toward the king when it's
-    // sealed; giants always bee-line the king (too big to use gaps anyway).
-    const kingSeeker = giant ? true : Math.random() < this.kingSeekerChance
+    // Giants are always smashers - too big to use the gaps a seeker threads.
+    const smasher = giant ? true : Math.random() < this.smasherChance
     const bodyMat = giant ? this.giantMat
       : laser ? this.laserMat
-        : shooter ? (kingSeeker ? this.shooterMat : this.shooterMatGen)
-          : (kingSeeker ? this.mat : this.matGen)
+        : shooter ? (smasher ? this.shooterSmasherMat : this.shooterSeekerMat)
+          : (smasher ? this.smasherMat : this.seekerMat)
     const mesh = new Mesh(this.geo, bodyMat)
     mesh.castShadow = true
     mesh.scale.setScalar(scale)
@@ -468,9 +444,9 @@ export class Creeps {
     mesh.position.set(x, baseY, z)
     this.scene.add(mesh)
 
-    // F-mode seeker dot above the creep (red = king-seeker, green = gen-seeker).
+    // F-mode type dot above the creep (red = smasher, green = seeker).
     // Counter-scaled so it reads the same on big/small creeps.
-    const typeDot = new Mesh(this.dotGeo, kingSeeker ? this.dotKingMat : this.dotGenMat)
+    const typeDot = new Mesh(this.dotGeo, smasher ? this.dotSmasherMat : this.dotSeekerMat)
     typeDot.position.set(0, 2.6, 0)
     typeDot.scale.setScalar(1 / scale)
     typeDot.renderOrder = 11
@@ -508,6 +484,10 @@ export class Creeps {
       shootTimer: 0,
       shotsFired: 0,
       baseY,
+      // Cells on a side this body claims in the occupancy register. A giant is
+      // six world units across and a big nearly three, so one cell each let
+      // marchers walk straight through them.
+      cellSpan: giant ? 3 : (big ? 2 : 1),
       maxHits: Math.max(1, Math.round(
         (giant ? this.hitPoints * 8 : (big ? this.hitPoints * 2 : this.hitPoints))
         * Buffs.creepHp * ramp.hp
@@ -525,7 +505,7 @@ export class Creeps {
       attackRate: giant || big ? 2 : 1, // swings per second, relative to normal
       atkSpeed: ramp.atk, // the level ramp, also a rate
       stepMul: giant ? 1.8 : 1, // giants lumber slower (was 2.2 - turrets got too long on them)
-      kingSeeker,
+      smasher,
     })
   }
 
@@ -859,21 +839,21 @@ export class Creeps {
   }
 
   /**
-   * Plan the next cell. Two behaviours, split by creep at spawn:
+   * Plan the next cell. Two behaviours, decided per creep at spawn:
    *
-   *  - KING-SEEKERS (purple, half the wave, and every giant) bulldoze: a greedy
-   *    beeline at the king that stops and smashes whatever stands in the line,
+   *  - SMASHERS (near-black, half the wave, and every giant) bulldoze: a greedy
+   *    beeline at the king that stops and smashes whatever stands on the line,
    *    wall or not. They used to do this only when the king was sealed off, so
    *    with an open board every creep in the game was a flow-follower and the
    *    walls you built between them and the king were simply walked around.
-   *  - Everything else follows the flow field: around walls to the king if it is
+   *  - SEEKERS (purple) follow the flow field: around walls to the king if it is
    *    reachable, to the nearest generator if it is not.
    *
    * Returns 'move', 'attack', 'wait' or 'done'.
    */
   planStep(c) {
     const city = this.city
-    if (c.giant || c.kingSeeker) return this._planStepGreedy(c)
+    if (c.smasher) return this._planStepGreedy(c)
     const cell = city.worldToCell(c.toX, c.toZ)
     if (cell && city.flow.ready) {
       const i = cell.gy * city.gridCellsX + cell.gx
@@ -885,7 +865,7 @@ export class Creeps {
         // one stalled creep would hold up everything behind it - better a rare
         // overlap than a column frozen for the rest of the round.
         const desperate = (c.waited || 0) >= MAX_WAIT_STEPS
-        const step = this.pickFlowStep(cell, i, dist, fdx, fdz, desperate)
+        const step = this.pickFlowStep(c, cell, i, dist, fdx, fdz, desperate)
         if (!step) { c.waited = (c.waited || 0) + 1; return 'wait' }
         c.waited = 0
         const nx = c.toX + step[0] * this.cell
@@ -899,13 +879,7 @@ export class Creeps {
         // flow step can walk into is a goal: the king, or a generator.
         const blocking = this.towerAt(nx, nz)
         if (blocking) { c.target = blocking; return 'attack' }
-        // Claim the new cell and release the old one straight away, so a creep
-        // planned later in the same frame sees this one as taken.
-        const W = city.gridCellsX
-        this._occupied?.delete(cell.gy * W + cell.gx)
-        const to = city.worldToCell(nx, nz)
-        if (to) this._occupied?.add(to.gy * W + to.gx)
-        c.fromX = c.toX; c.fromZ = c.toZ; c.toX = nx; c.toZ = nz; c.t = 0
+        this.claimStep(c, nx, nz)
         return 'move'
       }
     }
@@ -913,31 +887,29 @@ export class Creeps {
   }
 
   /**
-   * Which cells are spoken for, by the cell each creep is walking INTO.
+   * True if another unit is already walking into the block this creep covers.
    *
-   * Keyed on the destination rather than the current position because a creep
-   * mid-hop is between two cells and it is the one it is heading for that must
-   * not be taken - claiming on arrival would let two creeps commit to the same
-   * cell on the same frame and land on top of each other.
-   *
-   * Rebuilt wholesale each frame (one pass over the creeps, cheap) rather than
-   * maintained incrementally, so a creep dying or being spliced out can never
-   * leave a phantom claim that blocks a cell for the rest of the run.
+   * The register is City.occupancy, shared with the soldiers - a cell holds one
+   * unit whatever kind it is, and a body wider than a cell holds several (3x3
+   * for a giant, 2x2 for a big). Only bombers are exempt: they are in the air.
    */
-  rebuildOccupancy() {
-    const occupied = this._occupied || (this._occupied = new Set())
-    occupied.clear()
-    const W = this.city.gridCellsX
-    for (const creep of this.creeps) {
-      if (creep.bomber || creep.giant) continue // airborne, or too big to queue
-      const cell = this.city.worldToCell(creep.toX, creep.toZ)
-      if (cell) occupied.add(cell.gy * W + cell.gx)
-    }
+  cellTaken(gx, gy, c) {
+    if (c && c.bomber) return false
+    return this.city.occupancy.taken(gx, gy, c)
   }
 
-  /** True if a ground creep is already heading for this cell. */
-  cellTaken(gx, gy) {
-    return !!this._occupied && this._occupied.has(gy * this.city.gridCellsX + gx)
+  /**
+   * Commit a creep to (nx, nz): release the cell it is leaving and claim the one
+   * it is entering, straight away, so a creep planned later in the same frame
+   * sees this one as taken.
+   */
+  claimStep(c, nx, nz) {
+    const occ = this.city.occupancy
+    if (!c.bomber) {
+      occ.releaseWorld(c.toX, c.toZ, c)
+      occ.claimWorld(nx, nz, c)
+    }
+    c.fromX = c.toX; c.fromZ = c.toZ; c.toX = nx; c.toZ = nz; c.t = 0
   }
 
   /**
@@ -959,7 +931,7 @@ export class Creeps {
    * queue: it breaks the lockstep that sets in once several creeps do share a
    * corridor. They are walking, not pathfinding, and it costs one cell.
    */
-  pickFlowStep(cell, i, dist, fdx, fdz, ignoreTaken = false) {
+  pickFlowStep(c, cell, i, dist, fdx, fdz, ignoreTaken = false) {
     const W = this.city.gridCellsX, H = this.city.gridCellsY
     const here = dist[i]
     const closer = [], worse = []
@@ -968,7 +940,7 @@ export class Creeps {
       if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
       const nd = dist[ny * W + nx]
       if (nd < 0) continue // wall, or no path from there
-      if (!ignoreTaken && this.cellTaken(nx, ny)) continue // someone's already going there
+      if (!ignoreTaken && this.cellTaken(nx, ny, c)) continue // someone's already going there
       ;(nd < here ? closer : worse).push(d)
     }
     // Every way forward is either walled or spoken for: hold position and try
@@ -981,8 +953,15 @@ export class Creeps {
     return [STEP_DX[pick], STEP_DZ[pick]]
   }
 
-  /** Greedy beeline toward the king, smashing through whatever's in the way (one
-   *  axis at a time). Used when the flow field has no path (king fully sealed). */
+  /**
+   * Greedy beeline toward the king, smashing through whatever's in the way (one
+   * axis at a time). What the smashers - half the wave, plus every giant - walk.
+   *
+   * It respects the same one-unit-per-cell register the flow-followers do: the
+   * preferred axis first, the other axis if that cell is spoken for, and a wait
+   * if both are. Without that a bulldozing column walked straight through its
+   * own front rank and stacked several creeps on one tile.
+   */
   _planStepGreedy(c) {
     const king = this.city.king
     if (!king || !king.visible) return 'done'
@@ -1004,16 +983,31 @@ export class Creeps {
     const preferX = Math.abs(dx) >= Math.abs(dz)
     let nx = x + (preferX ? Math.sign(dx) * this.cell : 0)
     let nz = z + (preferX ? 0 : Math.sign(dz) * this.cell)
+    // The other axis, for when the first choice is rock or spoken for.
+    const ax = x + (preferX ? 0 : Math.sign(dx) * this.cell)
+    const az = z + (preferX ? Math.sign(dz) * this.cell : 0)
+    const altIsStep = ax !== x || az !== z // false when the goal is axis-aligned
 
     // Rocks are indestructible, so walking into one and attacking it would stall
     // the creep for the rest of the run. Try the other axis instead; if that is
     // rock too (two boulders cornering a creep - rare) take the first step
     // anyway, since a moment of overlap beats a permanent stall.
     if (this.city.rocks.blocksWorld(nx, nz)) {
-      const ax = x + (preferX ? 0 : Math.sign(dx) * this.cell)
-      const az = z + (preferX ? Math.sign(dz) * this.cell : 0)
-      if (!this.city.rocks.blocksWorld(ax, az)) { nx = ax; nz = az }
+      if (altIsStep && !this.city.rocks.blocksWorld(ax, az)) { nx = ax; nz = az }
     }
+
+    // Someone is already walking into that cell: take the other axis, or hold.
+    // Waiting a beat is what makes a column queue behind its own front rank.
+    const occ = this.city.occupancy
+    if (occ.takenWorld(nx, nz, c)) {
+      const altFree = altIsStep && !this.city.rocks.blocksWorld(ax, az)
+        && !occ.takenWorld(ax, az, c)
+      if (altFree) { nx = ax; nz = az }
+      else if ((c.waited || 0) < MAX_WAIT_STEPS) { c.waited = (c.waited || 0) + 1; return 'wait' }
+      // Stuck behind the queue for too long: shove through rather than freeze
+      // for the rest of the round.
+    }
+    c.waited = 0
 
     // If the next cell is occupied by a standing tower, attack it instead.
     for (const tower of this.city.towers) {
@@ -1024,17 +1018,13 @@ export class Creeps {
       }
     }
 
-    c.fromX = x
-    c.fromZ = z
-    c.toX = nx
-    c.toZ = nz
-    c.t = 0
+    this.claimStep(c, nx, nz)
     return 'move'
   }
 
   /**
    * Resize a creep to `f` of its spawn size, keeping it on the ground (baseY
-   * tracks the scale) and its seeker dot at a constant apparent size.
+   * tracks the scale) and its type dot at a constant apparent size.
    */
   _rescale(creep, f) {
     const s = creep.baseScale * f
@@ -1053,7 +1043,7 @@ export class Creeps {
     // Giants visibly wear down: a boss shrinks toward 45% of its spawn size as
     // its health goes, so you can read how close it is from across the map
     // without a health bar. baseY tracks the scale so it stays on the ground,
-    // and the seeker dot is counter-scaled to hold its apparent size.
+    // and the type dot is counter-scaled to hold its apparent size.
     if (creep.giant && creep.baseScale) {
       this._rescale(creep, 0.45 + 0.55 * Math.max(0, 1 - creep.hits / creep.maxHits))
     } else if (creep.big && creep.baseScale) {
@@ -1085,16 +1075,10 @@ export class Creeps {
         Sounds.fadeOut('horn-boss', 0.6)
         Sounds.play('sting', 0.85, 0.04, 0.7)
       }
-      this.rollAmmoDrop(creep)
     }
     return true
   }
 
-  /**
-   * Chance for a dying creep to leave an ammo box. The ammo is credited straight
-   * away - the cube is a pink marker that pops and rises so you can see WHERE it
-   * came from, not something to walk over and collect.
-   */
   /** Barrier burn: sparks off the creep and it glows shield-yellow briefly.
    *  update() puts its own material back when the timer runs out. */
   burnFlash(c) {
@@ -1120,39 +1104,6 @@ export class Creeps {
     c.mesh.material = this.hitFlashMat
     glow(c.mesh) // on the bloom layer for as long as the flash lasts
     c.flashT = HIT_FLASH_TIME
-  }
-
-  rollAmmoDrop(creep) {
-    if (Math.random() >= this.ammoDropChance) return
-    const p = creep.mesh.position
-    this.city.mana?.addAmmo(this.ammoDropAmount)
-    const mesh = new Mesh(this.ammoBoxGeo, this.ammoBoxMat)
-    mesh.position.set(p.x, Math.max(0.9, creep.baseY), p.z)
-    mesh.rotation.y = Math.PI / 4
-    mesh.scale.setScalar(0.01)
-    mesh.castShadow = true
-    this.scene.add(mesh)
-    this.ammoBoxes.push({ mesh, life: 0, y0: mesh.position.y })
-    this.city.floatingText?.spawn(
-      p.x, Math.max(0.9, creep.baseY) + 1.8, p.z,
-      `+${this.ammoDropAmount}`, AMMO_COLOR, 0, 'good'
-    )
-  }
-
-  /** Pop the ammo cubes in, float them up, fade them out. */
-  updateAmmoBoxes(dt) {
-    const LIFE = 1.1
-    for (let i = this.ammoBoxes.length - 1; i >= 0; i--) {
-      const b = this.ammoBoxes[i]
-      b.life += dt
-      const f = b.life / LIFE
-      if (f >= 1) { this.scene.remove(b.mesh); this.ammoBoxes.splice(i, 1); continue }
-      // Pop to full in the first 20%, then drift up and shrink away.
-      const pop = Math.min(1, f / 0.2)
-      b.mesh.scale.setScalar((1 - (1 - pop) * (1 - pop)) * (1 - f * 0.55))
-      b.mesh.position.y = b.y0 + f * 2.4
-      b.mesh.rotation.y += dt * 2.4
-    }
   }
 
   /**
@@ -1413,10 +1364,12 @@ export class Creeps {
     this.audio.update(dt)
     this.updateEntries()
 
-    this.rebuildOccupancy()
+    // One shared cell register for the frame, rebuilt after this tick's spawns
+    // and before anything plans a step. Soldiers are in it too - a cell holds
+    // one unit, whatever kind it is.
+    this.city.occupancy.rebuild(this.creeps, this.city.soldiers?.soldiers || [])
     this.updateShieldBarriers()
     this.updateShots(dt)
-    this.updateAmmoBoxes(dt)
     this.updateBombs(dt)
     this.beamPool.update(dt)
 
@@ -1495,9 +1448,8 @@ export class Creeps {
           // Shooters carry a magazine. Without one, a shooter parked out of reach
           // of every turret and soldier plinks away for the rest of the run - the
           // round never ends, the music never drops, and there is nothing you can
-          // do about it. Spent, it goes up like any other death, and drops ammo.
+          // do about it. Spent, it goes up like any other death.
           if (++c.shotsFired >= MAX_CREEP_SHOTS) {
-            this.rollAmmoDrop(c)
             this.explode(c)
             this.scene.remove(c.mesh)
             this.creeps.splice(i, 1)

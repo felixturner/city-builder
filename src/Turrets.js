@@ -37,24 +37,6 @@ export class Turrets {
   static LASER_TYPE = 4 // Divot_Top
   static MORTAR_TYPE = 7 // mortar (AoE)
 
-  /**
-   * Ammo each shot costs. Turrets fire from the ammo pool, not the energy pool -
-   * energy builds the city, ammo defends it, and they refill from completely
-   * different places.
-   *
-   * Balanced against the drop rate: a dying creep leaves an ammo box 20% of the
-   * time worth 5, so kills pay for themselves at ~1.0 ammo each on average. A
-   * normal creep has 4 HP, so the costs below make a clean kill cost about 1.0
-   * whichever gun does it:
-   *   peg     1 dmg x 4 shots x 0.25 = 1.0
-   *   laser   2 dmg x 2 shots x 0.5  = 1.0
-   *   mortar  8 dmg, one shot        = 1.0, and better than break-even whenever
-   *                                    the blast catches more than one creep
-   * Big creeps (2x HP) and giants (10x) cost proportionally more than they drop,
-   * so the pressure builds exactly where it should.
-   */
-  static SHOT_COST = { peg: 0.25, laser: 0.5, mortar: 1.0 }
-
   constructor(scene, city, creeps) {
     this.scene = scene
     this.city = city
@@ -87,9 +69,9 @@ export class Turrets {
      * which is the interesting part and the part you choose between:
      *   peg     fine-grained, but a travelling projectile and 4 shots to a kill
      *   laser   hitscan, no leading, but blind for twice as long after each shot
-     *   mortar  one-shots anything up to 8 HP and pays double per unit of ammo,
-     *           but overkills a small creep and only earns its slot on a clump,
-     *           where the AoE multiplies that 2.86/s by everything it catches
+     *   mortar  one-shots anything up to 8 HP, but overkills a small creep and
+     *           only earns its slot on a clump, where the AoE multiplies that
+     *           2.86/s by everything it catches
      */
     this.fireCooldown = 0.35 // seconds between Peg shots - the reference rate
     this.projectileSpeed = 100 // world units / sec
@@ -334,24 +316,6 @@ export class Turrets {
     return m
   }
 
-  /** Try to pay a shot's ammo. Returns false when the magazine is empty. */
-  payForShot(kind) {
-    const city = this.city
-    if (city.freeClicks || !city.mana) return true
-    if (city.mana.spendAmmo(Turrets.SHOT_COST[kind])) return true
-    this.dryFire()
-    return false
-  }
-
-  /** Turrets going quiet because you're out of ammo is otherwise invisible -
-   *  give it a dry click, throttled so a field of dry turrets doesn't rattle. */
-  dryFire() {
-    const now = performance.now() / 1000
-    if (this._lastDry !== undefined && now - this._lastDry < 1.5) return
-    this._lastDry = now
-    Sounds.play('dink', 0.5, 0.05, 0.35)
-  }
-
   fire(tower) {
     const muzzle = new Vector3()
     this.turretMuzzle(tower, muzzle)
@@ -359,7 +323,6 @@ export class Turrets {
     const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
-    if (!this.payForShot('peg')) return false
 
     const mesh = new Mesh(this.projGeo, this.projMatFor(tower.colorIndex))
     mesh.position.copy(muzzle)
@@ -377,7 +340,6 @@ export class Turrets {
     const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
-    if (!this.payForShot('laser')) return false
 
     this._to.copy(target.mesh.position)
     this.beamPool.fire(muzzle, this._to, tower.laserColor || this._white)
@@ -497,7 +459,6 @@ export class Turrets {
     const range = (tower.numFloors * 2 + 1) * this.city.cellUnit
     const target = this.nearestCreep(muzzle.x, muzzle.z, range) // no LOS: arcs over
     if (!target) return false
-    if (!this.payForShot('mortar')) return false
 
     const mesh = new Mesh(this.mortarGeo, this.mortarMat)
     mesh.position.copy(muzzle)

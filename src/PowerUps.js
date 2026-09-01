@@ -1,6 +1,6 @@
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
-import { ENERGY_COLOR, AMMO_COLOR, ACCENTS } from './palette.js'
+import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
 import { TopType } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
 
@@ -20,7 +20,7 @@ export { Buffs, resetBuffs }
 const CARDS_OFFERED = 4
 
 const YELLOW = ENERGY_COLOR
-const PINK = AMMO_COLOR
+const PINK = PINK_ACCENT
 const BLUE = ACCENTS[2]
 
 /**
@@ -93,11 +93,6 @@ export const CARDS = [
     apply: () => { Buffs.fireRate *= 0.8 },
   },
   {
-    id: 'ammo', title: 'Deep Magazines', color: PINK,
-    desc: 'Ammo capacity +20, and refill to full now.',
-    apply: (g) => { Buffs.ammoMax += 20; g.refillAmmo() },
-  },
-  {
     id: 'energy', title: 'Bigger Reserves', color: YELLOW,
     desc: 'Energy capacity +50.',
     apply: () => { Buffs.energyMax += 50 },
@@ -163,10 +158,6 @@ export class PowerUpScreen {
   addPaletteSlot() {
     Buffs.paletteSlots += 1
     this.demo.tilePalette?.addSlot()
-  }
-  refillAmmo() {
-    const m = this.demo.mana
-    if (m) m.ammo = m.ammoMax + Buffs.ammoMax
   }
 
   /** Deal four distinct, currently-useful cards. */

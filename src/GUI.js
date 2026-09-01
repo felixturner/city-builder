@@ -54,7 +54,6 @@ export class GUIManager {
       // three thousand arrows plus a bright route line over the board is a lot
       // to look at when you just want to see the city. Toggle them on to plan.
       creepFlow: true,
-      creepPath: true,
       bloom: true,
       bloomStrength: 0.77,
       bloomRadius: 0.49,
@@ -120,9 +119,6 @@ export class GUIManager {
 
     viewFolder.add(allParams.fx, 'creepFlow').name('Creep Flow').onChange((v) => {
       if (demo.city.flowView) demo.city.flowView.enabled = v
-    })
-    viewFolder.add(allParams.fx, 'creepPath').name('Creep Path').onChange((v) => {
-      if (demo.city.pathPreview) demo.city.pathPreview.enabled = v
     })
 
     // Visual toggles at top level
