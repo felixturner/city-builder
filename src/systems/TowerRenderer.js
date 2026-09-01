@@ -251,11 +251,15 @@ export class TowerRenderer {
     this.shakeTower(tower)
     if (!tower.king) city.flashTower(tower)
 
-    // Reinforced walls raise the hit points of a grey block rather than handing
-    // the tower extra floors, so a tower never keeps phantom health after a buff
-    // is recalculated. Damage carries over between floors: overkill on the last
-    // block of a level is spent on the next one rather than thrown away.
+    // Two things raise a block's hit points, and neither hands the tower extra
+    // floors - so a tower never keeps phantom health after a buff is
+    // recalculated. Reinforced walls thicken GREY blocks; a shield ring hardens
+    // the BUILDINGS standing in it (+1 a block per ring, stacking where two
+    // overlap, walls excluded). Damage carries over between floors: overkill on
+    // the last block of a level is spent on the next one rather than thrown
+    // away.
     const blockHp = BLOCK_HP + (isGrey(tower) ? Buffs.wallHits : 0)
+      + city.energy.shieldCoverCount(tower)
     tower.dmg = (tower.dmg || 0) + dmg
     if (tower.dmg < blockHp) {
       Sounds.play('dink', 1.6, 0.1, 0.35)

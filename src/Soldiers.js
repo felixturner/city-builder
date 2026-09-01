@@ -30,7 +30,15 @@ const LEASH_RADIUS = 14 // cells: it breaks off a chase past this and heads home
 const STEP_WANDER = 0.40 // seconds per cell while loitering
 const STEP_CHASE = 0.22 // seconds per cell while closing on a creep
 const HOP_HEIGHT = 0.45
-const CONTACT_MARGIN = 0.25 // world units of daylight left between the two bodies
+// Daylight left between the two bodies at "in contact". It has to clear a whole
+// CELL, because a soldier and a creep can no longer stand in the same one - the
+// occupancy register holds a cell for one unit - so the closest a soldier can
+// ever get is the neighbouring cell. At the old 0.25 the two stood one cell
+// apart, out of contact, and the soldier spent the rest of the round trying to
+// step into a cell it would never be allowed into. Stationary creeps (shooters,
+// lasers) never resolved it by walking into the soldier themselves, so those
+// were the ones that never got attacked at all.
+const CONTACT_MARGIN = 1.2
 const ATTACK_INTERVAL = 0.6 // seconds between blows (both directions)
 const SOLDIER_DAMAGE = 1 // damage a soldier does to a creep per blow
 const CREEP_DAMAGE = 1 // damage a creep does back

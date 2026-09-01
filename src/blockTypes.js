@@ -97,18 +97,18 @@ export const isGrey = (t) => !isGenerator(t) && !isTurret(t) && !isBarracks(t) &
 
 /**
  * Height caps. Everything on the board stops at MAX_FLOORS except turrets,
- * which get two storeys more.
+ * which get one storey more.
  *
  * Range scales with height ((floors * 2 + 1) cells - see Turrets), so letting a
- * gun outbuild the wall in front of it is the whole point: two extra storeys is
- * four extra cells of reach, and it means a turret can always see over the maze
+ * gun outbuild the wall in front of it is the whole point: the extra storey is
+ * two extra cells of reach, and it means a turret can always see over the maze
  * you built around it rather than being capped level with it.
  *
  * A pure function of typeTop, deliberately - there is no per-tower cap to keep
  * in sync, and towers are recycled out of a pool and re-typed constantly.
  */
 export const MAX_FLOORS = 5
-export const TURRET_EXTRA_FLOORS = 2
+export const TURRET_EXTRA_FLOORS = 1
 export const maxFloorsFor = (t) => MAX_FLOORS + (isTurret(t) ? TURRET_EXTRA_FLOORS : 0)
 
 /** World-space Y of the very top of a tower (roof block top), given floorHeight. */

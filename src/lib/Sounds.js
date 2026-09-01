@@ -388,7 +388,7 @@ class SoundsManager {
    * when it clears - no timers, and no way to end up with two of them layered.
    * Registered in _active like play(), so it stops the same way.
    */
-  loop(name, volume = 1.0, rate = 1.0) {
+  loop(name, volume = 1.0, rate = 1.0, maxPlays = 0) {
     if (this.mutedSounds.has(name) || this._unavailable.has(name)) return
     if (this._active[name]) return // already ringing
     const { sound, key } = this._resolve(name)
@@ -401,6 +401,20 @@ class SoundsManager {
     sound.rate(rate, id)
     sound.volume(volume, id)
     this._active[name] = { sound, id }
+    // A siren that rings forever stops being information and becomes the
+    // soundtrack. `maxPlays` lets the caller say it a fixed number of times and
+    // then shut up, without needing to know how long the file is: 'end' fires at
+    // every loop point, so counting them is counting plays.
+    if (maxPlays > 0) {
+      let played = 1
+      const onEnd = () => {
+        if (++played < maxPlays) return
+        sound.off('end', onEnd, id)
+        this.stop(name)
+      }
+      sound.on('end', onEnd, id)
+      this._active[name].onEnd = onEnd
+    }
     return id
   }
 
@@ -558,10 +572,12 @@ class SoundsManager {
     return { name: avail[i], ...RISERS[avail[i]] }
   }
 
-  /** Stop a sound started by play()/countdown(). Safe to call when not playing. */
+  /** Stop a sound started by play()/countdown()/loop(). Safe to call when not
+   *  playing. */
   stop(name) {
     const a = this._active[name]
     if (!a) return
+    if (a.onEnd) a.sound.off('end', a.onEnd, a.id)
     a.sound.stop(a.id)
     delete this._active[name]
   }
@@ -570,8 +586,13 @@ class SoundsManager {
   fadeOut(name, secs = 0.4) {
     const a = this._active[name]
     if (!a) return
+    if (a.onEnd) a.sound.off('end', a.onEnd, a.id)
     const from = a.sound.volume(a.id)
     a.sound.fade(from, 0, secs * 1000, a.id)
+    // Fading a LOOPING sound only takes its volume to zero - it would go on
+    // looping silently for the rest of the session - so stop it once the fade
+    // lands. Harmless for a one-shot that has already ended.
+    a.sound.once('fade', () => a.sound.stop(a.id), a.id)
     delete this._active[name]
   }
 

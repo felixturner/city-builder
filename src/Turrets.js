@@ -441,10 +441,10 @@ export class Turrets {
         const fired = isMortar ? this.fireMortar(tower) : isLaser ? this.fireLaser(tower) : this.fire(tower)
         if (fired) {
           const base = isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown
-          // No support tower reaching this turret => half rate, i.e. double the
-          // gap between shots. support() is 1 or SUPPORT_PENALTY and doesn't
-          // stack, so a second support tower changes nothing.
-          cd = base * Buffs.fireRate / this.city.energy.support(tower)
+          // Every support trail reaching this turret speeds it up, and they
+          // stack: three of them is +75% fire rate, i.e. the gap between shots
+          // divided by 1.75. None is the plain rate, not a penalised one.
+          cd = base * Buffs.fireRate / this.city.energy.fireRateFactor(tower)
         } else cd = 0.15 // nothing in range or out of energy; re-check soon
       }
       this.cooldowns.set(tower, cd)

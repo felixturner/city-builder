@@ -18,7 +18,7 @@ import { ENERGY_COLOR } from '../palette.js'
  * wrong - once it's launched it belongs to the screen, not the scene.
  */
 // Screen pixels the box rises before it bursts.
-const RISE = 34
+const RISE = 51
 
 export class ResourceFly {
   constructor() {
@@ -39,7 +39,7 @@ export class ResourceFly {
    * @param {number} [size] - box edge in px
    * @param {number} [delay] - seconds to wait before launching
    */
-  spawn(x, y, z, camera, color = ENERGY_COLOR, size = 9, delay = 0) {
+  spawn(x, y, z, camera, color = ENERGY_COLOR, size = 13.5, delay = 0) {
     if (!camera) return
     this._v.set(x, y, z).project(camera)
     if (this._v.z > 1) return // behind the camera; nothing to see

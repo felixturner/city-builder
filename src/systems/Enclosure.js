@@ -163,6 +163,10 @@ export class Enclosure {
         else if (!this._kingEnclosed && enclosed) Sounds.play('success') // king newly sealed
       }
       this._kingEnclosed = enclosed
+      // Read by Creeps for the king-is-open siren. Undefined until the first
+      // fill runs, which is why callers test it against `false` rather than
+      // falsiness - "not computed yet" is not the same as "wide open".
+      this.kingEnclosed = enclosed
     }
 
     // 3. Group enclosed cells (non-wall && unreachable) into connected regions.

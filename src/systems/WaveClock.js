@@ -19,7 +19,7 @@ const TWO_FRONT_FROM_WAVE = 2
 export class WaveClock {
   constructor() {
     this.elapsed = 0
-    this.wavePeriod = 80 // one full cycle
+    this.wavePeriod = 60 // one full cycle: 40s of build, then the wave
     this.waveActive = 20 // seconds of spawning, at the END of the cycle
 
     // How long before a wave lands the countdown starts. Bosses get a longer

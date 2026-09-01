@@ -57,9 +57,13 @@ const MAX_CREEP_SHOTS = 12
 const SWARM_HORN_RATE = 1.35
 const SWARM_HORN_VOLUME = 0.3
 
-// Damage a shield perimeter does to a creep crossing it (halved when the shield
-// has no support tower reaching it - see updateShieldBarriers).
-const SHIELD_DAMAGE = 2
+// What a shield perimeter burns a creep for on its own - the rate an unsupported
+// shield has always run at. Each support tower reaching it adds another point
+// (see EnergySystem.shieldBonus).
+const SHIELD_DAMAGE = 1
+// Damage the king's own ring does to a creep crossing into it. Unlike a shield
+// it has no charges to spend, so it burns every arrival for the whole run.
+const KING_RING_DAMAGE = 2
 // Health a creep loses for each floor it knocks down. Walls charge an entry fee
 // rather than being free to chew through.
 const WALL_BITE = 2
@@ -589,8 +593,8 @@ export class Creeps {
 
   /**
    * Shield barriers: a creep that crosses a shield's perimeter is burned for
-   * SHIELD_DAMAGE and spends one of the shield's charges. An unsupported shield
-   * burns for half that - see EnergySystem.support().
+   * SHIELD_DAMAGE and spends one of the shield's charges. Each support tower
+   * reaching the shield adds a point of burn - see EnergySystem.shieldBonus().
    *
    * Only INWARD crossings count, and only for creeps seen outside first - the
    * previous-side flag starts undefined, so raising a shield over creeps
@@ -604,36 +608,75 @@ export class Creeps {
       if (!t.visible || !isShield(t) || t.numFloors < 1) continue
       if (shieldCharges(t) <= 0 || city.upkeep.isDark(t)) continue
       const c = t.box.getCenter(this._shieldC || (this._shieldC = new Vector2()))
-      const sx = c.x + city.gridOffsetX, sz = c.y + city.gridOffsetZ
       const r = shieldRadiusCells(t.numFloors) * cu
-
-      // Backwards: hit() can kill and splice the creep out from under us.
-      for (let i = this.creeps.length - 1; i >= 0; i--) {
-        const cr = this.creeps[i]
-        if (cr.bomber) continue // flies over the barrier
-        const dx = cr.mesh.position.x - sx, dz = cr.mesh.position.z - sz
-        const inside = (dx * dx + dz * dz) < r * r
-        if (!cr.shieldIn) cr.shieldIn = {}
-        const was = cr.shieldIn[t.id]
-        cr.shieldIn[t.id] = inside
-        if (!inside || was !== false) continue
-
-        t.shieldUsed = (t.shieldUsed || 0) + 1
-        // Its own sound, not the generic alert blip: a barrier burn was the one
-        // damage source with no audible identity of its own - hit() plays the
-        // same stone thunk for it as for a bullet.
-        Sounds.play('shield-hit', 1.0, 0.08, 0.8)
-        this.burnFlash(cr)
-        // Charges are spent either way; only the burn is weaker unsupported.
-        this.hit(cr, SHIELD_DAMAGE * city.energy.support(t))
-        if (shieldCharges(t) <= 0) {
+      this.burnRing(
+        t, c.x + city.gridOffsetX, c.y + city.gridOffsetZ, r,
+        // Charges are spent either way; support trails only make the burn hotter.
+        SHIELD_DAMAGE + city.energy.shieldBonus(t),
+        () => {
+          t.shieldUsed = (t.shieldUsed || 0) + 1
+          if (shieldCharges(t) > 0) return false
           // Spent: the ring goes dark and the barrier stops burning.
           Sounds.play('power-down', 1.2, 0.05, 0.45)
           city.onTowerChanged(t)
-          break
+          return true // stop scanning: this barrier is done
         }
-      }
+      )
     }
+  }
+
+  /**
+   * The king's own barrier: the yellow ring on the ground is a real perimeter,
+   * not a label for the siren's radius.
+   *
+   * Same rule as a shield, without the charges - the king cannot be topped up,
+   * and a last line that runs out is a last line that isn't there when it counts.
+   * It is the only defence a bare king has, so a wave that walks the whole way in
+   * arrives already burned.
+   */
+  updateKingBarrier() {
+    const city = this.city
+    const king = city.king
+    if (!king || !king.visible || !city.kingAlive) return
+    const c = king.box.getCenter(this._shieldC || (this._shieldC = new Vector2()))
+    this.burnRing(
+      king, c.x + city.gridOffsetX, c.y + city.gridOffsetZ,
+      KING_WARN_CELLS * city.cellUnit, KING_RING_DAMAGE
+    )
+  }
+
+  /**
+   * Burn every creep that crosses INTO the circle (owner, sx, sz, r) this frame.
+   *
+   * Inward crossings only, and only for creeps seen outside first: the previous
+   * side is remembered per owner on the creep, so raising a barrier over creeps
+   * already inside it doesn't burn them, and standing on the line doesn't burn
+   * them over and over.
+   *
+   * `onBurn` runs after each burn; returning true stops the scan (a shield that
+   * has just spent its last charge). Returns true if it stopped early.
+   */
+  burnRing(owner, sx, sz, r, dmg, onBurn) {
+    // Backwards: hit() can kill and splice the creep out from under us.
+    for (let i = this.creeps.length - 1; i >= 0; i--) {
+      const cr = this.creeps[i]
+      if (cr.bomber) continue // flies over the barrier
+      const dx = cr.mesh.position.x - sx, dz = cr.mesh.position.z - sz
+      const inside = (dx * dx + dz * dz) < r * r
+      if (!cr.shieldIn) cr.shieldIn = {}
+      const was = cr.shieldIn[owner.id]
+      cr.shieldIn[owner.id] = inside
+      if (!inside || was !== false) continue
+
+      // Its own sound, not the generic alert blip: a barrier burn was the one
+      // damage source with no audible identity of its own - hit() plays the
+      // same stone thunk for it as for a bullet.
+      Sounds.play('shield-hit', 1.0, 0.08, 0.8)
+      this.burnFlash(cr)
+      this.hit(cr, dmg)
+      if (onBurn && onBurn()) return true
+    }
+    return false
   }
 
   /** Spawn a bomber: enters from one edge, flies straight across at altitude. */
@@ -1195,6 +1238,7 @@ export class Creeps {
     this._active = []
     this._lastWave = -1
     this._quietTimer = 0
+    this._exposedAlarm = false
     this.audio.reset()
   }
 
@@ -1369,6 +1413,7 @@ export class Creeps {
     // one unit, whatever kind it is.
     this.city.occupancy.rebuild(this.creeps, this.city.soldiers?.soldiers || [])
     this.updateShieldBarriers()
+    this.updateKingBarrier()
     this.updateShots(dt)
     this.updateBombs(dt)
     this.beamPool.update(dt)
@@ -1571,14 +1616,43 @@ export class Creeps {
       c.mesh.rotation.z = (Math.random() * 2 - 1) * a
     }
 
-    // Re-arm / fire the king-proximity siren on a cooldown.
+    this.updateExposedAlarm()
+
+    // Re-arm / fire the king-proximity siren on a cooldown. Held while the
+    // exposed-king alarm is running: same sound, and two of it at once is a
+    // mess rather than twice the warning.
     this._kingWarnTimer = (this._kingWarnTimer || 0) - dt
-    if (creepNearKing) {
+    if (creepNearKing && !this._exposedAlarm) {
       // alert2 rather than a pitched-down 'spawn': this is a threat blip, and it
       // was borrowing a sound whose job is announcing arrivals.
       if (this._kingWarnTimer <= 0) { Sounds.play('alert2', 1.0, 0.04, 0.7); this._kingWarnTimer = 1.5 }
     } else {
       this._kingWarnTimer = 0 // ready to fire the instant a creep gets close again
     }
+  }
+
+  /**
+   * The king-is-open siren: alert2 on a loop for as long as a fight is running
+   * with no wall sealing the king.
+   *
+   * A state, not an event. Breaching the enclosure already plays a one-shot
+   * (Enclosure), but that fires at the moment the hole appears - which is
+   * usually while you are building, calmly, with nothing on the board. What
+   * matters is going into a wave still open, and that is exactly when nothing
+   * was telling you.
+   *
+   * Off the moment the seal closes or the round ends, so sealing mid-fight is
+   * audible as the alarm stopping.
+   */
+  updateExposedAlarm() {
+    const city = this.city
+    const battle = this.started && (this.clock.isSpawning || this.creeps.length > 0)
+    const open = !!city.king && city.king.visible && city.kingAlive
+      && city.enclosure.kingEnclosed === false
+    const on = battle && open
+    if (on === !!this._exposedAlarm) return // no change
+    this._exposedAlarm = on
+    if (on) Sounds.loop('alert2', 0.5)
+    else Sounds.fadeOut('alert2', 0.3)
   }
 }

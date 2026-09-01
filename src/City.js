@@ -77,6 +77,11 @@ const KING_MARKER_HOVER = 1.4 // rest height above the king's roof
 // holds its flash longer - its hits are the ones you have to notice from the
 // far side of the board, so it stays lit after an ordinary wall has settled.
 const KING_HIT_FLASH = 0.45
+// Times the low-health siren sounds before it gives up. It is a warning, and a
+// warning that never stops is just the music - you have heard it, and you either
+// can do something about the king or you cannot. It re-arms if the king is built
+// back out of range and driven down again.
+const KING_ALARM_PLAYS = 5
 const TOWER_HIT_FLASH = 0.22
 const WHITE = new Color(0xffffff)
 
@@ -708,6 +713,10 @@ export class City {
     // king that is about to die, and once it has, it is playing over the
     // game-over sting and saying something that stopped being true.
     Sounds.fadeOut('king-warning', 0.25)
+    // The king-is-open siren too: the systems that would switch it off stop
+    // being ticked once the game-over panel takes over, so it would ring on
+    // over the score screen.
+    Sounds.fadeOut('alert2', 0.25)
     this.onGameOver?.()
   }
 
@@ -1172,20 +1181,31 @@ export class City {
   flashKing() { this.flashTower(this.king, KING_HIT_FLASH) }
 
   /**
-   * The king's low-health siren, held for as long as the king is in trouble.
+   * The king's low-health siren: KING_ALARM_PLAYS times, then quiet.
    *
-   * A state, not an event: it used to fire once on the crossing into the last
-   * two floors, which said "this just happened" about a condition that then sat
-   * there for the rest of the round. Now it loops while the king is at or below
-   * KING_WARN_FLOORS and stops the moment it is built back up - or dies, where
-   * triggerGameOver fades it out under the sting.
+   * It used to fire once on the crossing into the last two floors, which said
+   * "this just happened" about a condition that then sat there for the rest of
+   * the round. It now starts when the king drops to KING_WARN_FLOORS and repeats
+   * a few times before giving up - long enough to be unmissable, short of
+   * becoming the soundtrack.
+   *
+   * The latch is what keeps it from restarting the moment the run of plays ends:
+   * it re-arms only when the king climbs back out of range, so a king built up
+   * and knocked down again gets a fresh alarm. Being built back up also cuts the
+   * siren mid-run, and dying fades it out under the sting (triggerGameOver).
    */
   updateKingAlarm() {
     const king = this.king
-    const on = !!king && king.visible && this.kingAlive && this.introDone
+    const low = !!king && king.visible && this.kingAlive && this.introDone
       && king.numFloors <= KING_WARN_FLOORS
-    if (on) Sounds.loop('king-warning', 0.45)
-    else Sounds.stop('king-warning')
+    if (!low) {
+      this._kingAlarmFired = false
+      Sounds.stop('king-warning')
+      return
+    }
+    if (this._kingAlarmFired) return
+    this._kingAlarmFired = true
+    Sounds.loop('king-warning', 0.45, 1.0, KING_ALARM_PLAYS)
   }
 
   /**

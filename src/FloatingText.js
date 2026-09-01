@@ -10,6 +10,21 @@ import { ENERGY_COLOR } from './palette.js'
  * text stays crisp at any zoom. Each caption pops in (gsap expo scale) and can
  * trigger a sound the instant it appears.
  */
+// A second caption spawned at the same spot queues UNDER the first: this far
+// down the screen, and this long after it. Several bonuses can land on one tower
+// in a single frame - connect a support tower to a shield inside another shield
+// and three of them fire at once - and stacked on the same pixel they were one
+// illegible smear.
+const STACK_ROW_PX = 40
+const STACK_DELAY = 0.12 // seconds between each queued caption popping in
+const STACK_MAX = 4 // rows deep before they start sharing the bottom row
+// How close two anchors have to be to count as "the same place", in world units.
+// Matching exact coordinates did not work: captions from one tower come from
+// different heights (towerTopY + 0.5 here, + 1.0 there, and the top itself moves
+// as the tower grows), so nothing ever matched and they all landed on one row.
+// Grouping by COLUMN - x and z, ignoring y - is what "on this tile" means.
+const STACK_RADIUS = 1.5
+
 export class FloatingText {
   constructor() {
     this.items = []
@@ -51,7 +66,35 @@ export class FloatingText {
       display: 'none',
     })
     this.container.appendChild(el)
-    this.items.push({ el, x, y, z, life: 0, delay, sound, started: false, scale: { s: 0 } })
+    // Queue behind anything already floating over this column, and take the
+    // first one's HEIGHT as well as its place in the queue. The row offset is in
+    // screen pixels, so two captions anchored at different world heights - the
+    // "-6" charged before a floor goes on and the "x3 energy" fired after it -
+    // are already separated on screen by however much a floor is worth at this
+    // zoom, and the offset lands the second one back on top of the first as
+    // often as not. Sharing a baseline makes the row the only thing between them.
+    const q = this._queueAt(x, z)
+    const row = Math.min(q.count, STACK_MAX)
+    this.items.push({
+      el, x, y: q.count > 0 ? q.y : y, z, life: 0,
+      delay: delay + row * STACK_DELAY, sound,
+      started: false, scale: { s: 0 }, row,
+    })
+  }
+
+  /**
+   * Captions already floating over this column: how many, and the world height
+   * the first of them is anchored at. `items` is chronological, so the first
+   * match is the oldest - the one that set the baseline.
+   */
+  _queueAt(x, z) {
+    let count = 0, y = 0
+    for (const it of this.items) {
+      if (Math.abs(it.x - x) >= STACK_RADIUS || Math.abs(it.z - z) >= STACK_RADIUS) continue
+      if (count === 0) y = it.y
+      count++
+    }
+    return { count, y }
   }
 
   /** Project + animate captions. Safe to call every frame (even while paused). */
@@ -85,7 +128,9 @@ export class FloatingText {
       if (this._v.z > 1) { it.el.style.display = 'none'; continue } // behind camera
       it.el.style.display = 'block'
       const sx = (this._v.x * 0.5 + 0.5) * w
-      const sy = (-this._v.y * 0.5 + 0.5) * h - this.pixelRise * p
+      // Its own row, so a queued caption starts below the one before it rather
+      // than on top of it, and rises from there.
+      const sy = (-this._v.y * 0.5 + 0.5) * h - this.pixelRise * p + it.row * STACK_ROW_PX
       it.el.style.left = `${sx}px`
       it.el.style.top = `${sy}px`
       it.el.style.transform = `translate(-50%, -50%) scale(${it.scale.s})`

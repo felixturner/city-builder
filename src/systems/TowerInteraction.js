@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGrey, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
+import { TopType, isTurret, isGrey, claimsEnclosure, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
 import { fxMaterial, glow } from '../fx.js'
 import { priceOfTower } from './tileCost.js'
 
@@ -119,7 +119,24 @@ export class TowerInteraction {
     const city = this.city
     if (!this.canBuild(tower)) return
     tower.handleClick(city, city.floorHeight, maxFloorsFor(tower), city.debris,
-      city.towers, () => city.onTowerChanged(tower), () => city.updateTowerVisuals())
+      city.towers, () => city.onTowerChanged(tower), () => {
+        city.updateTowerVisuals()
+        this.announceGenHeight(tower)
+      })
+  }
+
+  /**
+   * An enclosure generator just gained a floor: float what that bought.
+   *
+   * Its output is enclosed cells x floors, and nothing on screen says so in the
+   * moment you pay for it, so the caption names the multiplier against a
+   * one-storey tile. Path generators get no caption - height there is reach, and
+   * the ring on the ground already shows you the reach.
+   */
+  announceGenHeight(tower) {
+    const n = tower.numFloors
+    if (n < 2 || !claimsEnclosure(tower)) return // x1 is not news
+    this.city.energy.spawnTowerText(tower, `x${n} energy`, ENERGY_COLOR, 'gen-online', 0)
   }
 
   /** Click a dormant lot to add growth points. Empty slots are filled by the

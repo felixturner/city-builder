@@ -1,9 +1,10 @@
 import { Vector2, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
-import { ENERGY_COLOR } from '../Mana.js'
+import { ENERGY_COLOR, PINK, BLUE } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import {
-  isPathGenerator, claimsEnclosure, isGrey, towerArea, towerTopY,
+  isPathGenerator, claimsEnclosure, isGrey, isShield, isTurret, towerArea, towerTopY,
+  shieldRadiusCells, shieldCharges,
 } from '../blockTypes.js'
 
 const GEN_INTERVAL = 2 // seconds between generator mana ticks
@@ -59,7 +60,27 @@ const KING_BONUS = 4
 // generators are the supply network: they still produce energy themselves, and
 // now a trail reaching a turret, area generator or shield is what brings that
 // building up to full speed.
-const SUPPORT_PENALTY = 0.5
+// What a building does on its OWN, as a fraction of the reference constants.
+// This is the old unsupported rate kept as the baseline: a lone turret or area
+// generator has always run at half pace, and that is now simply what it is,
+// rather than a penalty waiting to be lifted.
+const BASE_FACTOR = 0.5
+// What one connected support tower adds, and they STACK - a building reached by
+// three trails gets three times the bonus. Percentages are of what the building
+// currently does, so +25% is a quarter faster than it was, not a quarter of the
+// reference rate.
+const SUPPORT_FIRE_RATE = 0.25 // +25% turret fire rate each
+const SUPPORT_SHIELD_DAMAGE = 1 // +1 shield burn damage each
+const SUPPORT_GEN_RATE = 0.15 // +15% enclosure generator output each
+// Hit points a shield ring adds to every block of every tower standing in it.
+const SHIELD_COVER_HP = 1
+// Caption colours by what the bonus DOES, not by which building granted it, so
+// the board teaches one vocabulary: pink is violence, yellow is income, blue is
+// staying up. Gains and losses share a colour and are told apart by the sign,
+// the sound and the ring.
+const LABEL_ATTACK = PINK
+const LABEL_ENERGY = ENERGY_COLOR
+const LABEL_HP = BLUE
 // Path generators are blue; the connect burst reads as coming from them.
 const SUPPORT_ACCENT = 2
 
@@ -108,34 +129,137 @@ export class EnergySystem {
     this._c = new Vector2()
   }
 
-  /** A building just came under a support tower: ring out from it and label the
-   *  speed it just gained. */
-  announceSupport(t) {
+  /**
+   * What one support trail is worth to this building, as the caption to float
+   * over it. A count told you a trail had landed but not what it bought, and the
+   * three bonuses are different enough that "+2" meant nothing on its own.
+   */
+  supportLabel(t) {
+    if (isTurret(t)) return { text: `${Math.round(SUPPORT_FIRE_RATE * 100)}% speed`, color: LABEL_ATTACK }
+    if (isShield(t)) return { text: `${SUPPORT_SHIELD_DAMAGE} burn`, color: LABEL_ATTACK }
+    if (claimsEnclosure(t)) return { text: `${Math.round(SUPPORT_GEN_RATE * 100)}% energy`, color: LABEL_ENERGY }
+    return null // nothing else takes a bonus, so nothing else gets a caption
+  }
+
+  /**
+   * A support trail landed on a building, or was cut.
+   *
+   * Gaining rings the building and floats what it just gained; losing floats the
+   * same figure as a minus, in the warning colour, and rings nothing - a loss is
+   * something to notice, not to celebrate.
+   */
+  announceSupport(t, gained) {
+    const label = this.supportLabel(t)
+    if (label) this.announceBonus(t, gained, label.text, label.color)
+  }
+
+  /**
+   * Float "+15% energy" (or "-1 HP") over a building whose bonuses just changed.
+   *
+   * Gaining rings the building as well; losing does not - a loss is something to
+   * notice, not to celebrate - and the two carry different sounds. The colour
+   * says which KIND of bonus moved, so it stays the same either way.
+   */
+  announceBonus(t, gained, text, color) {
     const city = this.city
     const c = t.box.getCenter(this._c)
     const x = c.x + city.gridOffsetX, z = c.y + city.gridOffsetZ
-    const color = city.accentColors[SUPPORT_ACCENT]
-    city.spawnSupportRing?.(x, z, color)
+    if (gained) city.spawnSupportRing?.(x, z, city.accentColors[SUPPORT_ACCENT])
     city.floatingText?.spawn(
       x, towerTopY(t, city.floorHeight) + 1.0, z,
-      `x${Math.round(1 / SUPPORT_PENALTY)}`, `#${color.getHexString()}`, 0, 'gen-online'
+      `${gained ? '+' : '-'}${text}`, color, 0,
+      gained ? 'gen-online' : 'power-down'
     )
   }
 
   /**
-   * Support factor for a building: 1 when a support tower's trail reaches it,
-   * SUPPORT_PENALTY when nothing does. Turrets, area generators and shields all
-   * run through this, so an unsupported one works but at half pace.
+   * How many support-tower trails reach this building.
+   *
+   * It used to be a yes/no that halved everything it did not reach, which made
+   * the first support tower enormous and the second one worth nothing. Now it is
+   * a count, and each bonus stacks off it: turrets fire faster, shields burn
+   * harder, area generators earn more. Zero is the building on its own, at the
+   * rate an unsupported one has always run.
    */
-  support(tower) {
-    return this.supported && this.supported.has(tower) ? 1 : SUPPORT_PENALTY
+  supportCount(tower) {
+    return (this.supported && this.supported.get(tower)) || 0
+  }
+
+  /** Turret fire-rate multiplier: BASE_FACTOR on its own, +25% per trail. */
+  fireRateFactor(tower) {
+    return BASE_FACTOR * (1 + SUPPORT_FIRE_RATE * this.supportCount(tower))
+  }
+
+  /** Enclosure-generator output multiplier: same shape, +15% per trail. */
+  genRateFactor(tower) {
+    return BASE_FACTOR * (1 + SUPPORT_GEN_RATE * this.supportCount(tower))
+  }
+
+  /** Extra burn damage a shield gets from support: +1 per trail. */
+  shieldBonus(tower) {
+    return SUPPORT_SHIELD_DAMAGE * this.supportCount(tower)
   }
 
   /** Recompute generator networks (called when a tower changes). */
   refresh() {
     this.updatePathGenerators()
+    this.updateShieldCover()
     this.updateEnclosureGenerators()
     this.refreshManaStats()
+  }
+
+  /**
+   * How many live shield rings each tower stands inside.
+   *
+   * A shield used to do one thing - burn what crossed its line - which made it
+   * worth nothing at all once creeps were already inside. Covering the buildings
+   * in the ring gives it a second, quieter job: every non-wall tile under it is
+   * harder to knock down, so a shield is a reason to build INSIDE something
+   * rather than a fence you hope holds.
+   *
+   * Counted rather than flagged, so overlapping rings stack the way support
+   * trails do. Rebuilt on every tower change (not per frame) - the same beat the
+   * trail network is rebuilt on, since both answer "what is connected to what".
+   */
+  updateShieldCover() {
+    const city = this.city
+    const cover = new Map() // tower -> how many shield rings cover it
+    for (const sh of city.towers) {
+      if (!sh.visible || !isShield(sh) || sh.numFloors < 1) continue
+      // A spent or browned-out shield draws no ring, so it covers nothing.
+      if (shieldCharges(sh) <= 0 || city.upkeep.isDark(sh)) continue
+      const r = shieldRadiusCells(sh.numFloors) * city.cellUnit
+      sh.box.getCenter(this._ca)
+      for (const t of city.towers) {
+        if (t === sh || !t.visible || t.numFloors < 1) continue
+        // Walls are excluded. A wall maze is already the cheapest hit points on
+        // the board and there are dozens of them under one ring; hardening the
+        // BUILDINGS is what makes a shield worth the tile, and it keeps the
+        // bonus to things you placed one at a time and care about individually.
+        if (isGrey(t)) continue
+        t.box.getCenter(this._cb)
+        if (this._ca.distanceTo(this._cb) < r) cover.set(t, (cover.get(t) || 0) + 1)
+      }
+    }
+    // Same diff the support trails get: announce what changed, both directions,
+    // rather than firing per ring on every rebuild.
+    const prev = this.shieldCover
+    this.shieldCover = cover
+    if (prev) {
+      for (const [t, n] of cover) {
+        if (n > (prev.get(t) || 0)) this.announceBonus(t, true, `${SHIELD_COVER_HP} HP`, LABEL_HP)
+      }
+      for (const [t, n] of prev) {
+        if (t.visible && n > (cover.get(t) || 0)) {
+          this.announceBonus(t, false, `${SHIELD_COVER_HP} HP`, LABEL_HP)
+        }
+      }
+    }
+  }
+
+  /** Extra hit points per block from the shield rings a tower stands in. */
+  shieldCoverCount(tower) {
+    return (this.shieldCover && this.shieldCover.get(tower)) || 0
   }
 
   /** Enclosure generators: mana = enclosed-region size x floor height x rate.
@@ -148,7 +272,8 @@ export class EnergySystem {
       const cells = t.enclosureRegionCells || 0
       if (cells <= 0 || t.numFloors < 1 || this.city.upkeep.isDark(t)) { t.enclosureMana = 0; continue }
       t.enclosureMana = Math.max(1, Math.round(
-        cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR * Buffs.genRate * this.support(t)
+        cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR * Buffs.genRate
+        * this.genRateFactor(t)
       ))
       mana += t.enclosureMana
       this.enclosureGens.push(t)
@@ -221,15 +346,15 @@ export class EnergySystem {
     this.pathGenMana = mana
     this.pathGenContribution = contrib
 
-    // Decorative trails: on top of the mana-bearing links above, every path
+    // Support trails: on top of the energy-bearing links above, every path
     // generator also runs a line to any non-wall building inside its OWN reach
-    // (numFloors * 2 cells - the other end contributes nothing, unlike a
-    // gen-to-gen link). Purely cosmetic for now: these are appended after the
-    // mana loop, so they light up the city without paying anything.
+    // (numFloors * 2 cells - the other end pays nothing, unlike a gen-to-gen
+    // link). These earn no energy; what they do is make the building at the far
+    // end better at its job, and they stack (see supportCount).
     const drawn = pairs.slice()
     // Rebuilt every time the network changes, so a support tower losing height
     // or being demolished drops everything it was carrying.
-    const supported = new Set()
+    const supported = new Map() // building -> how many support trails reach it
     for (const a of plus) {
       const reach = a.numFloors * 2 + Buffs.supportReach
       if (reach <= 0) continue
@@ -242,23 +367,31 @@ export class EnergySystem {
         if (isPathGenerator(b) && b.colorIndex === a.colorIndex) continue
         b.box.getCenter(this._cb)
         const dist = this._ca.distanceTo(this._cb) / cell
-        if (dist < reach) { drawn.push([a, b, dist]); supported.add(b) }
+        if (dist < reach) {
+          drawn.push([a, b, dist])
+          supported.set(b, (supported.get(b) || 0) + 1)
+        }
       }
     }
 
-    // A trail from a support tower isn't only decoration any more: reaching a
-    // building is what brings it up to full speed. Same geometry, same links -
-    // the line you can see IS the supply.
+    // A trail from a support tower isn't decoration: every one that reaches a
+    // building makes it better at its job, and they stack. Same geometry, same
+    // links - the line you can see IS the supply.
     //
-    // Announce the ones that just came online. Diffed against the previous set
-    // rather than fired per link, so re-running the network (which happens on
-    // every tower change) doesn't re-announce buildings that were already
-    // supported.
+    // Announce the ones that just gained a trail. Diffed against the previous
+    // counts rather than fired per link, so re-running the network (which happens
+    // on every tower change) doesn't re-announce what was already connected.
     const prev = this.supported
     this.supported = supported
     if (prev) {
-      for (const t of supported) {
-        if (!prev.has(t)) this.announceSupport(t)
+      for (const [t, n] of supported) {
+        if (n > (prev.get(t) || 0)) this.announceSupport(t, true)
+      }
+      // Losses are read off the OLD map: a building that lost its last trail is
+      // not in the new one at all, so iterating the new one would miss exactly
+      // the case worth announcing.
+      for (const [t, n] of prev) {
+        if (t.visible && n > (supported.get(t) || 0)) this.announceSupport(t, false)
       }
     }
 
