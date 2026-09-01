@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGrey, claimsEnclosure, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
+import { TopType, isGrey, claimsEnclosure, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
 import { fxMaterial, glow } from '../fx.js'
 import { priceOfTower } from './tileCost.js'
 
@@ -45,11 +45,10 @@ export class TowerInteraction {
     let nearestDist = Infinity
     for (const tower of city.towers) {
       if (!tower.visible) continue
-      // Box top = real geometry top, PLUS the turret model standing on it. A
-      // one-floor turret is mostly gun: without the model's height in the box,
-      // clicks aimed at the barrel sailed over the block and hit the ground.
-      const top = towerTopY(tower, city.floorHeight)
-        + (isTurret(tower) ? (city.turrets?.modelHeight(tower) || 0) : 0)
+      // Box top = the SOLID blocks only - no roof cap, no turret model. The
+      // decoration above the blocks is mostly air, and counting it let a tall
+      // neighbour's empty box corner steal clicks aimed at a low block behind it.
+      const top = tower.numFloors * city.floorHeight
       this._pickBox.min.set(tower.box.min.x + city.gridOffsetX, 0, tower.box.min.y + city.gridOffsetZ)
       this._pickBox.max.set(
         tower.box.max.x + city.gridOffsetX, top, tower.box.max.y + city.gridOffsetZ
