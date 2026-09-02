@@ -5,7 +5,7 @@ import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TopType, isGrey, claimsEnclosure, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
 import { fxMaterial, glow } from '../fx.js'
-import { priceOfTower } from './tileCost.js'
+import { priceOfTower, refundOfTower } from './tileCost.js'
 
 /**
  * TowerInteraction - all player input on towers (hover, build, destroy, place,
@@ -216,7 +216,19 @@ export class TowerInteraction {
   demolishTower(tower) {
     const city = this.city
     city.demo?.run?.record('demolish', { gx: tower.cellX, gy: tower.cellY })
+    // Half of what its floors cost, handed back - so tearing something down is a
+    // move you can make when you are desperate rather than a pure loss. Taken
+    // before the tower is freed, while it still has its height.
+    const refund = refundOfTower(city, tower)
     city.demolishTower(tower, { animate: true })
+    if (refund > 0 && city.mana) {
+      city.mana.add(refund)
+      const c = tower.box.getCenter(city.towerCenter)
+      city.floatingText?.spawn(
+        c.x + city.gridOffsetX, 2, c.y + city.gridOffsetZ,
+        `+${refund}`, ENERGY_COLOR, 0, 'pick-up'
+      )
+    }
   }
 
   /** Hide the tower and spin a radial build-wheel; finishReroll() on completion. */

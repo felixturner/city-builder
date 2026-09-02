@@ -446,6 +446,30 @@ export class City {
     }
   }
 
+  /**
+   * Can a WALKING unit stand on this cell?
+   *
+   * The one place the two obstacle masks meet: `occupied` (tower footprints) and
+   * the boulders Rocks keeps. Soldiers used to ask only about towers and walked
+   * straight through rocks; the flow field ORs both together itself. One
+   * question, so a new obstacle only has to be added here.
+   *
+   * Creeps deliberately do NOT use this. A tower in a creep's way is a target,
+   * not an obstacle - the bulldozing path checks rocks alone precisely so that
+   * it stops and attacks what it walks into rather than stepping around it.
+   */
+  blocksWalk(gx, gy) {
+    if (gx < 0 || gy < 0 || gx >= this.gridCellsX || gy >= this.gridCellsY) return true
+    if (this.occupied[gy]?.[gx]) return true
+    return this.rocks ? this.rocks.blocks(gx, gy) : false
+  }
+
+  /** blocksWalk, asked in world space. Off-board reads as blocked. */
+  blocksWalkWorld(wx, wz) {
+    const cell = this.worldToCell(wx, wz)
+    return cell ? this.blocksWalk(cell.gx, cell.gy) : true
+  }
+
   /** Map a world-space ground point to a global cell (gx,gy), or null if OOB. */
   worldToCell(worldX, worldZ) {
     const gx = Math.floor((worldX - this.gridOffsetX) / this.cellUnit)
@@ -1681,8 +1705,13 @@ export class City {
     // with the grid, because the material it feeds is rebuilt with it too.
     this.gridFade = uniform(1)
     const span = this.visibleHalf * 2
-    // Fine cell grid - centered at origin (same as lot grid). One line per buildable cell.
-    const cellGrid = new GridHelper(span, span / this.cellUnit, 0x888888, 0x888888)
+    // The cell grid runs PAST the bounds, out over the field the creeps walk in
+    // across (the same one lot of margin the ground under it covers - see
+    // Lighting.setBoardSize). The board ends where the white outline is; the grid
+    // carrying on past it says the ground out there is real, which is where you
+    // watch a wave form up.
+    const gridSpan = span + this.cellSize * 2
+    const cellGrid = new GridHelper(gridSpan, gridSpan / this.cellUnit, 0x888888, 0x888888)
     cellGrid.material.transparent = true
     cellGrid.material.opacity = CELL_GRID_OPACITY
     cellGrid.position.set(0, 0.01, 0)
@@ -1690,7 +1719,7 @@ export class City {
     this.cellGrid = cellGrid
 
     // Grid intersection dots using procedural plane shader
-    const dotPlaneGeometry = new PlaneGeometry(span, span)
+    const dotPlaneGeometry = new PlaneGeometry(gridSpan, gridSpan)
     dotPlaneGeometry.rotateX(-Math.PI / 2)
     const dotMaterial = new MeshBasicNodeMaterial()
     dotMaterial.transparent = true
@@ -1698,7 +1727,7 @@ export class City {
     dotMaterial.side = 2 // DoubleSide
 
     // Procedural dots at grid intersections (one per buildable cell, matching cell grid)
-    const cellCoord = uv().mul(span / this.cellUnit)
+    const cellCoord = uv().mul(gridSpan / this.cellUnit)
     const fractCoord = fract(cellCoord)
     const toGridX = min(fractCoord.x, float(1).sub(fractCoord.x))
     const toGridY = min(fractCoord.y, float(1).sub(fractCoord.y))

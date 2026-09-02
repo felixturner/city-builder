@@ -1,4 +1,4 @@
-import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color } from 'three/webgpu'
+import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color, Vector2 } from 'three/webgpu'
 import { fxMaterial, glow } from './fx.js'
 
 /**
@@ -26,11 +26,22 @@ import { fxMaterial, glow } from './fx.js'
 const LENGTH_CELLS = 3.2 // arrow length, tip to tail
 const WIDTH_CELLS = 3.2 // arrow width across the barbs
 const Y = 0.12 // on the floor, above the grid and the flow field
-// A clump pouring out of an edge kicks that arrow to full brightness and lets it
-// fall back over FLASH_TIME. The horn says a swarm is coming; this says which
-// side it is coming from, which the horn alone cannot.
-const FLASH_TIME = 0.7
-const FLASH_ALPHA = 1.0 // opacity the flash peaks at, over the steady 0.7
+// A swarm about to pour out of an edge sets that arrow blinking - FLASH_PULSES
+// beats over FLASH_TIME, decaying as it goes. The horn says a swarm is coming;
+// this says which side, which the horn alone cannot. A single fade read as
+// something that had already happened; a blink reads as a countdown.
+const FLASH_TIME = 1.2
+const FLASH_PULSES = 4
+const FLASH_ALPHA = 1.0 // opacity a beat peaks at, over the steady 0.7
+// How far INSIDE the bounds the arrow sits, in cells. Its tip used to touch the
+// outline from outside; overlapping the board a little ties it to the ground it
+// is warning about rather than floating off the edge of it.
+const OVERLAP_CELLS = 2
+// A second, smaller arrow beside the king, pointing the same way. The edge arrow
+// says which side; this one says it again where you are actually looking, which
+// on a full board is the middle.
+const KING_ARROW_SCALE = 0.5
+const KING_ARROW_CELLS = 2 // how far from the king it sits, toward the incoming side
 
 export class WaveArrows {
   constructor(demo) {
@@ -53,31 +64,50 @@ export class WaveArrows {
 
     this.flashes = [0, 0, 0, 0] // per-edge flash envelope, 1 -> 0
     this._lastT = 0
-    this.arrows = []
-    for (let i = 0; i < 4; i++) {
+    const makeArrow = () => {
       const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
       const mesh = glow(new Mesh(geo, mat))
       mesh.visible = false
       mesh.renderOrder = 4
       demo.scene.add(mesh)
-      this.arrows.push({ mesh, mat })
+      return { mesh, mat }
     }
+    this.arrows = []
+    for (let i = 0; i < 4; i++) this.arrows.push(makeArrow())
+    // The king's own marker: same arrow, half size, sitting just off the king on
+    // the side the wave is coming from.
+    this.kingArrow = makeArrow()
   }
 
   /**
    * Distance from the centre to an arrow's MIDDLE. The arrow is drawn centred on
-   * its own length, so pushing it half a length past the bounds lands its tip on
-   * the outline with the rest of it sitting outside - between the board edge and
-   * the ring creeps actually spawn on (bounds + one lot), so it never overlaps
-   * either.
+   * its own length, so half a length past the bounds would put its tip exactly on
+   * the outline; OVERLAP_CELLS pulls it back in so the head lies over the board
+   * and the tail hangs out in the field the creeps walk in from.
    */
   _radius() {
-    return this.city.visibleHalf + (LENGTH_CELLS / 2) * this.city.cellUnit
+    return this.city.visibleHalf + (LENGTH_CELLS / 2 - OVERLAP_CELLS) * this.city.cellUnit
   }
 
-  /** Kick an edge's arrow to full - a clump just started pouring out of it. */
+  /** Start an edge's arrow blinking - a swarm is about to pour out of it. */
   flash(edge) {
     if (edge >= 0 && edge < this.flashes.length) this.flashes[edge] = 1
+  }
+
+  /**
+   * Brightness of an edge's blink right now, 0..1.
+   *
+   * A decaying pulse train rather than a single fade: `env` is how much of the
+   * warning is left, `pulse` is where it is within the current beat. Multiplied,
+   * the arrow blinks FLASH_PULSES times and each beat is weaker than the last,
+   * so it reads as a countdown running out rather than one thing that happened.
+   */
+  _flashLevel(edge) {
+    const env = this.flashes[edge]
+    if (env <= 0) return 0
+    const elapsed = (1 - env) * FLASH_TIME
+    const pulse = Math.abs(Math.sin((elapsed / FLASH_TIME) * Math.PI * FLASH_PULSES))
+    return env * pulse
   }
 
   update(dt = 0) {
@@ -136,16 +166,47 @@ export class WaveArrows {
       mat.color.copy(this._colour)
       // The flash rides OVER whatever the arrow is already doing, so a clump
       // pouring during the steady phase still reads as an event.
-      const f = this.flashes[edge]
+      const f = this._flashLevel(edge)
       mat.opacity = f > 0 ? Math.max(alpha, FLASH_ALPHA * f) : alpha
       // A touch bigger at the peak: opacity alone is easy to miss on a board
       // with a hundred things moving on it.
       mesh.scale.setScalar(this.city.cellUnit * (1 + 0.25 * f))
       mesh.visible = true
+      this._placeKingArrow(edge, yaw, mat.opacity, f)
     }
+  }
+
+  /**
+   * The small arrow beside the king, pointing the way the wave will come.
+   *
+   * Offset toward the incoming side rather than centred on the king, so it reads
+   * as something arriving from over there rather than a decoration on the tile.
+   * Shares the edge arrow's colour, alpha and flash - it is the same warning,
+   * repeated where the eye already is.
+   */
+  _placeKingArrow(edge, yaw, alpha, flash) {
+    const king = this.city.king
+    const { mesh, mat } = this.kingArrow
+    if (!king || !king.visible || !this.city.kingAlive) { mesh.visible = false; return }
+    const c = king.box.getCenter(this._kingC || (this._kingC = new Vector2()))
+    const d = KING_ARROW_CELLS * this.city.cellUnit
+    // Back along the arrow's own facing: it points at the city, so stepping the
+    // other way puts it on the side the creeps are coming from.
+    let x = c.x + this.city.gridOffsetX, z = c.y + this.city.gridOffsetZ
+    if (edge === 0) x -= d
+    else if (edge === 1) x += d
+    else if (edge === 2) z -= d
+    else z += d
+    mesh.position.set(x, Y, z)
+    mesh.rotation.set(0, yaw, 0)
+    mat.color.copy(this._colour)
+    mat.opacity = alpha
+    mesh.scale.setScalar(this.city.cellUnit * KING_ARROW_SCALE * (1 + 0.25 * flash))
+    mesh.visible = true
   }
 
   _hideAll() {
     for (const { mesh } of this.arrows) mesh.visible = false
+    this.kingArrow.mesh.visible = false
   }
 }

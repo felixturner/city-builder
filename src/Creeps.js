@@ -42,6 +42,9 @@ const SWARM_SLOT_SPAN = 0.85 // clump slots stop this far through the attack win
 // swarm is the unit the wave is read in, so two of them running together read
 // as one shapeless push - the lull is what makes them countable.
 const SWARM_LULL = 0.8
+// How long before a swarm pours that its arrow starts blinking. Long enough to
+// turn and look, short enough that it is clearly about THIS swarm.
+const SWARM_WARN_LEAD = 1.5
 
 // Creeps claim the cell they are walking into and won't enter a claimed one, so
 // a swarm queues rather than stacking. After this many blocked attempts a creep
@@ -1302,6 +1305,15 @@ export class Creeps {
     // swarm has finished pouring first (see _planWave), so in practice this
     // releases one at a time - the loop stays a while because a squeezed
     // late-game schedule can still land two on the same frame.
+    // Warn BEFORE the swarm, not as it lands: the arrow it belongs to starts
+    // blinking SWARM_WARN_LEAD seconds out, so the warning is something you can
+    // still act on rather than a note about what just happened.
+    const next = this._plan?.[this._planIndex]
+    if (next && !next.warned && next.at - phase <= SWARM_WARN_LEAD) {
+      next.warned = true
+      this.waveArrows?.flash(next.edge)
+    }
+
     while (this._plan && this._planIndex < this._plan.length
       && this._plan[this._planIndex].at <= phase) {
       this._release(this._plan[this._planIndex++])
@@ -1422,9 +1434,6 @@ export class Creeps {
     // A war horn per clump, but not the first of a wave: that one lands on the
     // same frame as the wave horn, and two at once is a muddle.
     if (this._released > 0) Sounds.play('horn', SWARM_HORN_RATE, 0.06, SWARM_HORN_VOLUME)
-    // The horn says a swarm is coming; the flash says WHICH clump, on the arrow
-    // already pointing at the side it is coming from.
-    this.waveArrows?.flash(clump.edge)
     this._released++
   }
 

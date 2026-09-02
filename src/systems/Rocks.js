@@ -31,11 +31,11 @@ export class Rocks {
     this.rocks = [] // { gx, gy, mesh, active }
     this.blocked = null // Uint8 mask over the grid, ACTIVE rocks only
     this.mat = new MeshStandardNodeMaterial({
-      // The ground's own colour (Lighting.boundsGround). A boulder is terrain,
-      // not a thing you built, so it should read as the floor pushed up rather
-      // than as an object sitting on it - the silhouette and its shadow are
-      // what make it legible, not a contrasting tint.
-      color: new Color(0x999999),
+      // A fifth darker than the ground it stands on (Lighting.boundsGround is
+      // 0x999999). A boulder is terrain rather than something you built, so it
+      // stays in the floor's family - but at the floor's exact value the
+      // silhouette was doing all the work on its own.
+      color: new Color(0x8a8a8a),
       roughness: 0.95,
       metalness: 0,
     })

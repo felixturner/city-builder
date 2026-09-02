@@ -154,12 +154,11 @@ export class Soldiers {
     return snapToCell(v, this.cell, offset)
   }
 
-  /** True if a world point sits in a cell a soldier can't enter: a building, or
-   *  off the board. */
+  /** True if a world point sits in a cell a soldier can't enter: a building, a
+   *  boulder, or off the board. See City.blocksWalk - one mask, so anything new
+   *  that units have to walk around is added in one place. */
   blocked(x, z) {
-    const cell = this.city.worldToCell(x, z)
-    if (!cell) return true
-    return !!(this.city.occupied[cell.gy] && this.city.occupied[cell.gy][cell.gx])
+    return this.city.blocksWalkWorld(x, z)
   }
 
   /**

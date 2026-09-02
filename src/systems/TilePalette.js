@@ -6,7 +6,7 @@ import { Buffs } from '../buffs.js'
 import { ENERGY_COLOR, PINK } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
-import { priceOfTile } from './tileCost.js'
+import { priceOfTile, rerollCost } from './tileCost.js'
 import { simInt } from '../lib/rng.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex } from '../blockTypes.js'
 
@@ -16,7 +16,6 @@ const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
 // Tray opacity while a tile is in hand, so the ghost stays readable through it.
 const TRAY_DRAG_OPACITY = '0.25'
-const REROLL_COST = 5 // mana to discard/reroll a palette tile
 
 /**
  * TilePalette - a bottom-center hand of random tiles drawn top-down. 66% are grey
@@ -156,7 +155,7 @@ export class TilePalette {
     for (let i = 0; i < SLOTS; i++) this._buildSlot()
     // Little reroll-all button in the top-right corner of the tray.
     const reroll = this.rerollBtn = document.createElement('button')
-    reroll.title = `Reroll all tiles (${REROLL_COST})`
+    reroll.title = 'Reroll all tiles'
     Object.assign(reroll.style, {
       position: 'absolute', top: '-18px', right: '-18px',
       width: '44px', height: '44px', borderRadius: '50%', padding: '0',
@@ -183,7 +182,8 @@ export class TilePalette {
     // use on touch and no use at a glance - and rerolling is the one action here
     // whose cost isn't already printed on the thing you're clicking.
     const cost = document.createElement('div')
-    cost.textContent = `${REROLL_COST}`
+    cost.textContent = `${rerollCost(this.city)}`
+    this.rerollCostEl = cost // the price climbs with the level - see update()
     Object.assign(cost.style, {
       position: 'absolute', top: '26px', right: '-18px', width: '44px',
       textAlign: 'center', pointerEvents: 'none',
@@ -279,7 +279,7 @@ export class TilePalette {
     Sounds.play('snap', 1.3, 0.05, 0.22)
   }
 
-  /** Reroll every slot at once (costs REROLL_COST): clear each tile and run its
+  /** Reroll every slot at once (see rerollCost): clear each tile and run its
    *  refill-ring timer, same as discarding them all. */
   /**
    * Replay a recorded drop: take the tile in `slot`, turned `rot`, onto (gx, gy).
@@ -318,7 +318,7 @@ export class TilePalette {
 
   _rerollAll() {
     this.demo.run?.record('reroll', {})
-    if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
+    if (this.city.mana && !this.city.mana.spend(rerollCost(this.city))) {
       Sounds.play('error', 1.0, 0.06, 0.35)
       return
     }
@@ -390,6 +390,12 @@ export class TilePalette {
   // ---- per-frame: refill timers ----------------------------------------------
 
   update(dt) {
+    // The reroll price is on the same level curve as a wall, so the label has to
+    // follow it rather than being written once at build time.
+    if (this.rerollCostEl) {
+      const price = `${rerollCost(this.city)}`
+      if (this.rerollCostEl.textContent !== price) this.rerollCostEl.textContent = price
+    }
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i]
       if (slot.tile) { this._updateCostLabel(slot); continue }
@@ -445,10 +451,10 @@ export class TilePalette {
   }
 
   /** Discard a slot's tile and start its refill ring timer (long-press / right-click).
-   *  Costs REROLL_COST mana. */
+   *  Costs the same as a reroll (see rerollCost). */
   _discard(i) {
     if (this.drag || !this.slots[i].tile) return
-    if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
+    if (this.city.mana && !this.city.mana.spend(rerollCost(this.city))) {
       Sounds.play('error', 1.0, 0.06, 0.35)
       return
     }

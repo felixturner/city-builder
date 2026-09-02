@@ -89,7 +89,7 @@ export class LootBoxes {
           if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue
           const gx = start.gx + dx, gy = start.gy + dy
           if (gx < 0 || gy < 0 || gx >= city.gridCellsX || gy >= city.gridCellsY) continue
-          if (city.occupied[gy] && city.occupied[gy][gx]) continue
+          if (city.blocksWalk(gx, gy)) continue // a building or a boulder
           return {
             gx, gy,
             x: gx * cu + cu / 2 + city.gridOffsetX,

@@ -39,18 +39,27 @@ also *fell* when creeps took a wall, clamping away energy already banked.
 ### Prices — `src/systems/tileCost.js`
 
 ```
-price = base × (1 + max(0, level - COST_GRACE_LEVELS) × rate) × Buffs.buildCost
-floor price = half of the tile price
+price  = base × (1 + max(0, level - COST_GRACE_LEVELS) × rate) × Buffs.buildCost
+floor  = half the tile price               (FLOOR_DISCOUNT   = 0.5)
+refund = floor × floors × 0.5 on demolish  (DEMOLISH_REFUND  = 0.5)
+reroll = the wall curve off a base of 5    (REROLL_BASE_COST = 5)
 
 WALL_BASE_COST      = 4     UTILITY_BASE_COST   = 8   (generators + turrets)
 WALL_COST_PER_LEVEL = 0.2   COST_PER_LEVEL      = 0.4
 COST_GRACE_LEVELS   = 1
 ```
 
+Everything is one curve, so nothing can drift from anything else. Demolishing
+pays back half of what a tower's floors cost - priced off the FLOOR price times
+its height, so a tall tower refunds more than a fresh one, and the round trip
+always loses. Rerolling the tray climbs at the wall rate (5 / 9 / 14 / 24 at
+levels 1 / 5 / 10 / 20) rather than staying small change late.
+
 | Level | 1 | 2 | 3 | 5 | 10 | 20 | 30 |
 |---|---|---|---|---|---|---|---|
 | Wall | 4 | 4 | 5 | 6 | 10 | 18 | 26 |
 | Turret / generator | 8 | 8 | 11 | 18 | 34 | 66 | 98 |
+| Reroll the tray | 5 | 5 | 6 | 9 | 14 | 24 | 34 |
 
 Walls climb at half the rate: they are the bulk purchase, placed a dozen at a
 time and rebuilt after every wave, so pricing them like an investment tile made
@@ -221,6 +230,35 @@ board cannot be watched.
 
 Boss rounds are every 4th level. Their giants are **dealt across the clumps**
 (one riding in with each) rather than all spawning on the first frame.
+
+---
+
+### Board and pool limits
+
+A lot is 5×5 cells; a cell is 2 world units. The 13-lot grid is always built -
+the arrays, the occupancy mask and the flow field are sized once at startup and
+cannot grow - and `MAX_VISIBLE_LOTS = 11` keeps the outer ring permanently shut
+as margin, so creeps always have somewhere to spawn and walk in from.
+
+| | Lots | Cells | World |
+|---|---|---|---|
+| Start | 5 | 25×25 (625) | 50×50 |
+| After boss 1 (L4) | 7 | 35×35 (1,225) | 70×70 |
+| After boss 2 (L8) | 9 | 45×45 (2,025) | 90×90 |
+| Max play (L12) | 11 | 55×55 (3,025) | 110×110 |
+| Built grid | 13 | 65×65 (4,225) | 130×130 |
+
+`poolSize = 900` pre-made towers is the cap on tiles STANDING at once - one pool
+entry is one tile, so a wall tetromino costs one entry and covers four cells.
+Filling the whole 11-lot board with tetrominoes takes about 760, so the cap is
+not reachable in practice today. It would be on a bigger board, and the failure
+is silent: `placeTileFree` returns null and the palette restores the tile
+without charging.
+
+Growing the board is cheap in memory (900 towers is ~0.5MB of matrices and
+colours; the flow arrays are kilobytes) but not in time - `updateShieldCover` is
+O(shields × towers) on every tower change, and `towerAt` walks every tower per
+creep per step.
 
 ---
 

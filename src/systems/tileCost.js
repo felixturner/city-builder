@@ -47,10 +47,19 @@ const WALL_COST_PER_LEVEL = 0.2
 const COST_GRACE_LEVELS = 1
 
 const FLOOR_DISCOUNT = 0.5 // a floor costs half what the same tile costs new
+// What tearing a tower down hands back, as a fraction of what it would cost to
+// buy new. Demolishing was free of both cost and reward, and so almost never
+// happened - there was no reason to undo a wall rather than leave it standing.
+// Half back makes a bad tile a resource when you are desperate, without making
+// build-then-scrap a way to farm anything.
+const DEMOLISH_REFUND = 0.5
+// Rerolling the tray, priced like a wall: the same base and the same per-level
+// climb, so it stays a real choice late instead of small change.
+export const REROLL_BASE_COST = 5
 
 /** Price to place or to raise one floor. `spec` is {isWall, typeTop}. */
-export function priceOf(city, spec) {
-  const base = spec.isWall ? WALL_BASE_COST : UTILITY_BASE_COST
+export function priceOf(city, spec, baseOverride) {
+  const base = baseOverride ?? (spec.isWall ? WALL_BASE_COST : UTILITY_BASE_COST)
   const rate = spec.isWall ? WALL_COST_PER_LEVEL : COST_PER_LEVEL
   // waveNumber is 0-based, so this is the displayed level minus one.
   const level = city.creeps ? city.creeps.waveNumber : 0
@@ -67,4 +76,20 @@ export function priceOfTile(city, tile) {
 export function priceOfTower(city, tower) {
   const full = priceOf(city, { isWall: isGrey(tower), typeTop: tower.typeTop })
   return Math.max(1, Math.round(full * FLOOR_DISCOUNT))
+}
+
+/**
+ * What demolishing a tower pays back: half of what its floors are worth.
+ *
+ * Priced off the FLOOR cost times its height, not the tile price, so a tall
+ * tower refunds more than a fresh one - it is what you actually put in.
+ */
+export function refundOfTower(city, tower) {
+  const floor = priceOfTower(city, tower)
+  return Math.max(1, Math.round(floor * tower.numFloors * DEMOLISH_REFUND))
+}
+
+/** Rerolling the tray, on the same curve as a wall. */
+export function rerollCost(city) {
+  return priceOf(city, { isWall: true }, REROLL_BASE_COST)
 }
