@@ -34,7 +34,7 @@ const MISSTEP_CHANCE = 0
 const SWARM_SIZE = [4, 9] // target creeps per clump - sets how MANY clumps a
 // wave splits into, not how big any one of them is (see _planWave)
 // ...but never so few clumps that a wave arrives all at once.
-const MIN_SWARMS = 3
+const MIN_SWARMS = 2
 const SWARM_SPREAD_CELLS = 2.5 // cells either side of the clump's entry point
 const SWARM_GAP = 0.11 // seconds between creeps inside one clump
 const SWARM_SLOT_SPAN = 0.85 // clump slots stop this far through the attack window
@@ -221,7 +221,7 @@ export class Creeps {
     // came along for the ride. 6 + 3n keeps the straight line and puts the first
     // few levels back where they were; the per-creep health and swing ramp
     // (hpPerWave / attackPerWave) is what carries the late game.
-    this.creepsBase = 6
+    this.creepsBase = 8
     this.creepsPerWave = 3
 
     // Creeps left alive past the spawn window eat into the next build phase -

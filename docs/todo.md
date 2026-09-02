@@ -20,17 +20,14 @@
 - make things morre expensive later? add more things to buy?
 - add difficulty level setting like 9 kings?
 - lots more tile varity like 9 kings? introduce them over time with a card explaing what they do?
-- have creeps come in swarms closer together
-- remove ammo?
 - allow saving points/pieces for attack waves
 - add 3 difficulty levels - chill, regular, hard
-
+- make completing wall rings more important. buff walls that are completed x2 def.
 
 ## FIXES
 - new encluosre sound sounds like power down?
 - keep attacks swarms in one dir until boss level
 - add dec or indicator when at top height
-- make completing wall rings more important. buff walls that are completed x2 def.
 - remove 3rd party blender file. start new clean repo?
 
 - make connected path generetors pulse at same time
@@ -42,8 +39,7 @@
 - mak online live demo
 - make mobile friendly (right click + R key)
 
-- make all stars yellow
-- creep debris should be same color as the creep. dont play the good level complete sound if the game just eneded
+
 
 ## ART
 - do a sound mix with all volume sliders

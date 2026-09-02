@@ -313,10 +313,12 @@ export class Demo {
 
     // Set up perspective camera (closer position for FOV 30)
     // Initial camera position - same rotation but targeting origin
-    // Opening framing, pulled back twice from the original (-22.0998, 60,
-    // -15.012): +20%, then +30% again. 102.5 units out, against a maxDistance
-    // that lands around 319 - so it starts wide but with plenty of room left.
-    this.perspCamera.position.set(-34.4757, 93.6, -23.4187)
+    // Opening framing, pulled back from the original (-22.0998, 60, -15.012) in
+    // three steps: +20%, +30%, then +20% again to bring the wave arrows into
+    // frame - they sit a half-arrow OUTSIDE the board bounds, so a framing that
+    // just fits the board cuts off the thing telling you where the wave lands.
+    // 123 units out, against a maxDistance around 319 - wide, with room left.
+    this.perspCamera.position.set(-41.3708, 112.32, -28.1024)
     this.perspCamera.fov = 20
     this.updatePerspFrustum()
 

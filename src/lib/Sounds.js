@@ -352,7 +352,16 @@ class SoundsManager {
     // looping instance - it plays for the rest of the session with no handle to
     // stop it, and the next time the loop is asked for you get a second one on
     // top. One-shots are fire-and-forget, so losing their entry costs nothing.
-    if (!this._active[name]?.looping) this._active[name] = { sound, id }
+    if (!this._active[name]?.looping) {
+      this._active[name] = { sound, id }
+      // Forget it when it finishes. Nothing cleared these before, so one blip
+      // left an entry in the register for the rest of the session - and loop()
+      // refuses to start while a name is registered, so a single one-shot could
+      // permanently block that sound's alarm from ever looping again.
+      sound.once('end', () => {
+        if (this._active[name]?.id === id) delete this._active[name]
+      }, id)
+    }
     return id
   }
 
@@ -395,7 +404,10 @@ class SoundsManager {
    */
   loop(name, volume = 1.0, rate = 1.0, maxPlays = 0) {
     if (this.mutedSounds.has(name) || this._unavailable.has(name)) return
-    if (this._active[name]) return // already ringing
+    if (this._active[name]?.looping) return // already ringing
+    // A one-shot of the same sound is playing: take it over rather than refuse.
+    // A state alarm outranks a blip, and the blip has usually already been heard.
+    if (this._active[name]) this.stop(name)
     const { sound, key } = this._resolve(name)
     if (!sound) {
       console.warn(`Sound "${name}" not found`)

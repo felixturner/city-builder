@@ -483,6 +483,17 @@ export class EnergySystem {
     const city = this.city
     if (!city.mana) return
 
+    // The king is dead: the economy stops with it. The city keeps running for a
+    // few seconds after the loss (see Demo's GAME_OVER_DELAY) and generators
+    // went on paying into it the whole time - energy arriving, cubes popping,
+    // the bar climbing - over a run that had already ended. Anything already
+    // scheduled is dropped too, so nothing lands after the fact.
+    if (!city.kingAlive) {
+      if (this.pulseEvents.length) this.pulseEvents.length = 0
+      this.incomePerSecValue = 0
+      return
+    }
+
     // Generator mana tick: schedule each unit's flash at a random offset.
     const genMana = this.pathGenMana + this.enclosureGenMana
     // Cache live income/sec for price scaling. Both generator types count now
