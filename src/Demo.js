@@ -43,6 +43,10 @@ import { TilePalette } from './systems/TilePalette.js'
  *  Any value works - ?dev, ?dev=1 - it's presence that counts. */
 export const DEV_MODE = new URLSearchParams(location.search).has('dev')
 
+/** TEMP: ?clean spawns no rocks and no loot stars - a bare board for shooting
+ *  tutorial screenshots. */
+export const CLEAN_MODE = new URLSearchParams(location.search).has('clean')
+
 export class Demo {
   static instance = null
 
@@ -169,6 +173,8 @@ export class Demo {
     // Start on 100 against a 150 cap, so the opening build has room to work with
     // but there is still headroom to bank into before the first wave.
     this.mana = new Mana(150, 100)
+    // TEMP (?clean): infinite energy so screenshots aren't gated on the economy.
+    if (CLEAN_MODE) { this.mana.infinite = true; this.mana.current = 99999 }
     this.city.mana = this.mana
     // Income boxes flying from generators to the HUD meters. City needs the live
     // camera to project their launch point.
@@ -238,7 +244,7 @@ export class Demo {
     this.powerUps = new PowerUpScreen(this)
     this.lootBoxes = new LootBoxes(this.scene, this.city, this)
     this.city.lootBoxes = this.lootBoxes // placement checks read it
-    this.lootBoxes.place()
+    if (!CLEAN_MODE) this.lootBoxes.place()
     this.lootBoxes.refresh() // switch off the ones outside the opening play area
     // Cards come from surviving a boss round, not from crates. It fires when the
     // board actually goes quiet - not when the spawn window shuts - so the menu
@@ -251,6 +257,7 @@ export class Demo {
 
     // Incoming-wave timeline strip across the top of the screen
     this.creepTimeline = new CreepTimeline(this.creeps)
+    if (CLEAN_MODE) this.creepTimeline.el.style.display = 'none'
     // Screen-edge warning arrows for the side the next wave comes from.
     this.waveArrows = new WaveArrows(this)
     // Mana was built before the strip existed, so its first layout pass found
@@ -502,7 +509,8 @@ export class Demo {
     this.mana.setLevel(this.creeps.waveNumber + 1)
     this.city.update(dt)
     this.trails.update(dt)
-    this.creeps.update(dt)
+    // Clean screenshot mode: the wave clock never runs, so no creeps ever come.
+    if (!CLEAN_MODE) this.creeps.update(dt)
     this.lootBoxes.update(dt)
     this.soldiers.update(dt)
     this.turrets.update(dt)
@@ -768,9 +776,21 @@ export class Demo {
     const restart = document.createElement('button')
     restart.textContent = 'New game'
     Object.assign(restart.style, buttonStyle)
-    restart.addEventListener('click', () => location.reload())
+    // ?play skips the start menu after the reload, straight into the new run.
+    restart.addEventListener('click', () => {
+      const url = new URL(location.href)
+      url.searchParams.set('play', '1')
+      location.replace(url)
+    })
+    const tute = document.createElement('button')
+    tute.textContent = 'Tutorial'
+    Object.assign(tute.style, buttonStyle)
+    // The slideshow opens over this menu (higher z-index); its last click just
+    // closes it again and lands back here, still paused.
+    tute.addEventListener('click', () => this.tutorial?.show(() => {}))
     buttons.appendChild(resume)
     buttons.appendChild(restart)
+    buttons.appendChild(tute)
 
     el.appendChild(title)
     el.appendChild(stats)

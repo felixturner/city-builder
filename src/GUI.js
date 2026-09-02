@@ -98,6 +98,10 @@ export class GUIManager {
     gameplayFolder.add({
       bossReward: () => demo.previewBossReward(),
     }, 'bossReward').name('▶ Boss Clear')
+    // Wipe every tile off the board - king included - for clean screenshots.
+    gameplayFolder.add({
+      clearBoard: () => demo.city.clearBoard(),
+    }, 'clearBoard').name('✕ Clear Board')
 
     // View folder holds all rendering/debug controls (collapsed at start)
     const viewFolder = gui.addFolder('View').close()

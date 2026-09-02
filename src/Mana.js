@@ -32,6 +32,7 @@ export class Mana {
     this.current = Math.min(initial, this.max)
     this.elapsed = 0 // survival time = score
     this.level = 1 // 1-based wave number, pushed in by Demo each frame
+    this.infinite = false // TEMP (?clean): spends are free, cap never clamps
     this._build()
     this.render()
   }
@@ -137,13 +138,14 @@ export class Mana {
   setStats(population) {
     this.population = population
     this.max = this.baseMax + population + Buffs.energyMax
-    if (CAP_ENABLED && this.current > this.max) this.current = this.max
+    if (CAP_ENABLED && !this.infinite && this.current > this.max) this.current = this.max
     this.render()
   }
 
   /** Spend energy. Returns true if there was enough, false otherwise.
    *  `silent` skips the HUD blip for spends that have their own feedback. */
   spend(amount = 1, silent = false) {
+    if (this.infinite) return true
     if (this.current < amount) return false
     this.current -= amount
     // Player-driven spends are discrete, so this one isn't rate-limited.
