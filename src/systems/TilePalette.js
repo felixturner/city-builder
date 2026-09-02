@@ -20,7 +20,7 @@ const REROLL_COST = 5 // mana to discard/reroll a palette tile
 /**
  * TilePalette - a bottom-center hand of random tiles drawn top-down. 66% are grey
  * tetromino walls; the rest are generators/turrets on square footprints. Drag a
- * tile onto the grid (a real 3D ghost snaps to cells) to place it; Space rotates;
+ * tile onto the grid (a real 3D ghost snaps to cells) to place it; Space or R rotates;
  * long-press discards. A consumed slot shows a clockwise ring timer, then refills.
  */
 export class TilePalette {
@@ -45,9 +45,10 @@ export class TilePalette {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.drag && this.drag.sticky) this._cancelDrag()
     })
-    // Space rotates the held tile 90deg CW while dragging.
+    // Space or R rotates the held tile 90deg CW while dragging. Two keys because
+    // R is what the muscle memory reaches for and Space is what a thumb finds.
     window.addEventListener('keydown', (e) => {
-      if (e.key === ' ' || e.code === 'Space') this.rotateHeld()
+      if (e.key === ' ' || e.code === 'Space' || e.code === 'KeyR') this.rotateHeld()
     })
 
     this._buildDOM()

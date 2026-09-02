@@ -1388,12 +1388,16 @@ export class Creeps {
     this._bomberIndex = 0
   }
 
-  /** Start a planned clump pouring, and sound its horn. */
+  /** Start a planned clump pouring, sound its horn, and flash its arrow. */
   _release(clump) {
     this._active.push({ ...clump, left: clump.size, timer: SWARM_GAP })
     // A war horn per clump, but not the first of a wave: that one lands on the
     // same frame as the wave horn, and two at once is a muddle.
     if (this._released > 0) Sounds.play('horn', SWARM_HORN_RATE, 0.06, SWARM_HORN_VOLUME)
+    // The horn says a swarm is coming; the flash says WHICH SIDE. On a two-front
+    // wave both arrows are up the whole time, so without this the sound named no
+    // direction and you had to wait to see where they came out.
+    this.waveArrows?.flash(clump.edge)
     this._released++
   }
 

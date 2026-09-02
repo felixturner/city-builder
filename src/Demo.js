@@ -259,8 +259,10 @@ export class Demo {
     // Incoming-wave timeline strip across the top of the screen
     this.creepTimeline = new CreepTimeline(this.creeps)
     if (CLEAN_MODE) this.creepTimeline.el.style.display = 'none'
-    // Screen-edge warning arrows for the side the next wave comes from.
+    // Screen-edge warning arrows for the side the next wave comes from. Creeps
+    // reaches back for it to flash the arrow a clump is pouring out of.
     this.waveArrows = new WaveArrows(this)
+    this.creeps.waveArrows = this.waveArrows
     // Mana was built before the strip existed, so its first layout pass found
     // nothing to avoid. Re-run it now the strip is measurable.
     this.mana.layout()
@@ -489,7 +491,7 @@ export class Demo {
     }
 
     this.creepTimeline.update()
-    this.waveArrows.update()
+    this.waveArrows.update(dt)
     this.floatingText.update(this.camera, dt)
     this.tilePalette.update(dt)
 

@@ -26,6 +26,11 @@ import { fxMaterial, glow } from './fx.js'
 const LENGTH_CELLS = 3.2 // arrow length, tip to tail
 const WIDTH_CELLS = 3.2 // arrow width across the barbs
 const Y = 0.12 // on the floor, above the grid and the flow field
+// A clump pouring out of an edge kicks that arrow to full brightness and lets it
+// fall back over FLASH_TIME. The horn says a swarm is coming; this says which
+// side it is coming from, which on a two-front wave the horn cannot.
+const FLASH_TIME = 0.7
+const FLASH_ALPHA = 1.0 // opacity the flash peaks at, over the steady 0.7
 
 export class WaveArrows {
   constructor(demo) {
@@ -46,6 +51,8 @@ export class WaveArrows {
     geo.computeVertexNormals()
     this.geo = geo
 
+    this.flashes = [0, 0, 0, 0] // per-edge flash envelope, 1 -> 0
+    this._lastT = 0
     this.arrows = []
     for (let i = 0; i < 4; i++) {
       const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
@@ -68,7 +75,15 @@ export class WaveArrows {
     return this.city.visibleHalf + (LENGTH_CELLS / 2) * this.city.cellUnit
   }
 
-  update() {
+  /** Kick an edge's arrow to full - a clump just started pouring out of it. */
+  flash(edge) {
+    if (edge >= 0 && edge < this.flashes.length) this.flashes[edge] = 1
+  }
+
+  update(dt = 0) {
+    for (let i = 0; i < this.flashes.length; i++) {
+      if (this.flashes[i] > 0) this.flashes[i] = Math.max(0, this.flashes[i] - dt / FLASH_TIME)
+    }
     const creeps = this.creeps
     if (!creeps || !creeps.started) return this._hideAll()
 
@@ -118,9 +133,14 @@ export class WaveArrows {
       else { z = r; yaw = Math.PI }
       mesh.position.set(x, Y, z)
       mesh.rotation.set(0, yaw, 0)
-      mesh.scale.setScalar(this.city.cellUnit)
       mat.color.copy(this._colour)
-      mat.opacity = alpha
+      // The flash rides OVER whatever the arrow is already doing, so a clump
+      // pouring during the steady phase still reads as an event.
+      const f = this.flashes[edge]
+      mat.opacity = f > 0 ? Math.max(alpha, FLASH_ALPHA * f) : alpha
+      // A touch bigger at the peak: opacity alone is easy to miss on a board
+      // with a hundred things moving on it.
+      mesh.scale.setScalar(this.city.cellUnit * (1 + 0.25 * f))
       mesh.visible = true
     }
   }
