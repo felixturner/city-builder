@@ -215,7 +215,12 @@ export class City {
     await ExtraGeometry.init(this.cellUnit)
     await this.initTowers()
     this.placeKing() // central king piece (must exist before the cluster seeds around it)
-    this.rocks.place(40) // scattered terrain, after the king so it can keep clear of it
+    // TEMP: ?clean skips the boulders (and Demo skips the loot stars) - a bare
+    // board for tutorial screenshots. Read here directly rather than imported
+    // from Demo, which would be a circular import.
+    if (!new URLSearchParams(location.search).has('clean')) {
+      this.rocks.place(40) // scattered terrain, after the king so it can keep clear of it
+    }
     // no starting cluster — player builds from scratch around the king
     this.updateMatrices()
     this.renderer.recalculateVisibility()
@@ -570,6 +575,52 @@ export class City {
     tower.numFloors = 0
     this.onTowerChanged(tower)
     this.enclosure.update()
+  }
+
+  /**
+   * DEBUG: wipe every tile off the board - king included - with none of the
+   * per-removal side effects (lot growth, enclosure payouts, captions). One
+   * batch of cell-freeing + hiding, then a single refresh at the end.
+   */
+  clearBoard() {
+    const cu = this.cellUnit
+    for (const t of [...this.towers]) {
+      if (!t.visible) continue
+      if (t.placed) {
+        for (const [dx, dy] of t.cells) this.occupied[t.cellY + dy][t.cellX + dx] = false
+        const lot = this.lots[t.lotY]?.[t.lotX]
+        const k = lot ? lot.towers.indexOf(t) : -1
+        if (k >= 0) lot.towers.splice(k, 1)
+        t.resetAnimation()
+        t.placed = false
+        t.dormant = true
+        t.tetro = null
+        this.towerPool.push(t)
+      } else {
+        const gx0 = Math.round(t.box.min.x / cu), gy0 = Math.round(t.box.min.y / cu)
+        const tw = Math.round((t.box.max.x - t.box.min.x) / cu)
+        const th = Math.round((t.box.max.y - t.box.min.y) / cu)
+        for (let j = 0; j < th; j++) {
+          for (let i = 0; i < tw; i++) {
+            const x = gx0 + i, y = gy0 + j
+            if (x >= 0 && y >= 0 && x < this.gridCellsX && y < this.gridCellsY) this.occupied[y][x] = false
+          }
+        }
+      }
+      t.king = false // a pooled ex-king must come back as an ordinary tile
+      t.visible = false
+      t.numFloors = 0
+      this.updateTowerMatrices(t)
+    }
+    // The king is gone: drop the reference and its ornaments, or the next tile
+    // to reuse its pooled tower would inherit the marker and beam.
+    this.king = null
+    if (this.kingMarker) this.kingMarker.visible = false
+    if (this.kingBeam) this.kingBeam.visible = false
+    if (this.kingRing) this.kingRing.visible = false
+    this.enclosure.update()
+    this.updateTowerVisuals()
+    this.flowDirty = true
   }
 
   /** The shared bag lives in TileBag; this is the name TilePalette already uses. */

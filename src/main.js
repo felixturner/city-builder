@@ -1,11 +1,15 @@
 import { Demo } from './Demo.js'
 import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
 import { Sounds } from './lib/Sounds.js'
+import { Tutorial } from './Tutorial.js'
+import { ENERGY_COLOR } from './palette.js'
 
 const loadingEl = document.getElementById('loading')
 const loaderGif = document.getElementById('loader-gif')
-const startBtn = document.getElementById('start-btn')
+const menuEl = document.getElementById('menu')
 const canvas = document.getElementById('canvas')
+
+const tutorial = new Tutorial()
 
 let demo = null
 
@@ -17,13 +21,28 @@ async function init() {
 
   demo = new Demo(canvas)
   await demo.init()
+  demo.tutorial = tutorial // the Esc pause menu re-opens it
 
-  // WebGPU ready - hide loader gif, show Start button
+  // WebGPU ready - swap the loader gif for the main menu.
   loaderGif.style.display = 'none'
-  startBtn.style.display = 'block'
-  startBtn.textContent = 'Start'
+  document.getElementById('menu-title').style.color = ENERGY_COLOR
 
-  // The button is up; pull the rest of the audio down while the player reads it.
+  // ?play (set by the pause menu's New game) skips the menu straight into the
+  // run. Stripped from the URL so a manual refresh lands on the menu again.
+  // No click means no AudioContext unlock here - Howler's autoUnlock starts
+  // the beds on the first tap instead.
+  const params = new URLSearchParams(location.search)
+  if (params.has('play')) {
+    params.delete('play')
+    const qs = params.toString()
+    history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''))
+    Sounds.loadDeferred()
+    start()
+    return
+  }
+
+  menuEl.style.display = 'flex'
+  // The menu is up; pull the rest of the audio down while the player reads it.
   Sounds.loadDeferred()
 }
 
@@ -35,8 +54,9 @@ function start() {
   Sounds.startBeds()
   Sounds.setBedMode('build', 3.0)
 
-  // Hide loading overlay
+  // Hide loading + tutorial overlays
   loadingEl.style.display = 'none'
+  tutorial.hide()
 
   // Fade up, camera fall and the opening stings all start here, together.
   demo.fadeIn(500)
@@ -51,5 +71,14 @@ function start() {
   demo.creeps.start()
 }
 
-startBtn.addEventListener('click', start)
+// Main menu. Both paths run inside a click, so the AudioContext unlock in
+// start() keeps working; the tutorial's final Play click starts the game.
+document.getElementById('menu-new').addEventListener('click', start)
+document.getElementById('menu-tutorial').addEventListener('click', async () => {
+  // Hide the menu only once the slideshow is actually up - dropping it first
+  // exposed the canvas behind for a frame while the md/image fetched. Done on
+  // the last page brings the start menu back rather than starting the game.
+  await tutorial.show(() => { loadingEl.style.display = 'flex' })
+  loadingEl.style.display = 'none'
+})
 init()

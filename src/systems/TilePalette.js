@@ -51,7 +51,32 @@ export class TilePalette {
     })
 
     this._buildDOM()
-    for (let i = 0; i < this.slots.length; i++) this._setTile(i, this.randomTile())
+    // TEMP: ?clean deals a huge hand - one of every tile type - for shooting
+    // tutorial screenshots, instead of the usual 4 random slots.
+    if (new URLSearchParams(location.search).has('clean')) {
+      const tiles = this._oneOfEach()
+      while (this.slots.length < tiles.length) this._buildSlot()
+      tiles.forEach((t, i) => this._setTile(i, t))
+    } else {
+      for (let i = 0; i < this.slots.length; i++) this._setTile(i, this.randomTile())
+    }
+  }
+
+  /** TEMP (?clean): every tile type once - the 6 wall shapes, then each 1x1. */
+  _oneOfEach() {
+    const tiles = []
+    TetrominoGeometry.names.forEach((shapeName, i) => {
+      tiles.push({ wall: true, shapeName, topColorIndex: i % Tower.COLORS.length, rot: 0 })
+    })
+    const singles = [
+      TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR,
+      TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET,
+      TopType.BARRACKS, TopType.SHIELD,
+    ]
+    for (const typeTop of singles) {
+      tiles.push({ w: 1, h: 1, typeTop, colorIndex: tileColorIndex(typeTop), topColorIndex: 0 })
+    }
+    return tiles
   }
 
   // ---- random tiles -----------------------------------------------------------
@@ -338,7 +363,7 @@ export class TilePalette {
       slot.refill -= dt
       // Always show the refilled tile; if it's unaffordable its cost reads red and
       // it can't be dragged (no more holding slots empty until affordable).
-      if (slot.refill <= 0) this._setTile(i, this.randomTile())
+      if (slot.refill <= 0) this._setTile(i, (this._clean && slot.lastTile) || this.randomTile())
       else drawRing(slot, 1 - slot.refill / (REFILL_TIME * Buffs.refillRate))
     }
   }
@@ -350,6 +375,10 @@ export class TilePalette {
 
   _consume(i) {
     const slot = this.slots[i]
+    // TEMP (?clean): the one-of-each hand replaces itself, so the tray always
+    // holds every tile type.
+    if (this._clean === undefined) this._clean = new URLSearchParams(location.search).has('clean')
+    if (this._clean) slot.lastTile = slot.tile
     slot.tile = null
     slot.pending = null
     slot.refill = REFILL_TIME * Buffs.refillRate

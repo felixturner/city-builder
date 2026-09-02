@@ -50,29 +50,135 @@
         height: 48px;
         margin-bottom: 24px;
       }
-      #start-btn {
+      /* Main menu, shown once loading finishes: Tutorial / New game. */
+      #menu {
         display: none;
-        margin-top: 20px;
-        padding: 12px 32px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 16px;
+      }
+      #menu-title {
+        color: #fff; /* painted with the energy accent from JS */
+        font-size: 72px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        text-align: center;
+        margin-bottom: 28px;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
+      }
+      .menu-btn {
+        padding: 12px 36px;
         background: transparent;
         border: 2px solid #fff;
         border-radius: 24px;
         color: #fff;
         font-family: inherit;
-        font-size: 16px;
+        font-size: 18px;
+        font-weight: 600;
         cursor: pointer;
         transition: background 0.2s, color 0.2s;
       }
-      #start-btn:hover {
+      .menu-btn:hover {
         background: #fff;
         color: #000;
+      }
+      /* Intro tutorial slideshow: full-bleed image, big caption + Next at the bottom. */
+      #tute {
+        position: fixed;
+        inset: 0;
+        display: none;
+        background: #000;
+        /* Above every game overlay - the pause menu (2000) can reopen it. */
+        z-index: 2600;
+      }
+      /* Image + caption as one centered unit, so the caption can sit OVER the
+         bottom of the image whatever its aspect ratio. */
+      #tute-stage {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+      }
+      #tute-img {
+        display: block;
+        width: 70vw;
+        max-height: 80vh;
+        object-fit: contain;
+      }
+      #tute-text {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 28px;
+        margin: 0 auto;
+        color: #fff;
+        font-size: 26px;
+        font-weight: 500;
+        text-align: center;
+        max-width: 900px;
+        white-space: pre-line; /* the controls page is a multi-line list */
+        text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9), 0 0 24px rgba(0, 0, 0, 0.7);
+      }
+      /* An imageless page (the controls list) shows a grey placeholder block
+         at the same size/ratio as the screenshots, text centered in it. */
+      #tute.no-img #tute-stage {
+        width: 70vw;
+        max-height: 80vh;
+        aspect-ratio: 3 / 2; /* the tutorial screenshots are ~1829x1206 */
+        background: #888;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #tute.no-img #tute-text {
+        position: static;
+      }
+      #tute-bottom {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        justify-content: center;
+        padding: 0 24px 40px;
+      }
+      #tute-next {
+        padding: 12px 48px;
+        background: rgba(0, 0, 0, 0.35);
+        border: 2px solid #fff;
+        border-radius: 24px;
+        color: #fff;
+        font-family: inherit;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
+        transition: background 0.2s, color 0.2s;
+      }
+      #tute-next:hover {
+        background: #fff;
+        color: #000;
+        text-shadow: none;
       }
     </style>
   </head>
   <body>
     <div id="loading">
       <img src="assets/loader.gif" alt="Loading" id="loader-gif" />
-      <button id="start-btn">Start</button>
+      <div id="menu">
+        <div id="menu-title">CITY BUILDER</div>
+        <button class="menu-btn" id="menu-new">New game</button>
+        <button class="menu-btn" id="menu-tutorial">Tutorial</button>
+      </div>
+    </div>
+    <div id="tute">
+      <div id="tute-stage">
+        <img id="tute-img" alt="" />
+        <div id="tute-text"></div>
+      </div>
+      <div id="tute-bottom">
+        <button id="tute-next">Next</button>
+      </div>
     </div>
     <canvas id="canvas"></canvas>
     <script type="module" src="/src/main.js"></script>
