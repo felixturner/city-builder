@@ -13,9 +13,6 @@
  * arithmetic, which meant every change to the shape of a round had to be made in
  * five places and kept in step by hand.
  */
-// Waves before this one always arrive on a single side (see waveEdges).
-const TWO_FRONT_FROM_WAVE = 2
-
 export class WaveClock {
   constructor() {
     this.elapsed = 0
@@ -81,28 +78,24 @@ export class WaveClock {
   bossOrdinal(waveIdx) { return (waveIdx + 1) / 4 }
 
   /**
-   * Which board edges a wave comes in from. Deterministic, so it can be shown
-   * before it happens - the incoming arrows have to know the direction while the
-   * wave is still being counted down, so it cannot be rolled at spawn time.
+   * Which board edge a wave comes in from. Returns an array because callers
+   * round-robin over it; there is only ever one.
    *
-   * The hash is a cheap deterministic scramble on the wave index plus this run's
-   * seed: same wave, same answer however many times it is asked (the arrows ask
-   * every frame), but a different sequence of sides from one run to the next.
-   * Boss rounds stay on a single side - the whole point of a boss group is that
-   * it arrives as one mass.
+   * Deterministic, so it can be shown before it happens - the incoming arrows
+   * have to know the direction while the wave is still being counted down, so it
+   * cannot be rolled at spawn time. The hash is a cheap scramble on the wave
+   * index plus this run's seed: same wave, same answer however many times it is
+   * asked (the arrows ask every frame), but a different sequence of sides from
+   * one run to the next.
+   *
+   * ONE side, always. Every third wave used to open a second front, and a fight
+   * on two edges of a board this size cannot be watched - you pick a side and
+   * find out afterwards what happened on the other one. A wave you can stand and
+   * watch is worth more than one that is technically harder.
    */
   waveEdges(waveIdx) {
     if (waveIdx < 0) return [0]
     const hash = Math.abs(Math.imul(waveIdx + 1 + this.seed, 2654435761)) // Knuth
-    const first = hash % 4
-    // Every third wave opens a second front, on any other edge - including the
-    // opposite one, so a wave can genuinely come at you from both sides.
-    // A second front needs enough creeps to actually fill both, and the opening
-    // waves do not have them - level 1 is eight creeps, barely two clumps, so
-    // two arrows promised an attack from a side nothing ever came from. Held
-    // back until waves are big enough to split.
-    if (waveIdx < TWO_FRONT_FROM_WAVE) return [first]
-    if (this.isBossWave(waveIdx) || (hash >> 4) % 3 !== 0) return [first]
-    return [first, (first + 1 + ((hash >> 8) % 3)) % 4]
+    return [hash % 4]
   }
 }

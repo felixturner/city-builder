@@ -25,6 +25,18 @@
 - make completing wall rings more important. buff walls that are completed x2 def.
 
 ## FIXES
+- WINDOW RESIZE HANGS/STALLS, worse the later the level. ~10s freeze resizing up
+  at level 6; a fullscreen->windowed toggle at level 21 locked the tab for good.
+  Not a leak - PostFX.render allocates nothing per frame and GTAO's per-frame
+  setSize early-outs when unchanged. One resize disposes and recreates the whole
+  post chain (scene MRT pass targets, GTAO's half-res target, the blur
+  temporaries, the bloom mip chain, plus the mask/overlay/glow targets), and
+  every bind group in the scene is rebuilt on the next frame - which is a stall,
+  but should not be a permanent hang. Demo.onResize now debounces the expensive
+  half by 150ms (helps drags, does nothing for a single toggle) and
+  Demo._watchDevice logs device.lost / uncapturederror with the game state, so
+  the next occurrence should say whether it is a lost device or a validation
+  error. Next step: reproduce with the console open and read the [gpu] line.
 - new encluosre sound sounds like power down?
 - keep attacks swarms in one dir until boss level
 - add dec or indicator when at top height

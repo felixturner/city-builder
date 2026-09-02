@@ -1450,18 +1450,6 @@ export class City {
     return this.countGens() < MAX_GENS
   }
 
-  /** Cumulative count of how many of a cost-bucket key the PLAYER has placed over
-   *  the whole game (only ever rises - expiry/demolish don't lower it), so the
-   *  escalating price keeps climbing even though gens expire. */
-  recordPlacement(key) {
-    if (!this._placedCounts) this._placedCounts = new Map()
-    this._placedCounts.set(key, (this._placedCounts.get(key) || 0) + 1)
-  }
-
-  placedCount(key) {
-    return this._placedCounts ? (this._placedCounts.get(key) || 0) : 0
-  }
-
   /**
    * Generators used to burn down: a countdown pie on top, a floor lost every
    * N energy pulses, and a lifetime cap on how many floors one would accept.

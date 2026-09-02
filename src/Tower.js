@@ -36,7 +36,12 @@ export class Tower {
    * floor is its own BatchedMesh instance with its own colour, so a stack can
    * carry a gradient for free - no extra draw calls, no extra geometry.
    */
-  static STACK_DARKEN = 0.55
+  // Note the sRGB hex you get out is NOT base x (1 - t): three holds colours
+  // linear with colour management on, so this is a linear-space fade. At 0.45 a
+  // five-storey stack runs 0xa3a3a3 at the ground to 0x7c7c7c at the roof - a
+  // gentle ramp that separates the floors without the top of a tall wall going
+  // near-black against the board.
+  static STACK_DARKEN = 0.45
 
   /** Shade for floor `f` of a stack: floor 0 keeps `base`, higher floors lerp
    *  toward black so a wall reads DARKER the taller it gets. Tried the other way
@@ -572,6 +577,7 @@ export class Tower {
       // is simply void.
       if (!this.visible || this.numFloors !== numFloors) return
       this.numFloors = numFloors + 1
+      city.mana?.econ?.blockPlaced()
 
       // Refresh ZOC radius / connectors immediately so they grow with the new
       // block right away, rather than waiting for the emerge animation to end.

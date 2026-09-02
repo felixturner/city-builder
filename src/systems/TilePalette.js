@@ -6,7 +6,7 @@ import { Buffs } from '../buffs.js'
 import { ENERGY_COLOR, PINK } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
-import { costKey, priceOfTile } from './tileCost.js'
+import { priceOfTile } from './tileCost.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex } from '../blockTypes.js'
 
 const SLOTS = 4
@@ -129,10 +129,6 @@ export class TilePalette {
    *  escalating price). Walls share one bucket; gens bucket by type + COLOUR (so
    *  same-colour same-type gens count together, regardless of footprint size);
    *  turrets bucket by type only. */
-  _typeKey(tile) {
-    return costKey({ isWall: !!tile.wall, typeTop: tile.typeTop, colorIndex: tile.colorIndex })
-  }
-
   /** Energy cost to place this tile - see systems/tileCost.js. Shared with the
    *  click-to-add-a-floor path so the two can never disagree again. */
   _tileCost(tile) {
@@ -761,7 +757,7 @@ export class TilePalette {
       if (placed) {
         finish()
         city.mana?.spend(cost)
-        city.recordPlacement(this._typeKey(tile)) // bump the cumulative per-type price
+        city.mana?.econ?.blockPlaced()
         this._consume(slot)
         // Floating "-cost" caption rising from the drop spot (like the gen "+N").
         const cu = city.cellUnit

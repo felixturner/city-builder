@@ -79,6 +79,7 @@ function start() {
 
   // Release the creeps (grace period counts from here)
   demo.creeps.start()
+  demo.econ?.begin(1) // open the first round's economy record
 }
 
 // Main menu. Both paths run inside a click, so the AudioContext unlock in

@@ -173,7 +173,7 @@ export class TowerInteraction {
     // Exactly what the same thing costs from the tray - one shared price
     // function, so raising a wall can never drift away from buying one.
     const cost = priceOfTower(city, tower)
-    if (!city.freeClicks && !city.mana.spend(cost)) {
+    if (!city.freeClicks && !city.mana.spend(cost, false, true)) { // true: a floor, not a new tile
       Sounds.play('error', 1.0, 0.06, 0.35) // can't afford this build
       return false
     }

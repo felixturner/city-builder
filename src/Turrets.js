@@ -84,8 +84,12 @@ export class Turrets {
     this.beamPool = new BeamPool(scene, { radius: 0.28, duration: 0.16 })
 
     // Mortar turret: lobs an arcing shell that explodes in an AoE.
-    this.mortarDamage = 8 // heavy
-    this.mortarCooldown = this.mortarDamage * this.fireCooldown // 2.8s
+    // Halved from 8 dmg / 2.8s: same damage per second, landing twice as often.
+    // One shell every 2.8s meant a mortar spent most of a fight doing nothing,
+    // and a creep that walked out of the blast radius in between cost it the
+    // whole cycle - which is a long time to be wrong for.
+    this.mortarDamage = 4
+    this.mortarCooldown = 1.4 // seconds; keeps the shared 2.86 dmg/s
     this.mortarRadius = 4 // AoE radius
     this.mortarArc = 8 // peak lob height
     this.mortarDur = 0.6 // travel time (seconds) - shorter so it lands near moving creeps

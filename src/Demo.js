@@ -39,10 +39,13 @@ import { WaveArrows } from './WaveArrows.js'
 import { FlowFieldView } from './systems/FlowFieldView.js'
 import { FloatingText } from './FloatingText.js'
 import { TilePalette } from './systems/TilePalette.js'
+import { EconLog } from './systems/EconLog.js'
 
 /** Debug UI (dat.GUI panel + FPS meter) is off for players and on with ?dev.
  *  Any value works - ?dev, ?dev=1 - it's presence that counts. */
 export const DEV_MODE = new URLSearchParams(location.search).has('dev')
+// Milliseconds of quiet before a resize is actually applied - see onResize.
+const RESIZE_SETTLE = 150
 
 /** TEMP: ?clean spawns no rocks and no loot stars - a bare board for shooting
  *  tutorial screenshots. */
@@ -118,6 +121,7 @@ export class Demo {
 
     this.renderer = new WebGPURenderer({ canvas: this.canvas, antialias: true })
     await this.renderer.init()
+    this._watchDevice()
     // DPR 2 with half-res AO gives good quality/perf balance
     this.renderer.setPixelRatio(2)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
@@ -153,7 +157,12 @@ export class Demo {
     this.initPostProcessing()
     this.initStats()
 
-    this.onResize()
+    // Straight to the applied path at startup: the debounce is for drags, and
+    // waiting 150ms to size the canvas for the first time would show a frame at
+    // the wrong size.
+    this.updateOrthoFrustum()
+    this.updatePerspFrustum()
+    this._applyResize(new Vector2(window.innerWidth, window.innerHeight))
     this.pointerHandler = new Pointer(
       this.renderer,
       this.camera,
@@ -178,6 +187,8 @@ export class Demo {
     this.mana = new Mana(0, 100)
     // TEMP (?clean): infinite energy so screenshots aren't gated on the economy.
     if (CLEAN_MODE) { this.mana.infinite = true; this.mana.current = 99999 }
+    // Per-round economy record, for balancing. ?dev only; see EconLog.
+    if (DEV_MODE) { this.econ = new EconLog(this); this.mana.econ = this.econ }
     this.city.mana = this.mana
     // Income boxes flying from generators to the HUD meters. City needs the live
     // camera to project their launch point.
@@ -253,6 +264,11 @@ export class Demo {
     // board actually goes quiet - not when the spawn window shuts - so the menu
     // never opens over a field still full of creeps.
     this.creeps.audio.onRoundCleared = (waveIdx) => {
+      // Close the round's economy record before anything else - the boss reward
+      // opens a menu and grows the board, which would land in the next round's
+      // numbers rather than this one's.
+      this.econ?.end()
+      this.econ?.begin(waveIdx + 2) // the level now being built for, 1-based
       if (!this.creeps.isBossWave(waveIdx)) return
       if (this.isGameOver || this.kingDead) return
       this._runBossReward()
@@ -452,18 +468,77 @@ export class Demo {
     if (DEV_MODE) document.body.appendChild(this.stats.dom)
   }
 
+  /**
+   * Say something when the GPU gives up, instead of freezing in silence.
+   *
+   * A hung tab is the one bug with no evidence: the render loop stops, nothing
+   * is logged, and by the time anyone looks the state is gone. WebGPU does tell
+   * you - a lost device resolves `device.lost`, and validation failures surface
+   * through the uncaptured-error handler - but only if someone is listening.
+   *
+   * Both paths print what the game was doing at the time, because "it froze
+   * after a resize at level 21" and "it froze" are very different bug reports.
+   */
+  _watchDevice() {
+    const device = this.renderer.backend?.device
+    if (!device) return
+    const state = () => ({
+      level: this.creeps?.waveNumber != null ? this.creeps.waveNumber + 1 : '?',
+      creeps: this.creeps?.creeps.length ?? '?',
+      towers: this.city?.towers.length ?? '?',
+      size: `${window.innerWidth}x${window.innerHeight}`,
+      dpr: window.devicePixelRatio,
+    })
+    device.lost?.then((info) => {
+      console.error('[gpu] device lost:', info.reason, info.message, state())
+    })
+    device.addEventListener?.('uncapturederror', (e) => {
+      // First one only: a broken pipeline re-errors every frame, and a thousand
+      // identical stack traces buries the one that mattered.
+      if (this._gpuErrored) return
+      this._gpuErrored = true
+      console.error('[gpu] uncaptured error:', e.error?.message || e.error, state())
+    })
+  }
+
+  /**
+   * Window resized.
+   *
+   * The expensive half is DEBOUNCED. Dragging a window edge fires this ~60 times
+   * a second, and every call reallocates the swap chain plus three render
+   * targets - the half-res mask, the full-res overlay and the two-attachment
+   * glow target. On WebGPU each of those destroys and recreates GPU textures
+   * while frames are still in flight, and on a late-game board (a full batched
+   * mesh, a hundred creeps, all their effect meshes) the driver cannot keep up:
+   * the tab locks solid. Once, after the drag settles, costs the same as one of
+   * those sixty and is indistinguishable to look at.
+   *
+   * The camera frusta are updated immediately - they are pure maths, and they
+   * are what keeps the picture from stretching while the drag is in progress.
+   */
   onResize(_e, toSize) {
-    const { renderer } = this
     const size = new Vector2(window.innerWidth, window.innerHeight)
     if (toSize) size.copy(toSize)
 
     this.updateOrthoFrustum()
     this.updatePerspFrustum()
 
+    clearTimeout(this._resizeTimer)
+    this._resizeTimer = setTimeout(() => this._applyResize(size), RESIZE_SETTLE)
+  }
+
+  /** The costly part of a resize: the swap chain and the post-processing targets. */
+  _applyResize(size) {
+    // Nothing to do if we already ran at this size - a resize event can fire
+    // without the window actually changing (devtools docking, mobile chrome).
+    if (this._sizedTo && this._sizedTo.equals(size)) return
+    this._sizedTo = size.clone()
+
+    const { renderer } = this
     renderer.setSize(size.x, size.y)
     renderer.domElement.style.width = `${size.x}px`
     renderer.domElement.style.height = `${size.y}px`
-
+    this.city?.onResize?.(size.x, size.y) // Line2 outline measures in pixels
     if (this.postFX) this.postFX.resize()
   }
 
@@ -512,6 +587,7 @@ export class Demo {
     // the run ended at the death, the extra seconds are just the aftermath.
     if (!this.kingDead) this.mana.tick(dt)
     this.mana.setLevel(this.creeps.waveNumber + 1)
+    this.econ?.tick(dt)
     this.city.update(dt)
     this.trails.update(dt)
     // Clean screenshot mode: the wave clock never runs, so no creeps ever come.

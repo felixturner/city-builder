@@ -28,7 +28,7 @@ const WIDTH_CELLS = 3.2 // arrow width across the barbs
 const Y = 0.12 // on the floor, above the grid and the flow field
 // A clump pouring out of an edge kicks that arrow to full brightness and lets it
 // fall back over FLASH_TIME. The horn says a swarm is coming; this says which
-// side it is coming from, which on a two-front wave the horn cannot.
+// side it is coming from, which the horn alone cannot.
 const FLASH_TIME = 0.7
 const FLASH_ALPHA = 1.0 // opacity the flash peaks at, over the steady 0.7
 

@@ -22,7 +22,12 @@ const FLOOR_PULSE_DECAY = 0.22
 // 0.08 -> 0.056 (-30%, so a sealed ring plus a couple of support towers stopped
 // being enough to make energy a non-issue) -> 0.07 (+25%) -> 0.056 (-20%) once
 // PROD_FACTOR had been raised twice and area generators were out-earning again.
-const ENCLOSURE_RATE = 0.056
+// Cut from 0.056. A typical board is ~70% enclosed for most of a run, and at the
+// old rate that filled the whole energy cap in ~30 seconds of a 70-second round
+// at EVERY board size - the cap scales with cells and so does enclosed area, so
+// the two move together and one flat rate fixes all of them. At 0.030 it takes
+// 50-60s, which is most of a round.
+const ENCLOSURE_RATE = 0.030
 // Energy per (footprint cell x trail length) for the blue path generators.
 //
 // 0.075 -> 0.3 (4x) when ammo went away. That 0.075 was priced against a
@@ -35,6 +40,7 @@ const ENCLOSURE_RATE = 0.056
 // double. The two colours are two ways to earn the one currency now: seal
 // ground, or link a network.
 const PATH_LINK_RATE = 0.3
+
 // Volume of the per-arrival income blip. It fires several times a second at a
 // developed economy, so it sits well under the one-off cues.
 const INCOME_BLIP_VOLUME = 0.54
@@ -43,7 +49,9 @@ const INCOME_BLIP_VOLUME = 0.54
 // thing producing energy besides the king's trickle - then 0.26 -> 0.325 -> 0.39
 // (+25%, then +20%) to pay for levelling up towers, which went from 2 a floor to
 // the full tile price once the two were unified.
-const PROD_FACTOR = 0.39
+// Cut from 0.39 alongside the two curve changes above: a logged run threw away
+// 49% of everything it produced, and 62% across levels 6-13.
+const PROD_FACTOR = 0.32
 // Slow bonus the king trickles every GREY_INTERVAL, separate from what it earns
 // by sealing an enclosure. Smaller than the old flat income now that the king
 // has a real earning mechanic - it's the floor you can recover from, not a wage.
@@ -341,21 +349,34 @@ export class EnergySystem {
     }
     this.activeConnectorCount = pairs.length
 
-    // Mana = footprint cells x trail length x factor. Height is NOT a factor -
-    // it's already baked into reach (taller towers connect over longer trails).
-    // Fractional, and deliberately NOT floored at 1 per link the way the energy
-    // version was. That floor paid a whole unit per link however short or small
-    // it was, so the rate barely mattered and a handful of generators alone
-    // out-supplied every turret on the board. Fractions accumulate per
-    // generator and pay out as whole units when they reach one (see update).
+    // A generator earns off its LONGEST link. One rule, no bonus term:
+    //
+    //     mana = footprint cells x longest link (cells) x rate
+    //
+    // It used to be paid in full for EVERY link it had, and links form between
+    // every pair in range - so n generators in one cluster made n(n-1)/2 links
+    // and income grew with the square of n. Eight of them out-earned a maximal
+    // sealed enclosure five times over, and each one added was worth more than
+    // the last. Paying for one link makes a network's income linear in the
+    // number of generators: more still earns more, and it is the same amount
+    // more every time.
+    //
+    // Height is NOT a factor - it is already baked into reach, since taller
+    // towers connect over longer trails and the trail length is what is paid
+    // for. Fractional, and deliberately not floored at 1 per generator: that
+    // floor paid a whole unit however short or small the link was, so the rate
+    // barely mattered. Fractions accumulate per generator and pay out as whole
+    // units when they reach one (see update).
+    const best = new Map() // gen -> longest link it has, in cells
+    for (const [a, b, dist] of pairs) {
+      for (const t of [a, b]) best.set(t, Math.max(best.get(t) || 0, dist))
+    }
     let mana = 0
     const contrib = new Map()
-    for (const [a, b, dist] of pairs) {
-      const pa = this.area(a) * dist * PATH_LINK_RATE * PROD_FACTOR * Buffs.genRate
-      const pb = this.area(b) * dist * PATH_LINK_RATE * PROD_FACTOR * Buffs.genRate
-      mana += pa + pb
-      contrib.set(a, (contrib.get(a) || 0) + pa)
-      contrib.set(b, (contrib.get(b) || 0) + pb)
+    for (const [t, gap] of best) {
+      const p = this.area(t) * gap * PATH_LINK_RATE * PROD_FACTOR * Buffs.genRate
+      mana += p
+      contrib.set(t, p)
     }
     this.pathGenMana = mana
     this.pathGenContribution = contrib

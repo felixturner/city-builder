@@ -312,6 +312,11 @@ export class Creeps {
 
     this._p = new Vector2()
     this._sv = new Vector2()
+    // Scratch for towerWorld() inside the per-creep loops. These run for every
+    // creep every step - at seventy creeps a fresh Vector2 each was thousands of
+    // throwaway objects a second, which is GC the frame budget does not need.
+    // Never held across a call: read it and use it.
+    this._tw = new Vector2()
     this._black = new Color(0x080808)
     // One shared material for the burn flash. Creeps already share materials by
     // TYPE, so tinting a creep's own material would light up every creep of that
@@ -381,8 +386,8 @@ export class Creeps {
    * early on and a 45% cut by level 7. Levels 1-6 added 18 creeps between them;
    * level 7 alone added 22, and it landed like a wall.
    *
-   * Boss levels get their bump from spawnBossWave, which drops its giants and
-   * escorts ON TOP of this - so the every-fourth-level spike is a separate,
+   * Boss levels get their bump from the giants dealt into the wave's clumps
+   * (see _assignBossGiants) - so the every-fourth-level spike is a separate,
    * deliberate thing rather than an accident of the curve.
    */
   get creepsThisWave() {
@@ -524,14 +529,27 @@ export class Creeps {
    * 12 creeps to hundreds, so 1-3 giants plus 5 shooters went from a serious
    * threat to noise. Boss 1 used to be easier than the ordinary wave two later.
    */
-  spawnBossWave(waveIdx) {
+  /**
+   * Hand this wave's giants out across its clumps, one riding in with each.
+   *
+   * They used to all spawn on the first frame of the attack phase, from one
+   * edge - so a boss round was its entire boss content in the opening seconds
+   * and an ordinary wave for the remaining twenty. Spread over the slots, each
+   * push has a giant at the head of it and the round stays a boss round the
+   * whole way through.
+   *
+   * Evenly spaced over the clumps, wrapping when there are more giants than
+   * clumps, so the first and last pushes always carry one.
+   */
+  _assignBossGiants(waveIdx, plan) {
     const o = this.bossOrdinal(waveIdx)
-    const edge = this.waveEdges(waveIdx)[0] // all come in from the same side
-    // Just the giants. A boss round is an ordinary round with bosses ADDED - it
-    // used to also throw in 3 + 4n shooter escorts, which made boss levels a
-    // spike in ordinary creeps as well and muddied what the round actually was.
-    // The normal wave still runs alongside this on its usual schedule.
-    for (let i = 0; i < o; i++) this.spawn({ giant: true, edge })
+    if (!plan.length) return
+    for (let i = 0; i < o; i++) {
+      const idx = plan.length > 1
+        ? Math.round((i * (plan.length - 1)) / Math.max(1, o - 1)) % plan.length
+        : 0
+      plan[idx].giants = (plan[idx].giants || 0) + 1
+    }
   }
 
   /**
@@ -837,7 +855,7 @@ export class Creeps {
     const needLOS = c.shooter || c.laser
     let best = null
     let bestScore = -Infinity
-    const tw = new Vector2()
+    const tw = this._tw
     for (const tower of this.city.towers) {
       if (!tower.visible) continue
       this.towerWorld(tower, tw)
@@ -1012,7 +1030,7 @@ export class Creeps {
   _planStepGreedy(c) {
     const king = this.city.king
     if (!king || !king.visible) return 'done'
-    const tw = new Vector2()
+    const tw = this._tw
     this.towerWorld(king, tw)
     const goalX = tw.x, goalZ = tw.y
 
@@ -1275,8 +1293,7 @@ export class Creeps {
     const waveIdx = this.waveNumber
     if (waveIdx !== this._lastWave) {
       this._lastWave = waveIdx
-      this._planWave()
-      if (this.isBossWave(waveIdx)) this.spawnBossWave(waveIdx)
+      this._planWave() // a boss round's giants are dealt into the plan's clumps
     }
 
     const phase = this.clock.cyclePhase - this.clock.buildTime // 0..waveActive
@@ -1361,8 +1378,10 @@ export class Creeps {
     if (last > span) for (let i = 0; i < n; i++) starts[i] *= span / last
 
     // Round-robin across the wave's edges rather than rolling each clump: with a
-    // random pick, a two-front wave could send every clump down one side and
-    // leave the other arrow pointing at nothing.
+    // random pick a multi-edge wave could send every clump down one side and
+    // leave the other arrow pointing at nothing. (Waves are single-front now,
+    // so this is a one-element rotation - kept because the plan should not care
+    // how many edges it is given.)
     const edges = this.waveEdges(this.waveNumber)
     this._plan = sizes.map((size, i) => ({
       size,
@@ -1370,6 +1389,9 @@ export class Creeps {
       edge: edges[i % edges.length],
       offset: this.edgeOffset(),
     }))
+    if (this.isBossWave(this.waveNumber)) {
+      this._assignBossGiants(this.waveNumber, this._plan)
+    }
     this._planIndex = 0
     this._released = 0
 
@@ -1391,12 +1413,16 @@ export class Creeps {
   /** Start a planned clump pouring, sound its horn, and flash its arrow. */
   _release(clump) {
     this._active.push({ ...clump, left: clump.size, timer: SWARM_GAP })
+    // A boss round's giants ride in with the clumps rather than all landing on
+    // the first frame - same edge and entry point, so one leads its swarm in.
+    for (let i = 0; i < (clump.giants || 0); i++) {
+      this.spawn({ giant: true, edge: clump.edge, offset: clump.offset })
+    }
     // A war horn per clump, but not the first of a wave: that one lands on the
     // same frame as the wave horn, and two at once is a muddle.
     if (this._released > 0) Sounds.play('horn', SWARM_HORN_RATE, 0.06, SWARM_HORN_VOLUME)
-    // The horn says a swarm is coming; the flash says WHICH SIDE. On a two-front
-    // wave both arrows are up the whole time, so without this the sound named no
-    // direction and you had to wait to see where they came out.
+    // The horn says a swarm is coming; the flash says WHICH clump, on the arrow
+    // already pointing at the side it is coming from.
     this.waveArrows?.flash(clump.edge)
     this._released++
   }
@@ -1530,7 +1556,7 @@ export class Creeps {
         }
 
         // Lunge toward the target on each knock.
-        const tw = new Vector2()
+        const tw = this._tw
         this.towerWorld(target, tw)
         const dx = tw.x - c.toX
         const dz = tw.y - c.toZ

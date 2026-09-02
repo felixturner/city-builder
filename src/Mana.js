@@ -2,11 +2,19 @@ import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR } from './palette.js'
 import { Buffs } from './buffs.js'
 
-// Energy of cap per CELL of the open board. At a quarter, the opening 5x5 lots
-// (625 cells) cap at ~156 and the fully opened 11x11 (3025) at ~756 - a range
-// tiles priced in the tens can actually be measured against, and an opening cap
-// close to the flat 150 this replaced.
+// Energy of cap per CELL of the open board, plus a flat amount per LEVEL.
+//
+// Board size alone stepped too coarsely: it only moves when a boss round is
+// cleared, so the cap sat at 156 for five levels and 306 for four more, while
+// income climbed every round. A logged run threw away 40-62% of everything it
+// produced across levels 6-9 for exactly that reason, then went to 0% waste at
+// level 10 when the next ring opened.
+//
+// The level term smooths that, and it keeps climbing after the board has run
+// out of rings to open (level 12), which is where the ceiling would otherwise
+// stop for the rest of the run.
 const CAP_PER_CELL = 0.25
+const CAP_PER_LEVEL = 25
 
 // Set false to remove the energy cap (energy is balanced by spend, not a ceiling).
 const CAP_ENABLED = true
@@ -130,7 +138,9 @@ export class Mana {
   setLevel(level) {
     if (level === this.level) return
     this.level = level
-    this.render()
+    // The cap has a level term, so it has to be recomputed here rather than
+    // only when the board grows.
+    this.setStats(this.population)
   }
 
   /** Advance the survival-time score. Called each frame while the game runs. */
@@ -144,20 +154,22 @@ export class Mana {
     this.render()
   }
 
-  /** Board size sets the energy cap: a quarter of a cell per cell in play. */
+  /** Board size and level set the energy cap. */
   setStats(areaCells) {
     this.population = areaCells
-    this.max = this.baseMax + Math.round(areaCells * CAP_PER_CELL) + Buffs.energyMax
+    this.max = this.baseMax + Math.round(areaCells * CAP_PER_CELL)
+      + this.level * CAP_PER_LEVEL + Buffs.energyMax
     if (CAP_ENABLED && !this.infinite && this.current > this.max) this.current = this.max
     this.render()
   }
 
   /** Spend energy. Returns true if there was enough, false otherwise.
    *  `silent` skips the HUD blip for spends that have their own feedback. */
-  spend(amount = 1, silent = false) {
+  spend(amount = 1, silent = false, isFloor = false) {
     if (this.infinite) return true
     if (this.current < amount) return false
     this.current -= amount
+    this.econ?.spend(amount, isFloor)
     // Player-driven spends are discrete, so this one isn't rate-limited.
     if (!silent) Sounds.play('energy-down')
     this.render()
@@ -170,6 +182,8 @@ export class Mana {
     const wasFull = CAP_ENABLED && before >= this.max
     this.current = CAP_ENABLED ? Math.min(this.max, before + amount) : before + amount
     const gained = this.current - before
+    // What the bar could not hold is the balance number worth having (EconLog).
+    this.econ?.earn(gained, amount - gained)
     // Sitting at the cap, income arrives but nothing is gained - stay quiet
     // rather than blipping on every tick for energy you're actually wasting.
     if (gained > 0) {

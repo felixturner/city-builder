@@ -19,8 +19,4 @@ support.png
 Support Towers buff other towers.
 
 # SLIDE
-Controls:
-- Space bar to rotate walls.
-- Left drag to rotate camera. 
-- Right drag to pan camera. 
-- Mouse wheel to zoom.
+controls.png
