@@ -11,9 +11,10 @@
  * was already full. It measures the overflow directly instead of inferring it
  * from income, and it is zero in a healthy economy.
  *
- * Dev-only. Nothing here runs unless ?dev is on the URL, and the whole thing is
- * a plain object per round on window.__econ, so a run can be copied out of the
- * console in one go.
+ * Dev-only. Nothing here runs unless ?dev is on the URL. The rounds live on
+ * window.__econ for the console, and are written to disk as part of the run file
+ * (RunRecorder) rather than a log of their own - they describe one run, and
+ * splitting them let a replay append rounds to a file no run owned.
  */
 import { TopType, isTurret, isBarracks, isShield, isGrey } from '../blockTypes.js'
 
@@ -85,6 +86,8 @@ export class EconLog {
     r.wastePct = r.earned + r.wasted > 0
       ? Math.round((100 * r.wasted) / (r.earned + r.wasted)) : 0
     this.rounds.push(r)
+    // On playback, say whether this round came out the way it was recorded.
+    this.demo.run?.checkRound(r, this.rounds.length - 1)
     console.log(
       `[econ] L${r.level} lots ${r.lots} cap ${r.cap} | earned ${Math.round(r.earned)}`
       + ` wasted ${Math.round(r.wasted)} (${r.wastePct}%)`
@@ -97,27 +100,9 @@ export class EconLog {
       + ` ${shield} shld, ${wallBlocks} wall blocks, ${r.enclosedCells} cells sealed`
     )
     this._round = null
-    this._persist(r)
-  }
-
-  /**
-   * Ship the round to the dev server, which appends it to econ.log (see
-   * vite.config.js). Fire and forget: a balance log must never be able to
-   * affect the thing it is measuring, so a failed POST is silently dropped.
-   *
-   * Written per round rather than gathered up and saved at the end, because the
-   * runs worth reading are the long ones, and a long run is the one that ends in
-   * a crash with the whole log still in the page.
-   */
-  _persist(round) {
-    try {
-      fetch('/__econ', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(round),
-        keepalive: true, // survives the page going away mid-flight
-      }).catch(() => {})
-    } catch { /* dev only */ }
+    // The run file carries the rounds now - see RunRecorder.toJSON. Saving here
+    // means a crashed run still has everything up to its last round.
+    this.demo.run?.save()
   }
 
   tick(dt) {

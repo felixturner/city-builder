@@ -96,6 +96,7 @@ const HIT_SHAKE_ANGLE = 0.3 // radians of tilt at the start of the shake
 // Seconds a creep glows shield-yellow after a barrier burns it.
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
+import { simRand, simSpread, simPick } from './lib/rng.js'
 import { fxMaterial, glow, unglow, NO_AO_MRT } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 import { advanceHop, towerWorldCenter } from './lib/gridUnit.js'
@@ -409,11 +410,11 @@ export class Creeps {
     const forceShooter = !!opts.forceShooter
     // Some creeps are "big": 2x size, 2x HP, knock 2 floors per kill. Late + rare.
     const w = this.waveNumber
-    const big = !giant && !forceShooter && w >= this.bigUnlockWave && Math.random() < this.bigChance
+    const big = !giant && !forceShooter && w >= this.bigUnlockWave && simRand() < this.bigChance
     // Shooters stop at range and lob little blocks at towers.
-    const shooter = !giant && (forceShooter || (!big && w >= this.shooterUnlockWave && Math.random() < this.shooterChance))
+    const shooter = !giant && (forceShooter || (!big && w >= this.shooterUnlockWave && simRand() < this.shooterChance))
     // Laser creeps stop at range and fire a turret-style beam at towers.
-    const laser = !giant && !forceShooter && !big && !shooter && w >= this.laserUnlockWave && Math.random() < this.laserChance
+    const laser = !giant && !forceShooter && !big && !shooter && w >= this.laserUnlockWave && simRand() < this.laserChance
     // Bombers fly across at altitude and drop bombs.
 
     // Heads-up blips for the two threats you can't just out-wall: a bright high
@@ -427,7 +428,7 @@ export class Creeps {
     const baseY = giant ? 3 : (big ? 1.5 : 0.8)
 
     // Giants are always smashers - too big to use the gaps a seeker threads.
-    const smasher = giant ? true : Math.random() < this.smasherChance
+    const smasher = giant ? true : simRand() < this.smasherChance
     const bodyMat = giant ? this.giantMat
       : laser ? this.laserMat
         : shooter ? (smasher ? this.shooterSmasherMat : this.shooterSeekerMat)
@@ -442,9 +443,9 @@ export class Creeps {
     // instead of being scattered down the whole side; without it, anywhere.
     const r = this.reach
     const t = opts.offset === undefined
-      ? this.snap((Math.random() * 2 - 1) * r)
+      ? this.snap(simSpread(2 * r))
       : this.snap(MathUtils.clamp(
-        opts.offset + MathUtils.randFloatSpread(SWARM_SPREAD_CELLS * this.cell), -r, r))
+        opts.offset + simSpread(SWARM_SPREAD_CELLS * this.cell), -r, r))
     const edge = opts.edge ?? this.currentWaveEdge()
     let x, z
     if (edge === 0) { x = -r; z = t }
@@ -562,14 +563,14 @@ export class Creeps {
    * ring, so nothing enters beyond the board's own corners.
    */
   edgeOffset() {
-    const spread = (Math.random() + Math.random() - 1) // -1..1, peaked at 0
+    const spread = (simRand() + simRand() - 1) // -1..1, peaked at 0
     return this.snap(spread * this.fieldHalf)
   }
 
   /** An edge for a creep spawning in the wave now in progress. */
   currentWaveEdge() {
     const edges = this.waveEdges(this.waveNumber)
-    return edges[Math.floor(Math.random() * edges.length)]
+    return simPick(edges)
   }
 
   /**
@@ -712,12 +713,12 @@ export class Creeps {
     // centre. They used to fly one of four axis-aligned lanes, so every bomber
     // run looked like the last and you could learn the four lines; a free
     // heading means the diagonal crossings are the common case.
-    const angle = Math.random() * Math.PI * 2
+    const angle = simRand() * Math.PI * 2
     const x = Math.cos(angle) * r
     const z = Math.sin(angle) * r
     const aim = this.city.lotSize * 0.4
-    const dx = (Math.random() * 2 - 1) * aim - x
-    const dz = (Math.random() * 2 - 1) * aim - z
+    const dx = simSpread(2 * aim) - x
+    const dz = simSpread(2 * aim) - z
     const len = Math.hypot(dx, dz) || 1
     const vx = (dx / len) * this.flySpeed
     const vz = (dz / len) * this.flySpeed
@@ -746,7 +747,7 @@ export class Creeps {
       entryVol: 0.3,
       vx, vz,
       bombTimer: this.bombInterval * 0.5,
-      bob: Math.random() * Math.PI * 2,
+      bob: simRand() * Math.PI * 2,
       shootTimer: 0,
       baseY: this.bomberY,
       maxHits: Math.max(1, Math.round(this.hitPoints * Buffs.creepHp * this.rampMul().hp)),
@@ -1012,9 +1013,9 @@ export class Creeps {
     // again next step. Waiting a beat is what makes a swarm queue up behind its
     // own front rank instead of piling into one cell.
     if (closer.length === 0 && worse.length === 0) return null
-    const pool = (closer.length === 0 || (worse.length && Math.random() < MISSTEP_CHANCE))
+    const pool = (closer.length === 0 || (worse.length && simRand() < MISSTEP_CHANCE))
       ? worse : closer
-    const pick = pool[Math.floor(Math.random() * pool.length)]
+    const pick = simPick(pool)
     return [STEP_DX[pick], STEP_DZ[pick]]
   }
 
@@ -1404,7 +1405,7 @@ export class Creeps {
       const n = Math.round(total * this.bomberChance)
       for (let i = 0; i < n; i++) {
         const t = ((i + 0.5) / n) * this.waveActive
-        this._bombers.push(t + MathUtils.randFloatSpread(this.waveActive / (n * 2)))
+        this._bombers.push(t + simSpread(this.waveActive / (n * 2)))
       }
     }
     this._bomberIndex = 0

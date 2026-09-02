@@ -4,7 +4,9 @@ Where every number that matters lives, what it is now, what it was, and what a
 logged run says about it. Constants are named so they can be grepped.
 
 Measured with the `?dev` economy log (`src/systems/EconLog.js`), which writes one
-JSON line per round to `econ.log` via a dev-server endpoint (`vite.config.js`).
+JSON line per round to `logs/econ.log` via a dev-server endpoint
+(`vite.config.js`). Recorded runs land beside it as `logs/run-<timestamp>.json`
+(`src/systems/RunRecorder.js`); `?dev&replay` plays back the newest.
 
 ---
 
@@ -224,7 +226,7 @@ Boss rounds are every 4th level. Their giants are **dealt across the clumps**
 
 ## What a logged run says
 
-18 rounds, levels 1-17, with the current constants (`econ.log`, 2026-09-01).
+18 rounds, levels 1-17, with the constants as of 2026-09-01.
 
 | Levels | Waste | Behaviour |
 |---|---|---|

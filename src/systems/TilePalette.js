@@ -7,6 +7,7 @@ import { ENERGY_COLOR, PINK } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
 import { priceOfTile } from './tileCost.js'
+import { simInt } from '../lib/rng.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex } from '../blockTypes.js'
 
 const SLOTS = 4
@@ -86,13 +87,13 @@ export class TilePalette {
    *  used by the start cluster) so variety is enforced - no long runs. */
   randomTile() {
     const spec = this.city.drawTileSpec()
-    const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
+    const topColorIndex = simInt(0, Tower.COLORS.length - 1)
     if (spec.wall) {
       // Random orientation per tile, so the hand isn't four copies of the same
       // shape. The offset that made this look broken was the board's grid
       // centring, not rotation - see City.initGrid.
       const states = TetrominoGeometry.states[spec.shapeName].length
-      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: MathUtils.randInt(0, states - 1) }
+      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: simInt(0, states - 1) }
     }
     // Generators use their fixed type colour; turrets keep a random accent.
     const colorIndex = tileColorIndex(spec.typeTop)
@@ -280,7 +281,43 @@ export class TilePalette {
 
   /** Reroll every slot at once (costs REROLL_COST): clear each tile and run its
    *  refill-ring timer, same as discarding them all. */
+  /**
+   * Replay a recorded drop: take the tile in `slot`, turned `rot`, onto (gx, gy).
+   *
+   * Goes through placeTileFree and the same cost path a real drop does, so a
+   * replay that cannot afford something fails exactly where the original would
+   * have - which is the signal that a run has diverged.
+   */
+  placeRecorded(e) {
+    // `slot` is an INDEX everywhere in this file (_consume takes one); the entry
+    // it names is `held`.
+    const held = this.slots[e.slot]
+    if (!held || !held.tile) return false
+    const city = this.city
+    const tile = held.tile
+    const rot = e.rot || 0
+    const cells = this._cells(tile, rot)
+    const cost = this._tileCost(tile)
+    if (!city.freeClicks && (city.mana?.current ?? 0) < cost) return false
+    const opts = tile.wall
+      ? {
+        tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
+        typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex: tile.topColorIndex,
+      }
+      : {
+        typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex,
+        rotation: this._roofRotation(tile, rot),
+      }
+    const placed = city.placeTileFree(e.gx, e.gy, cells, opts)
+    if (!placed) return false
+    city.mana?.spend(cost)
+    city.mana?.econ?.blockPlaced()
+    this._consume(e.slot)
+    return true
+  }
+
   _rerollAll() {
+    this.demo.run?.record('reroll', {})
     if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
       Sounds.play('error', 1.0, 0.06, 0.35)
       return
@@ -415,6 +452,10 @@ export class TilePalette {
       Sounds.play('error', 1.0, 0.06, 0.35)
       return
     }
+    // Recorded after the affordability check, so a replay only discards where
+    // the original actually did - and the slot it frees refills on the same
+    // tick, which decides what the bag deals next.
+    this.demo.run?.record('discard', { slot: i })
     this._consume(i)
     Sounds.play('clink', 0.8, 0.1, 0.4)
   }
@@ -755,6 +796,9 @@ export class TilePalette {
         }
       const placed = city.placeTileFree(target.gx, target.gy, target.cells, opts)
       if (placed) {
+        // The tile itself is not recorded - the bag is seeded, so a replay deals
+        // the same hand. Only WHERE it went and how it was turned.
+        this.demo.run?.record('place', { gx: target.gx, gy: target.gy, slot, rot })
         finish()
         city.mana?.spend(cost)
         city.mana?.econ?.blockPlaced()

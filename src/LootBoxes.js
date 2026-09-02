@@ -3,6 +3,7 @@ import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ACCENT_COLORS } from './palette.js'
 import { ENERGY_COLOR } from './Mana.js'
+import { simRand } from './lib/rng.js'
 import { glow, NO_AO_MRT } from './fx.js'
 import { ExtraGeometry } from './lib/ExtraGeometry.js'
 
@@ -68,8 +69,8 @@ export class LootBoxes {
     const half = city.maxPlayHalf
     for (let i = 0; i < COUNT; i++) {
       const a0 = (i / COUNT) * Math.PI * 2
-      const ang = a0 + Math.random() * (Math.PI * 2 / COUNT)
-      const r = (MIN_R + Math.random() * (MAX_R - MIN_R)) * half
+      const ang = a0 + simRand() * (Math.PI * 2 / COUNT)
+      const r = (MIN_R + simRand() * (MAX_R - MIN_R)) * half
       const spot = this.freeCellNear(Math.cos(ang) * r, Math.sin(ang) * r)
       if (spot) this.spawn(spot.x, spot.z)
     }

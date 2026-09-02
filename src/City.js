@@ -85,6 +85,9 @@ const KING_HIT_FLASH = 0.45
 // can do something about the king or you cannot. It re-arms if the king is built
 // back out of range and driven down again.
 const KING_ALARM_PLAYS = 5
+// Accent a lot's outline and growth fill wear. Fixed: those only show on dormant
+// lots, and there are none - see initGrid.
+const LOT_COLOR = 2
 // Line width shared by the king's two markers - the ground ring and the beam
 // standing on the tile - so they read as one thing rather than two.
 const KING_MARK_WIDTH = 0.16
@@ -276,8 +279,11 @@ export class City {
     for (let lotY = 0; lotY < this.numLotsY; lotY++) {
       const row = []
       for (let lotX = 0; lotX < this.numLotsX; lotX++) {
-        const lotColorIndex = MathUtils.randInt(0, this.accentColors.length - 1)
-        row.push({ lotX, lotY, colorIndex: lotColorIndex, towers: [], active: true })
+        // Every lot starts ACTIVE, so nothing is ever dormant - and the only two
+        // things a lot's colour feeds (its outline and the dashed growth fill)
+        // are shown for dormant lots alone. It used to be rolled per lot, 169
+        // draws off the random stream to tint things nobody sees.
+        row.push({ lotX, lotY, colorIndex: LOT_COLOR, towers: [], active: true })
       }
       this.lots.push(row)
     }
@@ -536,31 +542,60 @@ export class City {
   }
 
   /** Free a placed tower's cells and return it to the pool (no debris/sound). */
-  freePlacedTower(tower) {
+  freePlacedTower(tower, opts = {}) {
     for (const [dx, dy] of tower.cells) this.occupied[tower.cellY + dy][tower.cellX + dx] = false
     const lot = this.lots[tower.lotY][tower.lotX]
     const k = lot.towers.indexOf(tower)
     if (k >= 0) lot.towers.splice(k, 1)
 
-    // Land any running animation before the tower goes back in the pool. A
-    // half-finished roof tween left roofAnimating stuck true, and the next tile
-    // to reuse this slot inherited both the flag and the old footprint scale.
-    tower.resetAnimation()
     tower.placed = false
     tower.dormant = true
     tower.tetro = null
     tower.visible = false
     tower.numFloors = 0
-    this.updateTowerMatrices(tower)
-    this.towerPool.push(tower)
+    if (opts.animate) {
+      // Its instances are mid-fall. Leave them alone and hold the tower out of
+      // the pool until the animation lands, or the next tile to be dealt this
+      // slot inherits a half-finished tween and the old footprint scale.
+      this._fallingTowers = (this._fallingTowers || new Set()).add(tower)
+    } else {
+      // Land any running animation before the tower goes back in the pool.
+      tower.resetAnimation()
+      this.updateTowerMatrices(tower)
+      this.towerPool.push(tower)
+    }
     this.onTowerChanged(tower)
     this.enclosure.update()
   }
 
+  /**
+   * Run the fall animation on a tower that has already been removed.
+   *
+   * Reads the height BEFORE the caller zeroes it, and returns the tower to the
+   * pool once it lands - the one thing that genuinely has to wait for the
+   * animation, because the instances are what is being animated.
+   */
+  _playDemolishFall(tower) {
+    const floors = tower.numFloors
+    tower.animateDelete(this.towerMesh, this.floorHeight, floors, () => {
+      tower.resetAnimation()
+      tower.visible = false
+      tower.numFloors = 0
+      this.updateTowerMatrices(tower)
+      if (this._fallingTowers?.delete(tower)) this.towerPool.push(tower)
+    })
+  }
+
   /** Free a tower's cells and remove it (no debris). Placed tiles return to the
    *  pool; pre-built center-lot towers free their footprint and hide. */
-  demolishTower(tower) {
-    if (tower.placed) { this.freePlacedTower(tower); return }
+  demolishTower(tower, opts = {}) {
+    // Play the fall BEFORE the tower is freed - it needs the instances, and it
+    // needs their current heights. The removal itself does not wait for it (see
+    // TowerInteraction.demolishTower for why): the animation is handed the
+    // instances for the length of the fall, and the tower is not returned to the
+    // pool until it lands.
+    if (opts.animate) this._playDemolishFall(tower)
+    if (tower.placed) { this.freePlacedTower(tower, opts); return }
     const cu = this.cellUnit
     const gx0 = Math.round(tower.box.min.x / cu), gy0 = Math.round(tower.box.min.y / cu)
     const tw = Math.round((tower.box.max.x - tower.box.min.x) / cu)
@@ -977,7 +1012,12 @@ export class City {
       for (let f = 0; f < targetFloors; f++) {
         const delay = buildStart + staggerDelay + f * floorDelay
         maxDelay = Math.max(maxDelay, delay)
-        setTimeout(() => {
+        // Sim time, not setTimeout: this sets numFloors, which is game state -
+        // and the timer below flips introBuilt, which arms the king's damage
+        // ring. On wall clock both landed at a different point in the game
+        // depending on the frame rate, so the ring started burning creeps
+        // earlier or later than it did in the run being replayed.
+        this.demo.after(delay, () => {
           tower.numFloors = f + 1
           // Play pop sound with pitch based on floor height, volume based on distance
           const pitch = 0.8 + (f / maxFloorsFor(tower)) * 1.2
@@ -994,20 +1034,20 @@ export class City {
             () => this.updateTowerMatrices(tower),
             null // no debris
           )
-        }, delay * 1000)
+        })
       }
     })
 
     // Unmute sounds and restore debris after intro completes. Also refresh
     // tower visuals once so monasteries/connectors reflect the settled city
     // (the intro builds via updateTowerMatrices, which skips that pass).
-    setTimeout(() => {
+    this.demo.after(maxDelay + 1, () => {
       Sounds.unmute(['stone', 'tick', 'clink'])
       this.debris.enabled = debrisWasEnabled
       this.updateTowerVisuals()
       // The last block is up: the king's beam and ring may strike in now.
       this.introBuilt = true
-    }, (maxDelay + 1) * 1000)
+    })
 
     // 4. Camera zoom animation (angle-based distance)
     const target = controls.target.clone()
@@ -1417,6 +1457,22 @@ export class City {
       tower.floorInstances.push(idx)
       this.instanceToTower.set(idx, tower)
     }
+  }
+
+  /**
+   * The visible tower whose footprint covers a grid cell, or null.
+   *
+   * Used by run playback to name a tower without depending on object identity,
+   * which cannot survive being written to a file. A cell pair does.
+   */
+  towerAtCell(gx, gy) {
+    const cu = this.cellUnit
+    const x = gx * cu + cu / 2, y = gy * cu + cu / 2
+    for (const t of this.towers) {
+      if (!t.visible) continue
+      if (x >= t.box.min.x && x <= t.box.max.x && y >= t.box.min.y && y <= t.box.max.y) return t
+    }
+    return null
   }
 
   setTowerColor(tower, color) {

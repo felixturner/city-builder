@@ -1,3 +1,4 @@
+import { simInt } from '../lib/rng.js'
 /**
  * The wave schedule, in one place.
  *
@@ -39,7 +40,8 @@ export class WaveClock {
     this.rerollSeed()
   }
 
-  rerollSeed() { this.seed = Math.floor(Math.random() * 0x10000) }
+  // Off the sim stream, so a recorded run gets the same sequence of attack sides.
+  rerollSeed() { this.seed = simInt(0, 0xffff) }
 
   /** Seconds of build at the start of each cycle, before the wave lands. */
   get buildTime() { return this.wavePeriod - this.waveActive }

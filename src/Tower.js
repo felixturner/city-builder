@@ -554,40 +554,43 @@ export class Tower {
    * @param {Tower[]} allTowers - All towers for debris collision
    * @param {Function} onComplete - Called when animation completes
    */
+  /**
+   * A click on a tower: one more floor.
+   *
+   * The floor is added NOW, not when the press-down animation finishes.
+   *
+   * It used to be applied inside the tween's callback, a hundred milliseconds of
+   * WALL CLOCK later, with a guard voiding the click if anything had changed
+   * underneath in the meantime. That made game state depend on an animation: two
+   * quick clicks on the same tower could land inside one press and the second
+   * would be thrown away, and a recorded run replayed at 4x lost most of its
+   * clicks, because four times as much world went by during each 100ms press.
+   *
+   * The guard is no longer needed either - it existed because the tower could be
+   * destroyed mid-press, which cannot happen when the state change is the first
+   * thing that occurs.
+   */
   handleClick(city, floorHeight, maxFloors, debris, allTowers, onComplete, onBlockAdded) {
     const mesh = city.towerMesh
     const numFloors = this.numFloors
+    if (numFloors >= maxFloors) return
 
-    // Check if we can add another floor
-    if (numFloors >= maxFloors) {
-      return
-    }
+    this.numFloors = numFloors + 1
+    city.mana?.econ?.blockPlaced()
+    // Refresh ZOC radius / connectors immediately so they grow with the new
+    // block right away, rather than waiting for the emerge animation to end.
+    onBlockAdded?.()
 
-    // Play tick sound and push down animation, then release
     Sounds.play('tick', 1.0, 0)
+    // Pitch increases with floor height (0.8 at ground, 2.0 at top)
+    Sounds.play('pop', 0.8 + (numFloors / maxFloors) * 1.2, 0.15, 0.7)
 
+    // Everything from here is looks: press the stack down, then let the new
+    // floor emerge as it comes back up. If the tower is gone by the time these
+    // land they simply do nothing.
     const pushAmount = floorHeight * 0.25
     this.animateOffset(mesh, floorHeight, maxFloors, -pushAmount, 0.1, () => {
-      // The press-down takes 100ms, and a creep can knock this tower over inside
-      // it - or destroy it outright, in which case the tower goes back to the
-      // pool and is handed straight out again as some other tile. Writing the
-      // captured count into whatever now lives here gave it floors it never paid
-      // for, and left a tetromino's roof being scaled as if it were a 1x1 - the
-      // "wall suddenly enormous" bug. If anything moved underneath us, the click
-      // is simply void.
-      if (!this.visible || this.numFloors !== numFloors) return
-      this.numFloors = numFloors + 1
-      city.mana?.econ?.blockPlaced()
-
-      // Refresh ZOC radius / connectors immediately so they grow with the new
-      // block right away, rather than waiting for the emerge animation to end.
-      onBlockAdded?.()
-
-      // Pitch increases with floor height (0.8 at ground, 2.0 at top)
-      const pitch = 0.8 + (numFloors / maxFloors) * 1.2
-      Sounds.play('pop', pitch, 0.15, 0.7)
-
-      // Animate the tower back up with the new floor emerging
+      if (!this.visible) return
       this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers, onComplete)
     })
   }

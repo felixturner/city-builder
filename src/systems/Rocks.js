@@ -1,5 +1,6 @@
 import { Mesh, MeshStandardNodeMaterial, Color, MathUtils } from 'three/webgpu'
 import { ExtraGeometry } from '../lib/ExtraGeometry.js'
+import { simInt, simPick } from '../lib/rng.js'
 
 /**
  * Boulders: permanent, immovable terrain you have to build around.
@@ -71,8 +72,8 @@ export class Rocks {
     const taken = new Set()
 
     for (let tries = 0; tries < count * 60 && this.rocks.length < count; tries++) {
-      const gx = MathUtils.randInt(cx - halfCells + EDGE_MARGIN, cx + halfCells - 1 - EDGE_MARGIN)
-      const gy = MathUtils.randInt(cy - halfCells + EDGE_MARGIN, cy + halfCells - 1 - EDGE_MARGIN)
+      const gx = simInt(cx - halfCells + EDGE_MARGIN, cx + halfCells - 1 - EDGE_MARGIN)
+      const gy = simInt(cy - halfCells + EDGE_MARGIN, cy + halfCells - 1 - EDGE_MARGIN)
       const key = gy * city.gridCellsX + gx
       if (taken.has(key)) continue
       if (king && Math.abs(gx - king.cellX) <= KEEP_CLEAR_OF_KING
@@ -81,7 +82,7 @@ export class Rocks {
       if (city.lootBoxes?.occupiesCell(gx, gy)) continue
       taken.add(key)
 
-      const geo = ExtraGeometry.rocks[MathUtils.randInt(0, ExtraGeometry.rocks.length - 1)]
+      const geo = simPick(ExtraGeometry.rocks)
       const mesh = new Mesh(geo, this.mat)
       const world = city.gridToWorld(gx * city.cellUnit + city.cellUnit / 2,
         gy * city.cellUnit + city.cellUnit / 2)

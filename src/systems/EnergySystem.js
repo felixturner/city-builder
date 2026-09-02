@@ -6,6 +6,7 @@ import {
   isPathGenerator, claimsEnclosure, isGrey, isShield, isTurret, isBarracks, towerArea, towerTopY,
   shieldRadiusCells, shieldCharges,
 } from '../blockTypes.js'
+import { simRand } from '../lib/rng.js'
 
 const GEN_INTERVAL = 2 // seconds between generator mana ticks
 const GREY_INTERVAL = 5 // seconds between passive grey-block mana ticks
@@ -488,7 +489,10 @@ export class EnergySystem {
     // this they all opened their stream on the same frame and the board flashed
     // in unison - one loud chord instead of a rhythm. A stable per-tower phase
     // decorrelates them while keeping each generator's own beat steady.
-    if (tower.incomePhase === undefined) tower.incomePhase = Math.random()
+    // Seeded: the phase decides WHEN each unit of energy lands, and a click is
+    // only affordable if the energy has arrived - so this decides whether a
+    // recorded action succeeds, which makes it simulation, not decoration.
+    if (tower.incomePhase === undefined) tower.incomePhase = simRand()
     const phase = tower.incomePhase * span
     const c = tower.box.getCenter(this._c)
     const cx = c.x + city.gridOffsetX

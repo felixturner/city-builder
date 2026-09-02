@@ -122,6 +122,7 @@ export class TowerInteraction {
   buildFloor(tower) {
     const city = this.city
     if (!this.canBuild(tower)) return
+    city.demo?.run?.record('floor', { gx: tower.cellX, gy: tower.cellY })
     tower.handleClick(city, city.floorHeight, maxFloorsFor(tower), city.debris,
       city.towers, () => city.onTowerChanged(tower), () => {
         city.updateTowerVisuals()
@@ -192,7 +193,30 @@ export class TowerInteraction {
     const city = this.city
     const tower = this.towerFor(intersection)
     if (!tower || !tower.visible || tower.king) return // the king can't be demolished
-    tower.animateDelete(city.towerMesh, city.floorHeight, tower.numFloors, () => city.demolishTower(tower))
+    this.demolishTower(tower)
+  }
+
+  /**
+   * Tear a tower down.
+   *
+   * The tower is removed from the world NOW; the stack falling floor by floor is
+   * what you watch afterwards.
+   *
+   * It used to be the other way round - the removal ran from the fall
+   * animation's onComplete, most of a second of WALL CLOCK later - so a
+   * demolished tower went on blocking creep paths, sealing enclosures and
+   * counting as a wall for the whole animation. A recorded run replayed at 4x
+   * left it standing four times as long in world terms, and the board ended up
+   * different. Game state should not be waiting on an animation to finish.
+   *
+   * The fall is played by a stand-in that owns the instances until it lands (see
+   * City.demolishTower), so nothing is drawing to a slot the pool has handed out
+   * again.
+   */
+  demolishTower(tower) {
+    const city = this.city
+    city.demo?.run?.record('demolish', { gx: tower.cellX, gy: tower.cellY })
+    city.demolishTower(tower, { animate: true })
   }
 
   /** Hide the tower and spin a radial build-wheel; finishReroll() on completion. */

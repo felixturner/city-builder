@@ -83,6 +83,7 @@ export class LotGrowth {
    */
   clickLot(worldX, worldZ) {
     const city = this.city
+    city.demo?.run?.record('lot', { x: worldX, z: worldZ })
     const gx = worldX - city.gridOffsetX
     const gz = worldZ - city.gridOffsetZ
     const lotX = Math.floor(gx / city.cellSize)

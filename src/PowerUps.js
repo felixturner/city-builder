@@ -3,6 +3,7 @@ import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
 import { TopType, KING_MAX_FLOORS } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
+import { simRand } from './lib/rng.js'
 
 export { Buffs, resetBuffs }
 
@@ -170,6 +171,13 @@ export class PowerUpScreen {
     this.demo.tilePalette?.addSlot()
   }
 
+  /** Take a card by id - how run playback picks, since a card object cannot be
+   *  written to a file but its id can. */
+  pickRecorded(id) {
+    const card = this._offered?.find((c) => c.id === id) || CARDS.find((c) => c.id === id)
+    if (card) this.choose(card)
+  }
+
   /** Deal four distinct, currently-useful cards. */
   deal() {
     const pool = CARDS.filter(c => {
@@ -180,7 +188,7 @@ export class PowerUpScreen {
     })
     const picked = []
     while (picked.length < CARDS_OFFERED && pool.length) {
-      picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0])
+      picked.push(pool.splice(Math.floor(simRand() * pool.length), 1)[0])
     }
     return picked
   }
@@ -192,6 +200,7 @@ export class PowerUpScreen {
   show(origin = null) {
     if (this.open) return
     const cards = this.deal()
+    this._offered = cards // run playback picks by id out of this
     if (!cards.length) return
     this.open = true
     this.demo.paused = true
@@ -204,6 +213,7 @@ export class PowerUpScreen {
   }
 
   choose(card) {
+    this.demo.run?.record('card', { id: card.id })
     card.apply(this)
     this.taken.set(card.id, (this.taken.get(card.id) || 0) + 1)
     Sounds.play('good', 1.0, 0.05, 0.7)

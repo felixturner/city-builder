@@ -25,6 +25,15 @@
 - make completing wall rings more important. buff walls that are completed x2 def.
 
 ## FIXES
+- fix balancing
+- demolish should return money for whne you are desparate
+- reroll price should go up w level
+- allow board bigger?
+
+- make droppable vs blocked easier to see at small sizes
+- fix timing on attacks / knocks + sounds
+- improve high score table
+- check swartm arrow flashing
 - WINDOW RESIZE HANGS/STALLS, worse the later the level. ~10s freeze resizing up
   at level 6; a fullscreen->windowed toggle at level 21 locked the tab for good.
   Not a leak - PostFX.render allocates nothing per frame and GTAO's per-frame
@@ -41,14 +50,21 @@
 - keep attacks swarms in one dir until boss level
 - add dec or indicator when at top height
 - remove 3rd party blender file. start new clean repo?
-
+- make trails + floors glow less - gets too bright later
+- wierd sound when a star is enclosed
+- optimize sounds
+- rocks darker
+- do kings scale same as enc gens?
+- make swarm arrow more visible for not zoomed out (readd moving arrows at edges)?
+- readd add double swarm dir for later on?
+- mark gaps? (too easy?)
+- readd big gens?
 - make connected path generetors pulse at same time
 - make walls have 2 sides inside /outside?
 - add big guns like heavy crossbows thta go thru multiple enemeys high damage
 - add more high powered creeps
 - nicer energy spawn sound
 - add back 3 colors per gen type?
-- mak online live demo
 - make mobile friendly (right click + R key)
 
 
