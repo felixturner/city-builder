@@ -25,7 +25,10 @@ export class Tower {
    * Everything picks an index via COLORS.length, so a one-entry list is safe.
    */
   static COLORS = [
-    new Color(0xbcbcbc),
+    // Dropped a tenth from 0xbcbcbc: a level-1 wall used to sit at almost
+    // exactly the board's value (0x999999) and vanished into the floor it stood
+    // on.
+    new Color(0xa3a3a3),
   ]
 
   /**
@@ -36,7 +39,9 @@ export class Tower {
   static STACK_DARKEN = 0.55
 
   /** Shade for floor `f` of a stack: floor 0 keeps `base`, higher floors lerp
-   *  toward black so a wall reads DARKER the taller it gets. */
+   *  toward black so a wall reads DARKER the taller it gets. Tried the other way
+   *  up - dark at the ground, light at the roof - and a level-1 wall came out the
+   *  darkest block on the board, which is the one tile that has to read clearly. */
   static shadeForFloor(base, f, maxFloors, out) {
     const t = maxFloors > 1 ? (f / (maxFloors - 1)) * Tower.STACK_DARKEN : 0
     return out.copy(base).lerp(Tower.BLACK, t)
@@ -65,7 +70,7 @@ export class Tower {
   }
 
   static ID = 0
-  static BASE_COLOR = new Color(0xbcbcbc) // matches COLORS[0] so rects and tetro walls read alike
+  static BASE_COLOR = new Color(0xa3a3a3) // matches COLORS[0] so rects and tetro walls read alike
 
   constructor() {
     this.id = Tower.ID++
@@ -89,7 +94,6 @@ export class Tower {
     this.roofInstance = null // Top block instance ID
 
     // Animation state
-    this.hoverTween = null
     this.floorTween = null
     this.roofTween = null // Separate tween for roof Y position (persists across clicks)
     // Persistent roof animation state (so GSAP can tween from current values)
@@ -113,80 +117,6 @@ export class Tower {
     color.getHSL(hsl)
     return new Color().setHSL(hsl.h, hsl.s, Math.min(1, hsl.l + amount))
   }
-
-  /**
-   * Animate tower color to/from hover state using a single tween
-   * @param {BatchedMesh} mesh - The batched mesh containing this tower's instances
-   * @param {boolean} isHovering - True to lighten colors, false to restore original
-   * @param {number} floorHeight - Height of each floor for calculating visible floors
-   */
-  animateHoverColor(mesh, isHovering) {
-    // Kill any existing hover tween
-    if (this.hoverTween) {
-      this.hoverTween.kill()
-    }
-
-    const numFloors = this.numFloors
-    const floorInstances = this.floorInstances
-    const roofInstance = this.roofInstance
-
-    // Get current colors from first floor and roof
-    const currentFloorColor = new Color()
-    const currentRoofColor = new Color()
-    mesh.getColorAt(floorInstances[0], currentFloorColor)
-    mesh.getColorAt(roofInstance, currentRoofColor)
-
-    // Target colors - lighten current colors when hovering, restore original otherwise
-    let toFloorColor, toRoofColor
-    if (isHovering) {
-      // Lighten the base colors for hover effect
-      const baseFloor = this.isLit && this.litColor ? this.litColor : this.baseColor
-      const baseRoof = this.isLit && this.litColor ? this.litColor : this.topColor
-      toFloorColor = Tower.lightenColor(baseFloor)
-      // Lighten the roof's SHADED colour, not the flat base, or hovering resets
-      // it to a colour it should never have had.
-      toRoofColor = Tower.lightenColor(Tower.roofShade(this, baseRoof, new Color()))
-    } else if (this.isLit && this.litColor) {
-      // Lit towers stay at their lit color
-      toFloorColor = this.litColor.clone()
-      toRoofColor = this.litColor.clone()
-    } else {
-      toFloorColor = this.baseColor
-      toRoofColor = Tower.roofShade(this, this.baseColor, new Color())
-    }
-
-    // Interpolation colors
-    const floorColor = currentFloorColor.clone()
-    const roofColor = currentRoofColor.clone()
-    // floorInstances[0] was sampled above, so `current`/`to` are both floor-0
-    // shades; the gradient is re-applied per floor in onUpdate.
-    const _shade = new Color()
-    const maxFloorsForShade = maxFloorsFor(this)
-
-    // Animation state object
-    const anim = { t: 0 }
-
-    // Single tween that updates all blocks
-    this.hoverTween = gsap.to(anim, {
-      t: 1,
-      duration: 0.3,
-      onUpdate: () => {
-        // Interpolate colors
-        floorColor.copy(currentFloorColor).lerp(toFloorColor, anim.t)
-        roofColor.copy(currentRoofColor).lerp(toRoofColor, anim.t)
-
-        // Apply to all visible floors, re-deriving each floor's shade so the
-        // stack gradient survives the hover instead of flattening to one colour.
-        for (let f = 0; f < numFloors; f++) {
-          Tower.shadeForFloor(floorColor, f, maxFloorsForShade, _shade)
-          mesh.setColorAt(floorInstances[f], _shade)
-        }
-        // Apply to roof
-        mesh.setColorAt(roofInstance, roofColor)
-      }
-    })
-  }
-
 
   /**
    * Land any in-flight roof animation in its FINISHED state, immediately.
@@ -235,7 +165,6 @@ export class Tower {
   resetAnimation() {
     this.settleRoof()
     this.settleFloors()
-    if (this.hoverTween) { this.hoverTween.kill(); this.hoverTween = null }
     this.roofAnim.y = 0
   }
 
@@ -353,7 +282,7 @@ export class Tower {
   /**
    * Animate adding a new floor with roof pop-off effect
    */
-  animateNewFloor(mesh, floorHeight, oldNumFloors, hoverColor, onComplete, onFloorPop) {
+  animateNewFloor(mesh, floorHeight, oldNumFloors, floorColor, onComplete, onFloorPop) {
     const dummy = new Object3D()
     const center = this.box.getCenter(new Vector2())
     const size = this.box.getSize(new Vector2())
@@ -373,8 +302,11 @@ export class Tower {
       this.roofAnim.y = oldNumFloors * floorHeight + roofHalfHeight + floorHeight * 0.2
     }
 
-    // Use hover color directly for new floors
-    mesh.setColorAt(newFloorIdx, hoverColor)
+    // The colour it will KEEP - its shade in the stack gradient - not a brighter
+    // one that a later reshade quietly corrects. The pop-in scale and the roof
+    // lifting off it are the event; a colour that then changes on its own was a
+    // second, quieter animation nobody asked for.
+    mesh.setColorAt(newFloorIdx, floorColor)
 
     const anim = {
       scale: 0.1,
@@ -659,10 +591,14 @@ export class Tower {
    */
   _animateNewFloorWithDebris(city, floorHeight, oldNumFloors, debris, allTowers, onComplete) {
     const mesh = city.towerMesh
-    // Use lightened version of tower's base color for new floor and debris
+    // The block goes in at its own shade in the gradient; the DEBRIS stays
+    // lightened, because a spray of particles reads better bright and is gone
+    // before anything can compare it to the block it came off.
     const baseColor = this.isLit && this.litColor ? this.litColor : this.baseColor
-    const newFloorColor = Tower.lightenColor(baseColor)
-    const debrisColor = newFloorColor.clone()
+    const newFloorColor = Tower.shadeForFloor(
+      baseColor, oldNumFloors, maxFloorsFor(this), new Color()
+    )
+    const debrisColor = Tower.lightenColor(baseColor)
     const center = this.box.getCenter(new Vector2())
     const newFloorY = (oldNumFloors + 1) * floorHeight
 

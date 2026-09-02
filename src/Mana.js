@@ -2,6 +2,12 @@ import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR } from './palette.js'
 import { Buffs } from './buffs.js'
 
+// Energy of cap per CELL of the open board. At a quarter, the opening 5x5 lots
+// (625 cells) cap at ~156 and the fully opened 11x11 (3025) at ~756 - a range
+// tiles priced in the tens can actually be measured against, and an opening cap
+// close to the flat 150 this replaced.
+const CAP_PER_CELL = 0.25
+
 // Set false to remove the energy cap (energy is balanced by spend, not a ceiling).
 const CAP_ENABLED = true
 
@@ -29,7 +35,11 @@ export class Mana {
     this.baseMax = baseMax
     this.population = 0
     this.max = baseMax
-    this.current = Math.min(initial, this.max)
+    // Not clamped here: the real cap arrives with the first setStats (the board
+    // size decides it), and that clamps if it needs to. Clamping against
+    // baseMax first would zero the opening energy whenever baseMax is a floor
+    // of 0 rather than the whole cap.
+    this.current = initial
     this.elapsed = 0 // survival time = score
     this.level = 1 // 1-based wave number, pushed in by Demo each frame
     this.infinite = false // TEMP (?clean): spends are free, cap never clamps
@@ -134,10 +144,10 @@ export class Mana {
     this.render()
   }
 
-  /** Update grey-block-derived stats: population sets the energy cap. */
-  setStats(population) {
-    this.population = population
-    this.max = this.baseMax + population + Buffs.energyMax
+  /** Board size sets the energy cap: a quarter of a cell per cell in play. */
+  setStats(areaCells) {
+    this.population = areaCells
+    this.max = this.baseMax + Math.round(areaCells * CAP_PER_CELL) + Buffs.energyMax
     if (CAP_ENABLED && !this.infinite && this.current > this.max) this.current = this.max
     this.render()
   }

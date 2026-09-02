@@ -588,7 +588,7 @@ export class TilePalette {
     // the rotate button still works.
     this._setTrayFaded(true)
     const base = this._tileColor3(tile, new Color())
-    const hi = base.clone().lerp(this._white, 0.45)
+    const hi = base.clone().lerp(this._white, 0.75)
     this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, rot, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined }
     mat.color.copy(base)
   }
@@ -715,8 +715,10 @@ export class TilePalette {
       // Corner-shaped roofs have a facing; the symmetric ones don't care.
       ghost.rotation.y = this._roofRotation(tile, this.drag.rot)
     }
-    if (t.valid) { mat.color.copy(this.drag.hi); mat.opacity = 0.92 }
-    else { mat.color.copy(this.drag.base); mat.opacity = 0.5 }
+    // Both states wear the lightened colour; only opacity separates them, so the
+    // ghost reads as one object getting solid rather than changing material.
+    mat.color.copy(this.drag.hi)
+    mat.opacity = t.valid ? 1 : 0.4
   }
 
   /** Dim the tray so a ghost dragged over it stays readable. */

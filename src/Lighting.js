@@ -62,6 +62,9 @@ export class Lighting {
     // surface rather than as the edge of the thing you are defending.
     this.beyondGround = plane(0x2b2b31, -0.04, 420)
     this.outerField = plane(0x4a4a4e, -0.02)
+    // The board grey the soldiers and boulders also wear. A level-1 wall used to
+    // sit at almost exactly this value and vanish into it; the walls moved down
+    // a tenth instead (Tower.COLORS), so the floor keeps its original tone.
     this.boundsGround = plane(0x999999, 0)
 
     // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)

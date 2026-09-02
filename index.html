@@ -13,6 +13,13 @@
     <style>
       * {
         box-sizing: border-box;
+        /* Nothing here is text to read - it is a game HUD - and a drag that
+           starts on a label used to paint the blue selection over the board and
+           leave it there. The canvas already did this for itself; this is the
+           same rule for the DOM UI on top of it. */
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
       }
       body {
         margin: 0;

@@ -195,15 +195,33 @@ export class Enclosure {
     }
 
     // 4. Claim colour from enclosure generators inside a region; set mana size.
+    //
+    // ONE claimant per region earns, not all of them. Every generator standing
+    // in a region used to be handed the region's full cell count, so three of
+    // them in one enclosure billed the same ground three times - and the way to
+    // arrange that was to seal three small enclosures, put a generator in each,
+    // then knock the inner walls down and have all three inherit the merged
+    // area. Sealing ground is the thing being paid for, and it can only be
+    // sealed once.
+    //
+    // The tallest wins, ties by tower id so the answer is stable across
+    // rebuilds rather than depending on iteration order. The losers get zero
+    // cells, which stops them pulsing - the same tell an unconnected generator
+    // already gives.
+    const winners = new Map() // region id -> the claimant earning off it
     for (const t of this.city.towers) {
-      if (!claimsEnclosure(t)) continue
       t.enclosureRegionCells = 0
-      if (!t.visible) continue
+      if (!claimsEnclosure(t) || !t.visible) continue
       const rid = region[t.cellY * W + t.cellX]
-      if (rid >= 0) {
-        regions[rid].color = t.colorIndex
-        t.enclosureRegionCells = regions[rid].count
-      }
+      if (rid < 0) continue
+      const held = winners.get(rid)
+      const better = !held || t.numFloors > held.numFloors
+        || (t.numFloors === held.numFloors && t.id < held.id)
+      if (better) winners.set(rid, t)
+    }
+    for (const [rid, t] of winners) {
+      regions[rid].color = t.colorIndex
+      t.enclosureRegionCells = regions[rid].count
     }
 
     // Region count change: energy.mp3 on a new enclosure, power-down on a lost one

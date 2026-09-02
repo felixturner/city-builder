@@ -25,9 +25,26 @@ import { isGenerator, isGrey } from '../blockTypes.js'
 export const WALL_BASE_COST = 4
 export const UTILITY_BASE_COST = 8 // generators and turrets
 
-const COST_GROWTH = 1.2 // gens/turrets: each one placed makes the next 20% pricier
-const WALL_COST_GROWTH = 1.01 // walls are one bucket drawn ~66% of the time, so
-// they fill ~18x faster and need a far gentler curve to reach the same place
+// How fast each bucket approaches MAX_COST_MULTIPLE - the fraction of the
+// remaining headroom left after each placement, so LOWER is steeper. 0.96 gives
+// gens and turrets the old +20% on the first step; walls are one bucket drawn
+// ~66% of the time, so they fill ~18x faster and creep up over hundreds.
+const COST_GROWTH = 0.96
+const WALL_COST_GROWTH = 0.998
+/**
+ * Ceiling the escalation APPROACHES, as a multiple of the base price.
+ *
+ * The curve used to compound without limit, and the counter only ever rises
+ * (rebuilding what creeps destroyed counts), so a long run reached 256 for a
+ * generator that cost 8 - a third of the whole energy cap for one tile.
+ *
+ * Saturating rather than clamped: `mult = M - (M-1) * growth^n` starts at 1,
+ * rises at close to the old rate for the first few, and bends toward M instead
+ * of arriving at it and stopping. A hard min() would have left a kink - 20% a
+ * step until the twelfth, then nothing forever - which is worse to play against
+ * than a curve that visibly flattens.
+ */
+const MAX_COST_MULTIPLE = 6
 const INCOME_PRICE_FACTOR = 0.02 // +2% per point of income/sec (surplus brake)
 const FLOOR_DISCOUNT = 0.5 // a floor costs half what the same tile costs new
 
@@ -48,8 +65,10 @@ export function priceOf(city, spec) {
   const count = city.placedCount(costKey(spec))
   const growth = spec.isWall ? WALL_COST_GROWTH : COST_GROWTH
   const income = city.energy ? city.energy.incomePerSec() : 0
+  const M = MAX_COST_MULTIPLE
+  const escalation = M - (M - 1) * Math.pow(growth, count)
   return Math.max(1, Math.round(
-    base * Math.pow(growth, count) * (1 + income * INCOME_PRICE_FACTOR) * Buffs.buildCost
+    base * escalation * (1 + income * INCOME_PRICE_FACTOR) * Buffs.buildCost
   ))
 }
 

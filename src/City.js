@@ -970,7 +970,7 @@ export class City {
 
       // Animate each floor sequentially (no debris during intro)
       const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
-      const newFloorColor = Tower.lightenColor(baseColor)
+      const floorShade = new Color()
       // Volume fades based on distance (0 at 3 lots away)
       const maxSoundDist = this.cellSize * 3 // 3 lots
       const volume = Math.max(0, 1 - dist / maxSoundDist) * 0.35
@@ -982,11 +982,15 @@ export class City {
           // Play pop sound with pitch based on floor height, volume based on distance
           const pitch = 0.8 + (f / maxFloorsFor(tower)) * 1.2
           if (volume > 0) Sounds.play('pop', pitch, 0.15, volume)
+          // Each block goes in at its own shade in the stack gradient - no
+          // brighten-then-settle, which during the intro read as the city
+          // flickering as it built.
+          Tower.shadeForFloor(baseColor, f, maxFloorsFor(tower), floorShade)
           tower.animateNewFloor(
             this.towerMesh,
             this.floorHeight,
             f,
-            newFloorColor,
+            floorShade,
             () => this.updateTowerMatrices(tower),
             null // no debris
           )

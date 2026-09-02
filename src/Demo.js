@@ -173,7 +173,9 @@ export class Demo {
     // Energy/population HUD - grey blocks generate energy and raise its cap
     // Start on 100 against a 150 cap, so the opening build has room to work with
     // but there is still headroom to bank into before the first wave.
-    this.mana = new Mana(150, 100)
+    // No flat base: the cap is the board size (see Mana.setStats), which starts
+    // at ~156 - about where the old flat 150 was - and grows as rings open.
+    this.mana = new Mana(0, 100)
     // TEMP (?clean): infinite energy so screenshots aren't gated on the economy.
     if (CLEAN_MODE) { this.mana.infinite = true; this.mana.current = 99999 }
     this.city.mana = this.mana

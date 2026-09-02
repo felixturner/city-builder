@@ -68,13 +68,18 @@ export class TowerInteraction {
     return null
   }
 
-  /** Hover highlight, swapping the lit accent on enter/leave. */
+  /**
+   * Track which tower the pointer is over.
+   *
+   * No colour change any more. Towers used to lighten on hover, which fought
+   * everything else painted on a stack - the height gradient, the lit accent, a
+   * damage flash - and the tween that did it wrote whatever colour the tower
+   * happened to be showing at the time back as its "original".
+   *
+   * `hoveredTower` is still tracked: other things read it.
+   */
   onHover(intersection) {
-    const tower = this.towerFor(intersection)
-    if (tower === this.hoveredTower) return
-    if (this.hoveredTower) this.hoveredTower.animateHoverColor(this.city.towerMesh, false)
-    this.hoveredTower = tower
-    if (tower) tower.animateHoverColor(this.city.towerMesh, true)
+    this.hoveredTower = this.towerFor(intersection)
   }
 
   /** Pointer down: record the pressed tower + position for click/drag detection. */

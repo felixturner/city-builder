@@ -288,19 +288,26 @@ export class EnergySystem {
     this.enclosureGenMana = mana
   }
 
-  /** Push the current grey-block population to the energy/population HUD. */
+  /**
+   * Push the current board size to the energy cap.
+   *
+   * The cap used to be the number of grey BLOCKS standing, which made it
+   * farmable and enormous: height counted, so five floors on one cell raised it
+   * as much as five walls, and an 80%-built full board reached a cap of ~12,000
+   * against tiles costing tens. It also fell whenever creeps took a wall, which
+   * clamped away energy you had already banked.
+   *
+   * Board size is the honest driver. It only grows when a boss round is cleared,
+   * so it tracks progress, cannot be built toward, and never drops.
+   */
   refreshManaStats() {
-    if (this.city.mana) this.city.mana.setStats(this.countGreyBlocks())
+    if (this.city.mana) this.city.mana.setStats(this.playAreaCells())
   }
 
-  /** Total grey blocks = sum of heights over visible grey towers. */
-  countGreyBlocks() {
-    let n = 0
-    for (const t of this.city.towers) {
-      if (!t.visible || t.numFloors < 1 || !isGrey(t)) continue
-      n += t.numFloors
-    }
-    return n
+  /** Cells inside the open part of the board. */
+  playAreaCells() {
+    const side = this.city.visibleLots * this.city.lotCells
+    return side * side
   }
 
   area(tower) {
@@ -551,8 +558,8 @@ export class EnergySystem {
     }
 
     // Walls no longer generate anything - they're defence, not income, and a
-    // city full of them was out-earning actual generators. They still count as
-    // population, so building raises the energy CAP (see refreshManaStats).
+    // city full of them was out-earning actual generators. They no longer raise
+    // the energy cap either; that follows the board size now (refreshManaStats).
     // Only the king trickles on this timer now.
     this.greyManaTimer += dt
     while (this.greyManaTimer >= GREY_INTERVAL) {
