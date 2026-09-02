@@ -24,6 +24,7 @@ import { PostFX } from './PostFX.js'
 import { Mana } from './Mana.js'
 import { ResourceFly } from './lib/ResourceFly.js'
 import { ENERGY_COLOR } from './palette.js'
+import { HighScores } from './HighScores.js'
 
 // Heavy shadow so game-over text stays legible over the live city now that
 // there's no scrim behind it.
@@ -700,6 +701,11 @@ export class Demo {
     btn.addEventListener('click', () => location.reload())
     el.appendChild(title)
     el.appendChild(stats)
+    // Shared leaderboard between the stats and the button. Fills in async;
+    // adds nothing at all when the API is unreachable (e.g. local dev).
+    const board = document.createElement('div')
+    el.appendChild(board)
+    new HighScores().buildInto(board, final)
     el.appendChild(btn)
     document.body.appendChild(el)
   }
