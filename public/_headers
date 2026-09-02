@@ -1,0 +1,5 @@
+# Cloudflare Pages headers. frame-ancestors blocks other sites from
+# iframe-embedding the game - the lazy way portals rip web games off.
+/*
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Frame-Options: DENY

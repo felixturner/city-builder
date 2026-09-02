@@ -13,7 +13,17 @@ const tutorial = new Tutorial()
 
 let demo = null
 
+// Hosts the game is allowed to run on. A re-hosted copy of the bundle fails
+// this and stops at a plain message instead of the game (the _headers CSP
+// already blocks iframe embeds; this catches full re-hosts).
+const ALLOWED_HOSTS = /(^|\.)pages\.dev$|^localhost$|^127\.0\.0\.1$/
+
 async function init() {
+  if (!ALLOWED_HOSTS.test(location.hostname)) {
+    loadingEl.innerHTML =
+      '<p style="color:#fff">Play City Builder at <a style="color:#fff" href="https://city-builder-apz.pages.dev">city-builder-apz.pages.dev</a></p>'
+    return
+  }
   if (!WebGPU.isAvailable()) {
     loadingEl.innerHTML = '<p style="color:#fff">WebGPU is not available on your device or browser.</p>'
     return

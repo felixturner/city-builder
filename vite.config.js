@@ -30,6 +30,7 @@ export default defineConfig({
   plugins: [fullReloadAlways, basicSsl()],
   build: {
     target: 'esnext',
+    sourcemap: false, // never ship readable source with the bundle
   },
   esbuild: {
     target: 'esnext',
