@@ -49,10 +49,18 @@ export class EconLog {
     }
   }
 
-  /** Fold the round that just ended into the log and print it. */
-  end() {
+  /**
+   * Fold the round that just ended into the log and print it.
+   *
+   * `why` says how it ended: 'cleared' when the board went quiet, 'died' when
+   * the king fell partway through. The round you die in is the most interesting
+   * one in a run - it is the one the economy failed in - and it used to be
+   * thrown away, because a round was only ever closed on a clear.
+   */
+  end(why = 'cleared') {
     const r = this._round
     if (!r) return
+    r.ended = why
     const c = this.demo.city
     r.enclosedCells = c.enclosure?.enclosedCells
       ? c.enclosure.enclosedCells.reduce((n, v) => n + v, 0) : 0
@@ -98,6 +106,7 @@ export class EconLog {
       + ` | income ${r.incomePerSec}/s (path ${r.pathGenMana} enc ${r.enclosureGenMana})`
       + ` | built: ${path} path, ${enc} enc, ${turret} turret, ${barracks} brk,`
       + ` ${shield} shld, ${wallBlocks} wall blocks, ${r.enclosedCells} cells sealed`
+      + (why === 'died' ? ' | DIED HERE' : '')
     )
     this._round = null
     // The run file carries the rounds now - see RunRecorder.toJSON. Saving here

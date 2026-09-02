@@ -294,8 +294,12 @@ export class Demo {
       // Close the round's economy record before anything else - the boss reward
       // opens a menu and grows the board, which would land in the next round's
       // numbers rather than this one's.
-      this.econ?.end()
-      this.econ?.begin(waveIdx + 2) // the level now being built for, 1-based
+      // Nothing to close if the king already died - that round was written down
+      // and stamped 'died' at the moment it happened.
+      if (!this.kingDead) {
+        this.econ?.end()
+        this.econ?.begin(waveIdx + 2) // the level now being built for, 1-based
+      }
       if (!this.creeps.isBossWave(waveIdx)) return
       if (this.isGameOver || this.kingDead) return
       this._runBossReward()
@@ -798,6 +802,18 @@ export class Demo {
     if (this.kingDead) return
     this.kingDead = true
     this.gameOverDelay = Demo.GAME_OVER_DELAY
+    // Close the round the king died in. Rounds are otherwise only closed when
+    // the board goes quiet, so the one that actually ended the run - the one
+    // worth reading - was the one round never written down.
+    this.econ?.end('died')
+    if (this.run) {
+      this.run.diedAt = {
+        tick: this.run.tick,
+        seconds: Math.round(this.run.tick * Demo.SIM_DT),
+        level: this.creeps.waveNumber + 1,
+        score: Math.floor(this.mana.elapsed),
+      }
+    }
     // Plays out across the GAME_OVER_DELAY window while the creeps finish the
     // job, and has decayed by the time the score panel goes up.
     Sounds.play('game-over', 1.0, 0, 0.85)

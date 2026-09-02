@@ -71,6 +71,9 @@ export class RunRecorder {
       seed: this.seed,
       ticks: this.tick,
       replay: this.replaying, // a played-back run, not a fresh one
+      // When and where the king fell: sim tick, seconds of game time, the level
+      // reached and the score. Absent on a run that has not ended.
+      diedAt: this.diedAt || null,
       rounds: this.demo.econ?.rounds || [],
       events: this.events,
     }

@@ -37,6 +37,12 @@ first mismatch is logged:
 | `rounds` | the per-round economy figures (EconLog) |
 | `commit`, `dirty` | stamped by the dev server when it writes |
 | `replay` | true if this run was itself a playback |
+| `diedAt` | tick, seconds, level and score when the king fell (null if unfinished) |
+
+Each round carries `ended`: `'cleared'` when the board went quiet, `'died'` for
+the round the king fell in. That round used to be missing entirely - rounds were
+only closed on a clear - which threw away the one round the economy actually
+failed in.
 
 The economy figures live here rather than in a log of their own: they describe
 one run, and when they were separate a replay appended rounds to a file no run
