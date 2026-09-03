@@ -506,8 +506,8 @@ export class EnergySystem {
     // leaving from under it looked like it came from the tile it hovers over.
     // Its Y is driven on sim time (City.updateKingMarker), so reading it here
     // is reproducible.
-    const cy = tower.king && city.kingMarker
-      ? city.kingMarker.position.y
+    const cy = tower.king
+      ? city.kingVisuals.markerY
       : towerTopY(tower, city.floorHeight) + 0.5
     let left = amt
     for (let i = 0; i < n; i++) {
@@ -604,7 +604,7 @@ export class EnergySystem {
       // updateEnclosureGenerators); this is a slow bonus trickle ON TOP, so an
       // unsealed king still brings in enough to rebuild from. Emitted one unit
       // at a time over its own 5s tick rather than as a silent lump.
-      // `kingEarning` is set a second after the beam strikes in (City), so the
+      // `kingEarning` is set a second after the beam strikes in (KingVisuals), so
       // opening trickle follows the king lighting up instead of landing on the
       // same frame as it.
       if (city.king && city.king.visible && city.kingEarning) {
