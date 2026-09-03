@@ -825,6 +825,7 @@ export class Demo {
     this.isGameOver = true
     // The run is over: write it out. A recording is only worth having if it
     // survives the tab, and the interesting runs are the ones that end.
+    if (this.run) this.run.endedBy = 'gameover'
     this.run?.save()
     // Now that everything really has stopped, take the wave audio down with it.
     Sounds.stop('tick-fast')
@@ -1025,6 +1026,18 @@ export class Demo {
   /**
    * Jump the wave schedule forward 20 seconds.
    *
+   * What it skips is the WAITING, and the waiting is worth something: the
+   * generators do not run through it (income lives in stepGame, which this does
+   * not call), so pulling the wave forward costs twenty seconds of production
+   * while the wave still arrives at full strength. That is the trade the button
+   * offers - tempo for economy - and it is the reason to think before pressing
+   * it rather than mashing it through every build phase.
+   *
+   * It does NOT credit the score. The score is seconds survived, and skipping
+   * is the opposite of surviving them: crediting the skip paid out for time
+   * nobody lived through, so the fastest way to a high score was to press this
+   * as often as it would let you.
+   *
    * A player action like any other, so it is recorded - a replay that skipped
    * the same twenty seconds sees a different wave arrive at a different tick,
    * and diverges from there.
@@ -1034,9 +1047,6 @@ export class Demo {
     this.run?.record('skip', {})
     this.creeps.skipAhead(SKIP)
     this.creepTimeline.tweenTo(this.creeps.elapsed)
-    // Credit the skipped time to the survival-score clock.
-    this.mana.elapsed += SKIP
-    this.mana.render()
   }
 
   exportPNG() {

@@ -28,7 +28,12 @@ first mismatch is logged:
 
 ## What is in a run file
 
-`logs/run-<timestamp>.json`, one file per run, rewritten as it goes:
+`logs/run-<timestamp>.json`, one file per run, rewritten as it goes. A PLAYBACK
+writes `logs/replay-<timestamp>.json` instead, and `?replay` only ever loads the
+newest `run-`: while both were named the same, replaying twice played back the
+previous replay and checked itself against a game nobody had played. The
+timestamp carries milliseconds, so two pages opened in the same second cannot
+share a file.
 
 | field | |
 |---|---|
@@ -122,6 +127,72 @@ a run has diverged.
 Deliberately not recorded: pausing (it stops the sim rather than altering it),
 the rotate key (its effect arrives with the placement, which carries its own
 rotation), the flow overlay, and the camera.
+
+## What broke it, and what the rules are
+
+Every divergence found so far was one of three shapes. None was the RNG.
+
+**1. An animation deciding something.** gsap runs on the wall clock, so anything
+a tween touches is decided by the frame rate. At 16x the same tween covers
+sixteen times as much of the game.
+
+- `City.onTowerChanged` fired when a new floor's emerge tween ended, so creeps
+  learned about a wall an animation later.
+- A loot crate paid its energy from a gsap timeline, and read the LEVEL at that
+  moment - so it could pay a later level's rate.
+- A demolished tower rejoined the tower pool from a tween's `onComplete`. The
+  pool is a stack, so *when* it returned decided *which* tile object the next
+  placement got.
+
+**2. A decision made from rendered state.** Twice, in two files: `hasLOS` in both
+`Turrets` and `Creeps` raycast the tower BatchedMesh - whose instance matrices
+gsap writes as towers build, shake and fall. What a gun could see depended on
+where an animation had got to. Both now walk the line in half-cell steps against
+floor counts, which is game state (and cheaper). It also means roof decoration
+no longer blocks a shot, which is the behaviour you want anyway.
+
+**3. Playback re-deriving what the player pointed at.** A `floor` action recorded
+the tower's origin CELL, and playback resolved it with `towerAtCell` - which
+matches bounding BOXES. Tetrominoes are L- and S-shaped, so two tiles sharing no
+cells can still have overlapping boxes, and playback built on the neighbour. The
+live click resolves the tile by raycast; playback used a different function and
+got a different answer. Actions now record the tile's pool INDEX.
+
+A fourth, which was a gameplay bug in its own right: `canBuild` never checked the
+tower was still standing, so a click landing as a creep took the last block was
+charged for and built onto a pooled tile.
+
+### The rules that follow
+
+- **Animations may be cut short; state may never wait for one.** If a tween's
+  callback changes anything the world depends on, it is in the wrong place.
+- **Never decide anything from a mesh.** Meshes are a picture of the state, and
+  the picture is interpolated. Read the state.
+- **Record identity, not a description of it.** An index names one tile. A cell,
+  a position or a name has to be resolved, and any second way of resolving it is
+  a second chance to disagree.
+- **Playback must never need a human.** The upgrade screen pauses the game, and a
+  paused game cannot advance to the recorded pick that dismisses it - so it
+  deadlocked. Playback takes the recorded card without opening the screen.
+
+### Finding the next one
+
+The run file carries per-tick arrays - `draws` (sim RNG draw count), `hits`
+(damage dealt), `board` (a position-weighted hash of every standing tower),
+`cool` (turret cooldowns) and `pos` (creep positions) - plus a `trace` every 30
+ticks holding the actual tower and creep lists, and a `diverged` report naming
+the first tick each of them parted company.
+
+The ORDER they diverge in is the diagnosis. RNG draws first means something drew
+an extra value. Damage first, with the draws still level, means combat resolved
+differently on identical rolls - which is how both LOS bugs were found. Board
+first with no creeps on the field means a build went somewhere else.
+
+Totals are not enough, and that cost a day: two boards with the same tower count
+and the same floor count can disagree about which tower is which height, and it
+stays invisible until a creep knocks the last block off one of them. Hash the
+distribution, not the sum. Sample per TICK, not per window - the first divergence
+was usually a single tick that corrected itself on the next one.
 
 ## Adding to the game without breaking this
 

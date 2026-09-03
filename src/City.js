@@ -56,6 +56,10 @@ const MAX_GENS = 30 // hard cap on simultaneously placed generators
 // play area (11).
 // Seconds the ground takes to ease outward when a ring opens. Demo paces the
 // boss-reward beat against this.
+// Sim seconds a demolished tower is held out of the pool while it falls. The
+// tween is 0.15 + floors x 0.06 + 0.1 + 0.4, so this clears the six-floor cap.
+const DEMOLISH_FALL_HOLD = 1.2
+
 const EXPAND_TIME = 1.2
 // The grid flashing in behind the rect once it lands, and how far past its
 // resting weight that flash peaks.
@@ -515,6 +519,10 @@ export class City {
   placeTileFree(gx, gy, cells, opts, silent = false) {
     const t = this.towerPool.pop()
     if (!t) return null
+    // A slot coming out of the pool carries nothing from its last life. It only
+    // gets here after its fall has landed, but a stale claim would make the new
+    // tile invisible - it would be exempted from matrix updates forever.
+    t.falling = false
 
     const w = Math.max(...cells.map((c) => c[0])) + 1
     const h = Math.max(...cells.map((c) => c[1])) + 1
@@ -577,6 +585,13 @@ export class City {
     tower.tetro = null
     tower.visible = false
     tower.numFloors = 0
+    // Clear the partial damage. `dmg` carries overkill from one block to the
+    // next WITHIN a tower, which is the point of it - but a tower is a pool
+    // slot, and without this the next tile dealt into it inherited whatever
+    // the last occupant had taken. A fresh wall on a cell where something died
+    // could break in one hit instead of three, which is invisible to the
+    // player and makes "blocks lost per round" mean nothing.
+    tower.dmg = 0
     if (opts.animate) {
       // Its instances are mid-fall. Leave them alone and hold the tower out of
       // the pool until the animation lands, or the next tile to be dealt this
@@ -601,11 +616,30 @@ export class City {
    */
   _playDemolishFall(tower) {
     const floors = tower.numFloors
+    // The fall is a tween; the tower rejoining the pool is NOT.
+    //
+    // The pool is a stack - placement pops off it - so WHEN a tower is pushed
+    // back decides WHICH tower object the next tile is dealt into. That is game
+    // state, and it used to be decided by a gsap onComplete, i.e. by the wall
+    // clock: at 16x playback the same animation spans sixteen times as much of
+    // the game, the pool comes back in a different order, and from there the
+    // two runs are placing different objects on the same cells.
+    //
+    // So the release runs on sim time, comfortably past the longest fall
+    // (0.15 + floors x 0.06 + 0.1 + 0.4, about a second at the six-floor cap).
+    // The LOOK still belongs to the tween - floors dropping one by one, each
+    // with its own thunk, the roof bouncing down after them. Nothing about that
+    // changed.
+    tower.falling = true // the tween owns the instances until it lands
     tower.animateDelete(this.towerMesh, this.floorHeight, floors, () => {
       tower.resetAnimation()
       tower.visible = false
       tower.numFloors = 0
+      tower.falling = false // ...and now the roof goes with the rest of it
       this.updateTowerMatrices(tower)
+    })
+    // Only the POOL RETURN moves to sim time, because only it is game state.
+    this.demo.after(DEMOLISH_FALL_HOLD, () => {
       if (this._fallingTowers?.delete(tower)) this.towerPool.push(tower)
     })
   }
@@ -632,6 +666,7 @@ export class City {
     }
     tower.visible = false
     tower.numFloors = 0
+    tower.dmg = 0 // same reason as freePlacedTower
     this.onTowerChanged(tower)
     this.enclosure.update()
   }
@@ -1552,6 +1587,23 @@ export class City {
    */
   updateTowerMatrices(tower) {
     const { dummy, towerMesh } = this
+
+    // Mid-fall: the demolish tween owns these instances until it lands, so
+    // leave them alone.
+    //
+    // Removal is immediate now - a demolished tower stops blocking creeps and
+    // sealing enclosures the moment it is torn down, rather than when an
+    // animation happens to finish - which means `visible` goes false while the
+    // stack is still falling. Without this the branch below hid every instance
+    // on the same frame and the tween drew to nothing: the tile vanished whole
+    // instead of coming down floor by floor.
+    //
+    // `falling` is the TWEEN's claim on the instances and is cleared the moment
+    // it lands. That is deliberately not the same thing as being held out of
+    // the pool, which runs on sim time and lasts longer - keying this off the
+    // pool hold instead left the exemption still in force when the fall
+    // finished, so the roof was never hidden and sat on the empty cell.
+    if (tower.visible === false && tower.falling) return
 
     // Hidden tower: hide all of its instances (floors + roof) and bail.
     if (tower.visible === false) {

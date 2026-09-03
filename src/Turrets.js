@@ -8,7 +8,6 @@ import {
   Color,
   Group,
   Box3,
-  Raycaster,
 } from 'three/webgpu'
 import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Sounds } from './lib/Sounds.js'
@@ -114,9 +113,7 @@ export class Turrets {
     this._tc = new Vector2()
     this._from = new Vector3()
     this._to = new Vector3()
-    this._dir = new Vector3()
     this._white = new Color(0xffffff)
-    this._losRay = new Raycaster() // line-of-sight raycasts vs the tower mesh
   }
 
   /** Load the turret models and build normalized prototypes to clone per tower. */
@@ -286,20 +283,46 @@ export class Turrets {
     return best
   }
 
-  /** True if a clear 3D line runs from `from` to `to` - i.e. no tower mesh is
-   *  between them (raycast against the tower BatchedMesh). */
+  /**
+   * True if a clear line runs from `from` to `to` - i.e. no tower stands high
+   * enough to block it.
+   *
+   * Walks the line in half-cell steps and asks the CITY what stands at each
+   * point, comparing the tower's height against the height of the ray there.
+   *
+   * It used to raycast the tower BatchedMesh, and that was a bug of the worst
+   * kind - correct-looking, and wrong only sometimes. The mesh's instance
+   * matrices are written by gsap: the press-down on a build, a new floor
+   * emerging, the shake when something is hit, the demolish fall. So line of
+   * sight was tested against where a tower APPEARED to be, mid-animation, on
+   * the wall clock - which meant a turret's choice of target depended on the
+   * frame rate. Two runs of the same recording picked different creeps, dealt
+   * the same damage to different targets, and diverged from there with an
+   * identical board and an identical RNG stream.
+   *
+   * `towerAt` reads footprints and floor counts, which are game state and
+   * change only on sim time. It is also cheaper than a raycast.
+   */
   hasLOS(from, to) {
-    const mesh = this.city.towerMesh
-    if (!mesh) return true
-    this._dir.copy(to).sub(from)
-    const dist = this._dir.length()
-    const margin = this.city.cellUnit * 0.7 // skip the firing tower / the target's cell
+    const city = this.city
+    const cu = city.cellUnit
+    const margin = cu * 0.7 // skip the firing tower's own cell and the target's
+    const dx = to.x - from.x, dz = to.z - from.z
+    const dist = Math.hypot(dx, dz)
     if (dist <= margin * 2) return true
-    this._dir.divideScalar(dist)
-    this._losRay.set(from, this._dir)
-    this._losRay.near = margin
-    this._losRay.far = dist - margin
-    return this._losRay.intersectObject(mesh, false).length === 0
+    // Half a cell, so nothing a whole cell wide can be stepped over.
+    const steps = Math.ceil(dist / (cu * 0.5))
+    for (let i = 1; i < steps; i++) {
+      const f = i / steps
+      const along = dist * f
+      if (along < margin || dist - along < margin) continue
+      const wx = from.x + dx * f, wz = from.z + dz * f
+      const t = this.creeps.towerAt(wx, wz)
+      if (!t || !t.visible || t.numFloors < 1) continue
+      // Blocked only if the tower is tall enough to reach the beam here.
+      if (t.numFloors * city.floorHeight >= from.y + (to.y - from.y) * f) return false
+    }
+    return true
   }
 
   /** Projectile material tinted to a turret's accent color (cached per color). */

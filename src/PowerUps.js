@@ -199,9 +199,29 @@ export class PowerUpScreen {
    */
   show(origin = null) {
     if (this.open) return
+    // Dealt FIRST, always, even on playback that is about to skip the screen:
+    // deal() draws from the sim RNG, so not dealing would shift every later
+    // draw and diverge the run.
     const cards = this.deal()
     this._offered = cards // run playback picks by id out of this
     if (!cards.length) return
+
+    // Playback takes the card the run took, without ever opening the screen.
+    // Showing it would pause the game, and a paused game cannot advance to the
+    // recorded pick that dismisses it.
+    if (this.demo.run?.replaying) {
+      // Playback never opens this screen: showing it pauses the game, and a
+      // paused game cannot advance to the pick that would dismiss it.
+      const recorded = this.demo.run.takeCard()
+      // A diverged replay can reach a boss round the recording never had. Take
+      // the first card rather than stopping dead and asking a person to guess
+      // what they chose an hour ago - the run has already parted company, and
+      // hanging tells you less than finishing does.
+      if (!recorded) console.warn('[run] no recorded card for this boss round - taking the first')
+      this.pickRecorded(recorded || cards[0].id)
+      return
+    }
+
     this.open = true
     this.demo.paused = true
     // Hold the music, but leave the master bus alone: setPauseAudio fades the

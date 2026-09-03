@@ -52,20 +52,50 @@ const runStore = {
     const git = (cmd) => {
       try { return execSync(cmd, { encoding: 'utf8' }).trim() } catch { return '' }
     }
+    // The newest RECORDED run - never a replay.
+    //
+    // Replays write their own files, and while they were named like runs the
+    // newest file after a playback was that playback. Replaying twice therefore
+    // played back a replay, and the round figures it checked itself against
+    // were the previous replay's rather than the game a person actually played.
+    // Two separate false divergences were chased down to exactly this.
     const newest = () => readdirSync(dir)
       .filter((f) => f.startsWith('run-') && f.endsWith('.json'))
       .sort()
       .pop()
+    /**
+     * The file `?replay=<id>` is asking for, by substring of its name.
+     *
+     * Newest-wins is right while iterating on one game, and wrong the moment a
+     * balance pass wants to hold ONE run fixed and change a constant under it -
+     * the next game played silently becomes the baseline. An id pins it.
+     *
+     * Matched as a substring so a partial timestamp is enough to name a file
+     * ('21-41' finds run-2026-09-02T21-41-03-…json), and replays are reachable
+     * too, for checking one playback against another. Ambiguity resolves to the
+     * newest match rather than failing: the ids sort chronologically, so the
+     * newest is the one a half-typed timestamp almost always means.
+     */
+    const pick = (want) => {
+      const files = readdirSync(dir).filter((f) => f.endsWith('.json'))
+      if (!want) return newest()
+      return files.filter((f) => f.includes(want)).sort().pop()
+    }
     server.middlewares.use('/__run', (req, res) => {
       if (req.method === 'GET') {
         try {
-          const file = newest()
-          if (!file) throw new Error('none')
+          // req.url is what is left after the '/__run' mount point, so a bare
+          // request is '/' and the query rides on it.
+          const want = new URL(req.url, 'http://x').searchParams.get('id')
+          const file = pick(want)
+          if (!file) throw new Error(want ? `no run matching "${want}"` : 'none')
           res.setHeader('Content-Type', 'application/json')
           return res.end(readFileSync(join(dir, file), 'utf8'))
-        } catch {
+        } catch (err) {
+          // Say WHICH id found nothing: a mistyped ?replay= otherwise looked
+          // exactly like an empty log directory.
           res.statusCode = 404
-          return res.end('{}')
+          return res.end(JSON.stringify({ error: err.message }))
         }
       }
       if (req.method !== 'POST') { res.statusCode = 405; return res.end() }
@@ -78,11 +108,15 @@ const runStore = {
           const stamped = {
             commit: git('git rev-parse --short HEAD'),
             dirty: git('git status --porcelain') !== '',
-            savedAt: new Date().toISOString(),
+            savedAt: new Date().toLocaleString('sv'), // local time, like the filenames
             ...run,
           }
           const id = String(run.id || 'unknown').replace(/[^\w.-]/g, '')
-          writeFileSync(join(dir, `run-${id}.json`), JSON.stringify(stamped, null, 1))
+          // Playbacks are filed under their own prefix, so `newest()` cannot
+          // pick one up as a baseline and a directory listing says at a glance
+          // which files are games somebody played.
+          const prefix = run.replay ? 'replay' : 'run'
+          writeFileSync(join(dir, `${prefix}-${id}.json`), JSON.stringify(stamped, null, 1))
         } catch { /* dev only */ }
         res.statusCode = 204
         res.end()

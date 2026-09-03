@@ -21,18 +21,32 @@
 
 let state = 0
 let initialSeed = 0
+// How many values the sim stream has handed out. Not used by the game - it is
+// the cheapest possible fingerprint of "has this run drawn the same things in
+// the same order", which is exactly the question a diverging replay asks. One
+// extra or missing draw anywhere shows up here immediately, and the position in
+// the stream localises it to a moment rather than a round.
+let draws = 0
 
 /** Start (or restart) the sim stream. Returns the seed, for the run log. */
 export function seedSim(seed = (Math.random() * 0xffffffff) >>> 0) {
   state = seed >>> 0
   initialSeed = state
+  draws = 0
   return state
 }
 
 /** The seed the stream was last started with - the one a recording replays. */
 export function currentSeed() { return initialSeed }
 
+/** Values drawn from the sim stream so far. Instrumentation only. */
+export function simDraws() { return draws }
+
+/** The stream's current 32-bit state - two runs agreeing here are in lockstep. */
+export function simState() { return state >>> 0 }
+
 export function simRand() {
+  draws++
   state |= 0
   state = (state + 0x6D2B79F5) | 0
   let t = Math.imul(state ^ (state >>> 15), 1 | state)

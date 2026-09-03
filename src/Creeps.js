@@ -881,30 +881,37 @@ export class Creeps {
    * Clear line from a creep to a tower - no other tower standing between them.
    *
    * Turrets have had this since they existed (Turrets.hasLOS); the creeps that
-   * shoot back did not, so they happily fired through your walls. Same approach:
-   * raycast the tower BatchedMesh, with a margin at each end so the shooter's own
-   * cell and the target's don't count as blockers.
+   * shoot back did not, so they happily fired through your walls.
+   *
+   * Same method as the turret side, and for the same reason: this used to
+   * raycast the tower BatchedMesh, whose instance matrices are written by gsap
+   * as towers build, shake and fall. That made "can this creep see that wall"
+   * depend on where an animation had got to in WALL-CLOCK time - so a replay,
+   * which reaches the same tween at a different point in the game, gave
+   * different answers, and the two runs forked with an identical board and an
+   * identical RNG stream. Footprints and floor counts are game state; the mesh
+   * is a picture of it.
    */
   hasLOS(c, tower) {
-    const mesh = this.city.towerMesh
-    if (!mesh) return true
-    if (!this._losRay) {
-      this._losRay = new Raycaster()
-      this._losFrom = new Vector3()
-      this._losDir = new Vector3()
-    }
+    const city = this.city
+    const cu = city.cellUnit
     this.towerWorld(tower, this._sv)
-    const ty = Math.max(0.5, tower.numFloors * 0.5) * this.city.floorHeight
-    this._losFrom.set(c.mesh.position.x, c.baseY + 0.6, c.mesh.position.z)
-    this._losDir.set(this._sv.x - this._losFrom.x, ty - this._losFrom.y, this._sv.y - this._losFrom.z)
-    const dist = this._losDir.length()
-    const margin = this.city.cellUnit * 0.7
+    const ty = Math.max(0.5, tower.numFloors * 0.5) * city.floorHeight
+    const fx = c.mesh.position.x, fy = c.baseY + 0.6, fz = c.mesh.position.z
+    const dx = this._sv.x - fx, dz = this._sv.y - fz
+    const dist = Math.hypot(dx, dz)
+    const margin = cu * 0.7 // the shooter's own cell and the target's don't block
     if (dist <= margin * 2) return true
-    this._losDir.divideScalar(dist)
-    this._losRay.set(this._losFrom, this._losDir)
-    this._losRay.near = margin
-    this._losRay.far = dist - margin
-    return this._losRay.intersectObject(mesh, false).length === 0
+    const steps = Math.ceil(dist / (cu * 0.5)) // half a cell: nothing is stepped over
+    for (let i = 1; i < steps; i++) {
+      const f = i / steps
+      const along = dist * f
+      if (along < margin || dist - along < margin) continue
+      const t = this.towerAt(fx + dx * f, fz + dz * f)
+      if (!t || !t.visible || t.numFloors < 1 || t === tower) continue
+      if (t.numFloors * city.floorHeight >= fy + (ty - fy) * f) return false
+    }
+    return true
   }
 
   /**

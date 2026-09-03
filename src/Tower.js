@@ -580,6 +580,19 @@ export class Tower {
     // Refresh ZOC radius / connectors immediately so they grow with the new
     // block right away, rather than waiting for the emerge animation to end.
     onBlockAdded?.()
+    // ...and the same for the rest of it. `onComplete` is City.onTowerChanged,
+    // which marks the flow field dirty and runs lot growth - creep pathing and
+    // board state, not looks. It used to fire when the emerge tween finished,
+    // which is gsap, which is the wall clock: the block existed the instant it
+    // was paid for, but the creeps did not learn about it until an animation
+    // ended, and how long that took in WORLD time depended on the frame rate.
+    // At 16x playback the same tween covered sixteen times as much of the game.
+    // Flag the roof as animating BEFORE the state callback runs. City skips
+    // writing the roof matrix while this is set, and onTowerChanged writes
+    // matrices - so without it the roof jumped straight to its new height and
+    // the block appeared before the roof had settled.
+    this.roofAnimating = true
+    onComplete?.()
 
     Sounds.play('tick', 1.0, 0)
     // Pitch increases with floor height (0.8 at ground, 2.0 at top)
@@ -587,11 +600,16 @@ export class Tower {
 
     // Everything from here is looks: press the stack down, then let the new
     // floor emerge as it comes back up. If the tower is gone by the time these
-    // land they simply do nothing.
+    // land they simply do nothing. The tween settles the MATRICES when it ends
+    // - that genuinely belongs to the animation, because the animation is what
+    // has been moving them.
     const pushAmount = floorHeight * 0.25
     this.animateOffset(mesh, floorHeight, maxFloors, -pushAmount, 0.1, () => {
-      if (!this.visible) return
-      this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers, onComplete)
+      // Gone before the press finished: clear the flag set above, or the roof
+      // would be treated as animating forever and never drawn again.
+      if (!this.visible) { this.roofAnimating = false; return }
+      this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers,
+        () => city.updateTowerMatrices(this))
     })
   }
 

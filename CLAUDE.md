@@ -6,7 +6,6 @@ a city builder toy.
 
 1. **NEVER** git revert, commit, or push without asking for explicit permission first. No exceptions.
 2. **NEVER** make code changes unless I specifically ask you to. If I ask a question, just answer it.
-3. **ALWAYS** play audio notification (`afplay /System/Library/Sounds/Glass.aiff`) after completing ANY task or before asking ANY question. Every single response.
 
 ## Other Instructions
 

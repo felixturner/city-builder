@@ -122,7 +122,14 @@ export class TowerInteraction {
   buildFloor(tower) {
     const city = this.city
     if (!this.canBuild(tower)) return
-    city.demo?.run?.record('floor', { gx: tower.cellX, gy: tower.cellY })
+    // The tower's INDEX, not just its cell. A tile is identified on playback by
+    // its origin cell, and `towerAtCell` resolves that against bounding BOXES -
+    // but tetrominoes are L- and S-shaped, so two that share no cells can still
+    // have overlapping boxes. Playback then picked whichever came first in the
+    // array and built a floor on the neighbour of the one that was clicked.
+    // The pool array is fixed for the life of the run, so an index names the
+    // tile exactly. The cell stays for readability.
+    city.demo?.run?.record('floor', { gx: tower.cellX, gy: tower.cellY, i: city.towers.indexOf(tower) })
     tower.handleClick(city, city.floorHeight, maxFloorsFor(tower), city.debris,
       city.towers, () => city.onTowerChanged(tower), () => {
         city.updateTowerVisuals()
@@ -157,6 +164,20 @@ export class TowerInteraction {
    */
   canBuild(tower) {
     const city = this.city
+    // Still standing?
+    //
+    // The press captures a tower OBJECT on pointer-down and builds on it at
+    // pointer-up, which can be most of a second later - long enough for a creep
+    // to take its last block. `freePlacedTower` then leaves it invisible, zero
+    // floors and back in the pool, and none of the checks below noticed: zero
+    // is under the height cap, so the click was charged for and `handleClick`
+    // set numFloors on a tile that is not on the board.
+    //
+    // It also forked replays. The action records the tower's CELL, and on
+    // playback that cell is empty, so the build the live run made simply did
+    // not happen - identical inputs, different boards, and everything after it
+    // diverging from a click that should never have been allowed.
+    if (!tower.visible || tower.numFloors < 1) return false
     // The king's height IS its health - building it back up would make the one
     // loss condition in the game something you can simply pay off.
     if (tower.king) {
@@ -215,7 +236,7 @@ export class TowerInteraction {
    */
   demolishTower(tower) {
     const city = this.city
-    city.demo?.run?.record('demolish', { gx: tower.cellX, gy: tower.cellY })
+    city.demo?.run?.record('demolish', { gx: tower.cellX, gy: tower.cellY, i: city.towers.indexOf(tower) })
     // Half of what its floors cost, handed back - so tearing something down is a
     // move you can make when you are desperate rather than a pure loss. Taken
     // before the tower is freed, while it still has its height.

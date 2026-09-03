@@ -73,13 +73,20 @@ async function init() {
 /**
  * Fetch the recording ?replay is asking for, or null.
  *
+ * Bare `?replay` takes the newest recorded run. `?replay=<id>` pins one - any
+ * part of its filename will do, so `?replay=21-41` is enough - which is what a
+ * balance pass needs: hold the run still and change a constant under it, rather
+ * than have the next game played quietly become the baseline.
+ *
  * Runs before the game is built, because the seed it carries has to be in place
  * before anything draws from the sim stream (see init).
  */
 async function loadRecording() {
   if (!params.has('replay')) return null
   try {
-    const run = await (await fetch('/__run')).json()
+    const want = params.get('replay') // '' for a bare ?replay
+    const run = await (await fetch(`/__run${want ? `?id=${encodeURIComponent(want)}` : ''}`)).json()
+    if (run?.error) throw new Error(run.error)
     if (!run || !run.events?.length) throw new Error('empty')
     console.log(`[run] loaded ${run.id || '?'} - ${run.events.length} actions,`
       + ` seed ${run.seed}, commit ${run.commit || '?'}${run.dirty ? ' (dirty)' : ''}`)
