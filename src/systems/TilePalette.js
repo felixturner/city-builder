@@ -6,7 +6,8 @@ import { Buffs } from '../buffs.js'
 import { ENERGY_COLOR, PINK } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
-import { costKey, priceOfTile } from './tileCost.js'
+import { priceOfTile, rerollCost } from './tileCost.js'
+import { simInt } from '../lib/rng.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, tileColorIndex } from '../blockTypes.js'
 
 const SLOTS = 4
@@ -15,7 +16,6 @@ const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
 // Tray opacity while a tile is in hand, so the ghost stays readable through it.
 const TRAY_DRAG_OPACITY = '0.25'
-const REROLL_COST = 5 // mana to discard/reroll a palette tile
 
 /**
  * TilePalette - a bottom-center hand of random tiles drawn top-down. 66% are grey
@@ -86,13 +86,13 @@ export class TilePalette {
    *  used by the start cluster) so variety is enforced - no long runs. */
   randomTile() {
     const spec = this.city.drawTileSpec()
-    const topColorIndex = MathUtils.randInt(0, Tower.COLORS.length - 1)
+    const topColorIndex = simInt(0, Tower.COLORS.length - 1)
     if (spec.wall) {
       // Random orientation per tile, so the hand isn't four copies of the same
       // shape. The offset that made this look broken was the board's grid
       // centring, not rotation - see City.initGrid.
       const states = TetrominoGeometry.states[spec.shapeName].length
-      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: MathUtils.randInt(0, states - 1) }
+      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: simInt(0, states - 1) }
     }
     // Generators use their fixed type colour; turrets keep a random accent.
     const colorIndex = tileColorIndex(spec.typeTop)
@@ -129,10 +129,6 @@ export class TilePalette {
    *  escalating price). Walls share one bucket; gens bucket by type + COLOUR (so
    *  same-colour same-type gens count together, regardless of footprint size);
    *  turrets bucket by type only. */
-  _typeKey(tile) {
-    return costKey({ isWall: !!tile.wall, typeTop: tile.typeTop, colorIndex: tile.colorIndex })
-  }
-
   /** Energy cost to place this tile - see systems/tileCost.js. Shared with the
    *  click-to-add-a-floor path so the two can never disagree again. */
   _tileCost(tile) {
@@ -159,7 +155,7 @@ export class TilePalette {
     for (let i = 0; i < SLOTS; i++) this._buildSlot()
     // Little reroll-all button in the top-right corner of the tray.
     const reroll = this.rerollBtn = document.createElement('button')
-    reroll.title = `Reroll all tiles (${REROLL_COST})`
+    reroll.title = 'Reroll all tiles'
     Object.assign(reroll.style, {
       position: 'absolute', top: '-18px', right: '-18px',
       width: '44px', height: '44px', borderRadius: '50%', padding: '0',
@@ -186,7 +182,8 @@ export class TilePalette {
     // use on touch and no use at a glance - and rerolling is the one action here
     // whose cost isn't already printed on the thing you're clicking.
     const cost = document.createElement('div')
-    cost.textContent = `${REROLL_COST}`
+    cost.textContent = `${rerollCost(this.city)}`
+    this.rerollCostEl = cost // the price climbs with the level - see update()
     Object.assign(cost.style, {
       position: 'absolute', top: '26px', right: '-18px', width: '44px',
       textAlign: 'center', pointerEvents: 'none',
@@ -282,10 +279,46 @@ export class TilePalette {
     Sounds.play('snap', 1.3, 0.05, 0.22)
   }
 
-  /** Reroll every slot at once (costs REROLL_COST): clear each tile and run its
+  /** Reroll every slot at once (see rerollCost): clear each tile and run its
    *  refill-ring timer, same as discarding them all. */
+  /**
+   * Replay a recorded drop: take the tile in `slot`, turned `rot`, onto (gx, gy).
+   *
+   * Goes through placeTileFree and the same cost path a real drop does, so a
+   * replay that cannot afford something fails exactly where the original would
+   * have - which is the signal that a run has diverged.
+   */
+  placeRecorded(e) {
+    // `slot` is an INDEX everywhere in this file (_consume takes one); the entry
+    // it names is `held`.
+    const held = this.slots[e.slot]
+    if (!held || !held.tile) return false
+    const city = this.city
+    const tile = held.tile
+    const rot = e.rot || 0
+    const cells = this._cells(tile, rot)
+    const cost = this._tileCost(tile)
+    if (!city.freeClicks && (city.mana?.current ?? 0) < cost) return false
+    const opts = tile.wall
+      ? {
+        tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
+        typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex: tile.topColorIndex,
+      }
+      : {
+        typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex,
+        rotation: this._roofRotation(tile, rot),
+      }
+    const placed = city.placeTileFree(e.gx, e.gy, cells, opts)
+    if (!placed) return false
+    city.mana?.spend(cost)
+    city.mana?.econ?.blockPlaced()
+    this._consume(e.slot)
+    return true
+  }
+
   _rerollAll() {
-    if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
+    this.demo.run?.record('reroll', {})
+    if (this.city.mana && !this.city.mana.spend(rerollCost(this.city))) {
       Sounds.play('error', 1.0, 0.06, 0.35)
       return
     }
@@ -357,6 +390,12 @@ export class TilePalette {
   // ---- per-frame: refill timers ----------------------------------------------
 
   update(dt) {
+    // The reroll price is on the same level curve as a wall, so the label has to
+    // follow it rather than being written once at build time.
+    if (this.rerollCostEl) {
+      const price = `${rerollCost(this.city)}`
+      if (this.rerollCostEl.textContent !== price) this.rerollCostEl.textContent = price
+    }
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i]
       if (slot.tile) { this._updateCostLabel(slot); continue }
@@ -412,13 +451,17 @@ export class TilePalette {
   }
 
   /** Discard a slot's tile and start its refill ring timer (long-press / right-click).
-   *  Costs REROLL_COST mana. */
+   *  Costs the same as a reroll (see rerollCost). */
   _discard(i) {
     if (this.drag || !this.slots[i].tile) return
-    if (this.city.mana && !this.city.mana.spend(REROLL_COST)) {
+    if (this.city.mana && !this.city.mana.spend(rerollCost(this.city))) {
       Sounds.play('error', 1.0, 0.06, 0.35)
       return
     }
+    // Recorded after the affordability check, so a replay only discards where
+    // the original actually did - and the slot it frees refills on the same
+    // tick, which decides what the bag deals next.
+    this.demo.run?.record('discard', { slot: i })
     this._consume(i)
     Sounds.play('clink', 0.8, 0.1, 0.4)
   }
@@ -762,9 +805,12 @@ export class TilePalette {
         }
       const placed = city.placeTileFree(target.gx, target.gy, target.cells, opts)
       if (placed) {
+        // The tile itself is not recorded - the bag is seeded, so a replay deals
+        // the same hand. Only WHERE it went and how it was turned.
+        this.demo.run?.record('place', { gx: target.gx, gy: target.gy, slot, rot })
         finish()
         city.mana?.spend(cost)
-        city.recordPlacement(this._typeKey(tile)) // bump the cumulative per-type price
+        city.mana?.econ?.blockPlaced()
         this._consume(slot)
         // Floating "-cost" caption rising from the drop spot (like the gen "+N").
         const cu = city.cellUnit

@@ -1,6 +1,7 @@
 import { MathUtils } from 'three/webgpu'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { TopType } from '../blockTypes.js'
+import { simInt } from '../lib/rng.js'
 
 /**
  * The shared tile bag the palette draws from.
@@ -47,7 +48,7 @@ export class TileBag {
     add(2, { s: 1, typeTop: TopType.BARRACKS })
     add(2, { s: 1, typeTop: TopType.SHIELD })
     for (let i = bag.length - 1; i > 0; i--) {
-      const j = MathUtils.randInt(0, i)
+      const j = simInt(0, i)
       ;[bag[i], bag[j]] = [bag[j], bag[i]]
     }
     this._bag = bag

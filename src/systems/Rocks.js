@@ -1,5 +1,6 @@
 import { Mesh, MeshStandardNodeMaterial, Color, MathUtils } from 'three/webgpu'
 import { ExtraGeometry } from '../lib/ExtraGeometry.js'
+import { simInt, simPick } from '../lib/rng.js'
 
 /**
  * Boulders: permanent, immovable terrain you have to build around.
@@ -30,11 +31,11 @@ export class Rocks {
     this.rocks = [] // { gx, gy, mesh, active }
     this.blocked = null // Uint8 mask over the grid, ACTIVE rocks only
     this.mat = new MeshStandardNodeMaterial({
-      // The ground's own colour (Lighting.boundsGround). A boulder is terrain,
-      // not a thing you built, so it should read as the floor pushed up rather
-      // than as an object sitting on it - the silhouette and its shadow are
-      // what make it legible, not a contrasting tint.
-      color: new Color(0x999999),
+      // A fifth darker than the ground it stands on (Lighting.boundsGround is
+      // 0x999999). A boulder is terrain rather than something you built, so it
+      // stays in the floor's family - but at the floor's exact value the
+      // silhouette was doing all the work on its own.
+      color: new Color(0x8a8a8a),
       roughness: 0.95,
       metalness: 0,
     })
@@ -71,8 +72,8 @@ export class Rocks {
     const taken = new Set()
 
     for (let tries = 0; tries < count * 60 && this.rocks.length < count; tries++) {
-      const gx = MathUtils.randInt(cx - halfCells + EDGE_MARGIN, cx + halfCells - 1 - EDGE_MARGIN)
-      const gy = MathUtils.randInt(cy - halfCells + EDGE_MARGIN, cy + halfCells - 1 - EDGE_MARGIN)
+      const gx = simInt(cx - halfCells + EDGE_MARGIN, cx + halfCells - 1 - EDGE_MARGIN)
+      const gy = simInt(cy - halfCells + EDGE_MARGIN, cy + halfCells - 1 - EDGE_MARGIN)
       const key = gy * city.gridCellsX + gx
       if (taken.has(key)) continue
       if (king && Math.abs(gx - king.cellX) <= KEEP_CLEAR_OF_KING
@@ -81,7 +82,7 @@ export class Rocks {
       if (city.lootBoxes?.occupiesCell(gx, gy)) continue
       taken.add(key)
 
-      const geo = ExtraGeometry.rocks[MathUtils.randInt(0, ExtraGeometry.rocks.length - 1)]
+      const geo = simPick(ExtraGeometry.rocks)
       const mesh = new Mesh(geo, this.mat)
       const world = city.gridToWorld(gx * city.cellUnit + city.cellUnit / 2,
         gy * city.cellUnit + city.cellUnit / 2)

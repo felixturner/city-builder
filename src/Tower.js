@@ -36,7 +36,12 @@ export class Tower {
    * floor is its own BatchedMesh instance with its own colour, so a stack can
    * carry a gradient for free - no extra draw calls, no extra geometry.
    */
-  static STACK_DARKEN = 0.55
+  // Note the sRGB hex you get out is NOT base x (1 - t): three holds colours
+  // linear with colour management on, so this is a linear-space fade. At 0.45 a
+  // five-storey stack runs 0xa3a3a3 at the ground to 0x7c7c7c at the roof - a
+  // gentle ramp that separates the floors without the top of a tall wall going
+  // near-black against the board.
+  static STACK_DARKEN = 0.45
 
   /** Shade for floor `f` of a stack: floor 0 keeps `base`, higher floors lerp
    *  toward black so a wall reads DARKER the taller it gets. Tried the other way
@@ -549,40 +554,62 @@ export class Tower {
    * @param {Tower[]} allTowers - All towers for debris collision
    * @param {Function} onComplete - Called when animation completes
    */
+  /**
+   * A click on a tower: one more floor.
+   *
+   * The floor is added NOW, not when the press-down animation finishes.
+   *
+   * It used to be applied inside the tween's callback, a hundred milliseconds of
+   * WALL CLOCK later, with a guard voiding the click if anything had changed
+   * underneath in the meantime. That made game state depend on an animation: two
+   * quick clicks on the same tower could land inside one press and the second
+   * would be thrown away, and a recorded run replayed at 4x lost most of its
+   * clicks, because four times as much world went by during each 100ms press.
+   *
+   * The guard is no longer needed either - it existed because the tower could be
+   * destroyed mid-press, which cannot happen when the state change is the first
+   * thing that occurs.
+   */
   handleClick(city, floorHeight, maxFloors, debris, allTowers, onComplete, onBlockAdded) {
     const mesh = city.towerMesh
     const numFloors = this.numFloors
+    if (numFloors >= maxFloors) return
 
-    // Check if we can add another floor
-    if (numFloors >= maxFloors) {
-      return
-    }
+    this.numFloors = numFloors + 1
+    city.mana?.econ?.blockPlaced()
+    // Refresh ZOC radius / connectors immediately so they grow with the new
+    // block right away, rather than waiting for the emerge animation to end.
+    onBlockAdded?.()
+    // ...and the same for the rest of it. `onComplete` is City.onTowerChanged,
+    // which marks the flow field dirty and runs lot growth - creep pathing and
+    // board state, not looks. It used to fire when the emerge tween finished,
+    // which is gsap, which is the wall clock: the block existed the instant it
+    // was paid for, but the creeps did not learn about it until an animation
+    // ended, and how long that took in WORLD time depended on the frame rate.
+    // At 16x playback the same tween covered sixteen times as much of the game.
+    // Flag the roof as animating BEFORE the state callback runs. City skips
+    // writing the roof matrix while this is set, and onTowerChanged writes
+    // matrices - so without it the roof jumped straight to its new height and
+    // the block appeared before the roof had settled.
+    this.roofAnimating = true
+    onComplete?.()
 
-    // Play tick sound and push down animation, then release
     Sounds.play('tick', 1.0, 0)
+    // Pitch increases with floor height (0.8 at ground, 2.0 at top)
+    Sounds.play('pop', 0.8 + (numFloors / maxFloors) * 1.2, 0.15, 0.7)
 
+    // Everything from here is looks: press the stack down, then let the new
+    // floor emerge as it comes back up. If the tower is gone by the time these
+    // land they simply do nothing. The tween settles the MATRICES when it ends
+    // - that genuinely belongs to the animation, because the animation is what
+    // has been moving them.
     const pushAmount = floorHeight * 0.25
     this.animateOffset(mesh, floorHeight, maxFloors, -pushAmount, 0.1, () => {
-      // The press-down takes 100ms, and a creep can knock this tower over inside
-      // it - or destroy it outright, in which case the tower goes back to the
-      // pool and is handed straight out again as some other tile. Writing the
-      // captured count into whatever now lives here gave it floors it never paid
-      // for, and left a tetromino's roof being scaled as if it were a 1x1 - the
-      // "wall suddenly enormous" bug. If anything moved underneath us, the click
-      // is simply void.
-      if (!this.visible || this.numFloors !== numFloors) return
-      this.numFloors = numFloors + 1
-
-      // Refresh ZOC radius / connectors immediately so they grow with the new
-      // block right away, rather than waiting for the emerge animation to end.
-      onBlockAdded?.()
-
-      // Pitch increases with floor height (0.8 at ground, 2.0 at top)
-      const pitch = 0.8 + (numFloors / maxFloors) * 1.2
-      Sounds.play('pop', pitch, 0.15, 0.7)
-
-      // Animate the tower back up with the new floor emerging
-      this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers, onComplete)
+      // Gone before the press finished: clear the flag set above, or the roof
+      // would be treated as animating forever and never drawn again.
+      if (!this.visible) { this.roofAnimating = false; return }
+      this._animateNewFloorWithDebris(city, floorHeight, numFloors, debris, allTowers,
+        () => city.updateTowerMatrices(this))
     })
   }
 

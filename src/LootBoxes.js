@@ -3,6 +3,7 @@ import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ACCENT_COLORS } from './palette.js'
 import { ENERGY_COLOR } from './Mana.js'
+import { simRand } from './lib/rng.js'
 import { glow, NO_AO_MRT } from './fx.js'
 
 /**
@@ -33,6 +34,7 @@ const HOVER_Y = 1.6 // resting height above the ground
 // Accent index every star wears: 1 is the yellow, the same one the king takes.
 const STAR_COLOR = 1
 const SHAKE_TIME = 0.75 // seconds of rattling before it bursts
+const POP_TIME = 0.12 // the scale-up that follows it, before the burst
 const CONFETTI_PER_COLOUR = 14
 // Base payout for walling in a crate, multiplied by the current level.
 const CRATE_REWARD = 20
@@ -63,8 +65,8 @@ export class LootBoxes {
     const half = city.maxPlayHalf
     for (let i = 0; i < COUNT; i++) {
       const a0 = (i / COUNT) * Math.PI * 2
-      const ang = a0 + Math.random() * (Math.PI * 2 / COUNT)
-      const r = (MIN_R + Math.random() * (MAX_R - MIN_R)) * half
+      const ang = a0 + simRand() * (Math.PI * 2 / COUNT)
+      const r = (MIN_R + simRand() * (MAX_R - MIN_R)) * half
       const spot = this.freeCellNear(Math.cos(ang) * r, Math.sin(ang) * r)
       if (spot) this.spawn(spot.x, spot.z)
     }
@@ -83,7 +85,7 @@ export class LootBoxes {
           if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue
           const gx = start.gx + dx, gy = start.gy + dy
           if (gx < 0 || gy < 0 || gx >= city.gridCellsX || gy >= city.gridCellsY) continue
-          if (city.occupied[gy] && city.occupied[gy][gx]) continue
+          if (city.blocksWalk(gx, gy)) continue // a building or a boulder
           return {
             gx, gy,
             x: gx * cu + cu / 2 + city.gridOffsetX,
@@ -180,11 +182,30 @@ export class LootBoxes {
     }
   }
 
-  /** Sealed: rattle, burst into confetti, then hand the payout to the caller. */
+  /**
+   * Sealed: decide the payout, rattle, burst into confetti, pay out.
+   *
+   * The payout is settled HERE and scheduled on sim time, even though it lands
+   * with the burst. The rattle is a gsap timeline, which runs on the wall
+   * clock - so paying at the end of it put energy, which is game state, on the
+   * frame rate: a 16x replay reached the same tween 16x further into the world
+   * than the run it was replaying, and `payOut` read the LEVEL at that moment,
+   * so it could hand over a later level's reward than the one that was earned.
+   *
+   * The amount is fixed at the moment the crate is sealed, which is the moment
+   * the player actually earned it, and `Demo.after` puts its arrival at a
+   * reproducible tick. The tween is left to do what tweens are for.
+   */
   open(b, i) {
     b.opening = true
     this.boxes.splice(i, 1) // out of the update loop; gsap drives it from here
     Sounds.play('energy-down-2', 1.2, 0.05, 0.4) // was alert3
+
+    const level = (this.demo.creeps?.waveNumber ?? 0) + 1
+    b.reward = CRATE_REWARD * level
+    // Where the caption goes: the mesh is gone by the time this pays.
+    b.textY = b.mesh.position.y + 1.2
+    this.demo.after(SHAKE_TIME + POP_TIME, () => this.payOut(b))
 
     const m = b.mesh
     const tl = gsap.timeline()
@@ -200,7 +221,7 @@ export class LootBoxes {
         m.rotation.y -= 0.5 * p // same clockwise sense as the idle spin
       },
     })
-    tl.to(m.scale, { x: 1.35, y: 1.35, z: 1.35, duration: 0.12, ease: 'power2.out' })
+    tl.to(m.scale, { x: 1.35, y: 1.35, z: 1.35, duration: POP_TIME, ease: 'power2.out' })
     tl.call(() => this.burst(b))
   }
 
@@ -217,7 +238,7 @@ export class LootBoxes {
       }
     }
     Sounds.play('pick-up', 1.0, 0.04, 0.7)
-    this.payOut(b)
+    // The energy is not handed over here - see open(). This is the confetti.
   }
 
   /**
@@ -236,12 +257,10 @@ export class LootBoxes {
   payOut(b) {
     const mana = this.city.mana
     if (!mana) return
-    const level = (this.demo.creeps?.waveNumber ?? 0) + 1
-    const amount = CRATE_REWARD * level
-    mana.add(amount)
+    mana.econ?.earnFrom('crate', mana.add(b.reward))
 
     this.city.floatingText?.spawn(
-      b.x, b.mesh.position.y + 1.2, b.z, `+${amount} energy`, ENERGY_COLOR, 0, null
+      b.x, b.textY, b.z, `+${b.reward} energy`, ENERGY_COLOR, 0, null
     )
   }
 }

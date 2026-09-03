@@ -8,7 +8,6 @@ import {
   Color,
   Group,
   Box3,
-  Raycaster,
 } from 'three/webgpu'
 import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Sounds } from './lib/Sounds.js'
@@ -58,34 +57,41 @@ export class Turrets {
     this.cooldowns = new Map() // tower -> seconds until next shot
 
     /**
-     * All three guns fire at the SAME damage per second. The peg turret sets it -
-     * 1 damage every 0.35s, so 2.86/s - and the other two take however long their
-     * bigger shot is worth: cooldown = damage x fireCooldown, because the peg's
-     * damage is 1. Laser 2 dmg -> 0.7s, mortar 8 dmg -> 2.8s.
+     * Damage and cooldown per gun, each written down on its own.
      *
-     * Derived rather than written down, so the three can't drift apart the way
-     * they had (0.9s and 4.0s were 2.22/s and 2.00/s, both quietly worse than the
-     * cheapest gun in the game). What separates them is the SHAPE of that damage,
-     * which is the interesting part and the part you choose between:
-     *   peg     fine-grained, but a travelling projectile and 4 shots to a kill
+     * The three USED to be derived from the peg (cooldown = damage x
+     * fireCooldown) so they could not drift from a shared damage-per-second.
+     * That guaranteed sameness, which is the opposite of what these numbers are
+     * for: a gun cannot be tuned without moving the other two, and "all three
+     * are equal" is not a balance goal, it is the absence of one.
+     *
+     * They start at the values that derivation produced, so nothing changes
+     * until something is deliberately changed. What separates them is the SHAPE
+     * of the damage, which is the part you choose between:
+     *   peg     fine-grained, but a travelling projectile and several shots to a kill
      *   laser   hitscan, no leading, but blind for twice as long after each shot
-     *   mortar  one-shots anything up to 8 HP, but overkills a small creep and
-     *           only earns its slot on a clump, where the AoE multiplies that
-     *           2.86/s by everything it catches
+     *   mortar  one-shots small creeps and only earns its slot on a clump, where
+     *           the AoE multiplies its rate by everything it catches
+     *
+     * All cooldowns are UNSUPPORTED; support trails divide them (fireRateFactor).
      */
-    this.fireCooldown = 0.35 // seconds between Peg shots - the reference rate
+    this.fireCooldown = 0.7 // peg: 1 dmg -> 1.43 dmg/s
     this.projectileSpeed = 100 // world units / sec
     this.hitRadius = 1.0 // sphere considered "on" the creep within this
     this.baseY = 0.8
 
     // Laser turret config + a small pool of reusable beam cylinders.
     this.laserDamage = 2
-    this.laserCooldown = this.laserDamage * this.fireCooldown // 0.7s
+    this.laserCooldown = 1.4 // 1.43 dmg/s
     this.beamPool = new BeamPool(scene, { radius: 0.28, duration: 0.16 })
 
     // Mortar turret: lobs an arcing shell that explodes in an AoE.
-    this.mortarDamage = 8 // heavy
-    this.mortarCooldown = this.mortarDamage * this.fireCooldown // 2.8s
+    // Halved from 8 dmg / 2.8s: same damage per second, landing twice as often.
+    // One shell every 2.8s meant a mortar spent most of a fight doing nothing,
+    // and a creep that walked out of the blast radius in between cost it the
+    // whole cycle - which is a long time to be wrong for.
+    this.mortarDamage = 4
+    this.mortarCooldown = 2.8 // 1.43 dmg/s before the AoE catches anything
     this.mortarRadius = 4 // AoE radius
     this.mortarArc = 8 // peak lob height
     this.mortarDur = 0.6 // travel time (seconds) - shorter so it lands near moving creeps
@@ -110,9 +116,7 @@ export class Turrets {
     this._tc = new Vector2()
     this._from = new Vector3()
     this._to = new Vector3()
-    this._dir = new Vector3()
     this._white = new Color(0xffffff)
-    this._losRay = new Raycaster() // line-of-sight raycasts vs the tower mesh
   }
 
   /** Load the turret models and build normalized prototypes to clone per tower. */
@@ -282,20 +286,46 @@ export class Turrets {
     return best
   }
 
-  /** True if a clear 3D line runs from `from` to `to` - i.e. no tower mesh is
-   *  between them (raycast against the tower BatchedMesh). */
+  /**
+   * True if a clear line runs from `from` to `to` - i.e. no tower stands high
+   * enough to block it.
+   *
+   * Walks the line in half-cell steps and asks the CITY what stands at each
+   * point, comparing the tower's height against the height of the ray there.
+   *
+   * It used to raycast the tower BatchedMesh, and that was a bug of the worst
+   * kind - correct-looking, and wrong only sometimes. The mesh's instance
+   * matrices are written by gsap: the press-down on a build, a new floor
+   * emerging, the shake when something is hit, the demolish fall. So line of
+   * sight was tested against where a tower APPEARED to be, mid-animation, on
+   * the wall clock - which meant a turret's choice of target depended on the
+   * frame rate. Two runs of the same recording picked different creeps, dealt
+   * the same damage to different targets, and diverged from there with an
+   * identical board and an identical RNG stream.
+   *
+   * `towerAt` reads footprints and floor counts, which are game state and
+   * change only on sim time. It is also cheaper than a raycast.
+   */
   hasLOS(from, to) {
-    const mesh = this.city.towerMesh
-    if (!mesh) return true
-    this._dir.copy(to).sub(from)
-    const dist = this._dir.length()
-    const margin = this.city.cellUnit * 0.7 // skip the firing tower / the target's cell
+    const city = this.city
+    const cu = city.cellUnit
+    const margin = cu * 0.7 // skip the firing tower's own cell and the target's
+    const dx = to.x - from.x, dz = to.z - from.z
+    const dist = Math.hypot(dx, dz)
     if (dist <= margin * 2) return true
-    this._dir.divideScalar(dist)
-    this._losRay.set(from, this._dir)
-    this._losRay.near = margin
-    this._losRay.far = dist - margin
-    return this._losRay.intersectObject(mesh, false).length === 0
+    // Half a cell, so nothing a whole cell wide can be stepped over.
+    const steps = Math.ceil(dist / (cu * 0.5))
+    for (let i = 1; i < steps; i++) {
+      const f = i / steps
+      const along = dist * f
+      if (along < margin || dist - along < margin) continue
+      const wx = from.x + dx * f, wz = from.z + dz * f
+      const t = this.creeps.towerAt(wx, wz)
+      if (!t || !t.visible || t.numFloors < 1) continue
+      // Blocked only if the tower is tall enough to reach the beam here.
+      if (t.numFloors * city.floorHeight >= from.y + (to.y - from.y) * f) return false
+    }
+    return true
   }
 
   /** Projectile material tinted to a turret's accent color (cached per color). */

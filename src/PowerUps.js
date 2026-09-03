@@ -3,6 +3,7 @@ import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
 import { TopType, KING_MAX_FLOORS } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
+import { simRand } from './lib/rng.js'
 
 export { Buffs, resetBuffs }
 
@@ -170,6 +171,13 @@ export class PowerUpScreen {
     this.demo.tilePalette?.addSlot()
   }
 
+  /** Take a card by id - how run playback picks, since a card object cannot be
+   *  written to a file but its id can. */
+  pickRecorded(id) {
+    const card = this._offered?.find((c) => c.id === id) || CARDS.find((c) => c.id === id)
+    if (card) this.choose(card)
+  }
+
   /** Deal four distinct, currently-useful cards. */
   deal() {
     const pool = CARDS.filter(c => {
@@ -180,7 +188,7 @@ export class PowerUpScreen {
     })
     const picked = []
     while (picked.length < CARDS_OFFERED && pool.length) {
-      picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0])
+      picked.push(pool.splice(Math.floor(simRand() * pool.length), 1)[0])
     }
     return picked
   }
@@ -191,8 +199,37 @@ export class PowerUpScreen {
    */
   show(origin = null) {
     if (this.open) return
+    // Dealt FIRST, always, even on playback that is about to skip the screen:
+    // deal() draws from the sim RNG, so not dealing would shift every later
+    // draw and diverge the run.
     const cards = this.deal()
+    this._offered = cards // run playback picks by id out of this
     if (!cards.length) return
+
+    // Playback takes the card the run took, without ever opening the screen.
+    // Showing it would pause the game, and a paused game cannot advance to the
+    // recorded pick that dismisses it.
+    if (this.demo.run?.replaying) {
+      // Playback never opens this screen: showing it pauses the game, and a
+      // paused game cannot advance to the pick that would dismiss it.
+      const recorded = this.demo.run.takeCard()
+      // A diverged replay can reach a boss round the recording never had. Take
+      // the first card rather than stopping dead and asking a person to guess
+      // what they chose an hour ago - the run has already parted company, and
+      // hanging tells you less than finishing does.
+      if (!recorded) console.warn('[run] no recorded card for this boss round - taking the first')
+      // Applied on the NEXT step, not inline.
+      //
+      // Live, this screen opens part-way through a step and pauses the game, so
+      // the tick does not move while it is up; the player's click then lands in
+      // the gap AFTER that step, and the card's effects are first seen by the
+      // one after. Picking inline here applied them half a step early - and
+      // `refreshAfterBuff` redraws the trail network, which draws from the sim
+      // RNG, so the whole stream shifted by a tick from the first boss round on.
+      this.demo.after(0, () => this.pickRecorded(recorded || cards[0].id))
+      return
+    }
+
     this.open = true
     this.demo.paused = true
     // Hold the music, but leave the master bus alone: setPauseAudio fades the
@@ -204,6 +241,7 @@ export class PowerUpScreen {
   }
 
   choose(card) {
+    this.demo.run?.record('card', { id: card.id })
     card.apply(this)
     this.taken.set(card.id, (this.taken.get(card.id) || 0) + 1)
     Sounds.play('good', 1.0, 0.05, 0.7)

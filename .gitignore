@@ -27,3 +27,6 @@ dist-ssr
 
 # Blender auto-backup
 *.blend1
+
+# Sound effects being auditioned, not shipped
+public/assets/sfx/incoming/

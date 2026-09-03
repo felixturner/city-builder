@@ -39,10 +39,14 @@ import { WaveArrows } from './WaveArrows.js'
 import { FlowFieldView } from './systems/FlowFieldView.js'
 import { FloatingText } from './FloatingText.js'
 import { TilePalette } from './systems/TilePalette.js'
+import { EconLog } from './systems/EconLog.js'
+import { RunRecorder } from './systems/RunRecorder.js'
 
 /** Debug UI (dat.GUI panel + FPS meter) is off for players and on with ?dev.
  *  Any value works - ?dev, ?dev=1 - it's presence that counts. */
 export const DEV_MODE = new URLSearchParams(location.search).has('dev')
+// Milliseconds of quiet before a resize is actually applied - see onResize.
+const RESIZE_SETTLE = 150
 
 /** TEMP: ?clean spawns no rocks and no loot stars - a bare board for shooting
  *  tutorial screenshots. */
@@ -56,6 +60,21 @@ export class Demo {
 
   // Largest step the sim will take in one frame, in seconds.
   static MAX_DT = 1 / 20
+  /**
+   * The step the SIMULATION advances by, every frame, regardless of how long the
+   * frame actually took.
+   *
+   * The loop is already gated to 60fps (see the rAF driver in init), so this is
+   * what a frame is meant to be - but making it a constant rather than the
+   * measured elapsed time is what makes a run reproducible: the same inputs at
+   * the same frame numbers produce the same game. Variable dt means a placement
+   * recorded "at 12.34 seconds" lands in a different world on replay.
+   *
+   * The trade is that a genuinely slow frame runs the game slightly in slow
+   * motion instead of skipping ahead. MAX_DT already half-did that for stalls;
+   * this makes it the rule.
+   */
+  static SIM_DT = 1 / 60
 
   // Seconds between a crate bursting and the upgrade cards flying out of it.
   // The boss-reward beat, in seconds: quiet, then the board grows, then cards.
@@ -118,6 +137,7 @@ export class Demo {
 
     this.renderer = new WebGPURenderer({ canvas: this.canvas, antialias: true })
     await this.renderer.init()
+    this._watchDevice()
     // DPR 2 with half-res AO gives good quality/perf balance
     this.renderer.setPixelRatio(2)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
@@ -153,7 +173,12 @@ export class Demo {
     this.initPostProcessing()
     this.initStats()
 
-    this.onResize()
+    // Straight to the applied path at startup: the debounce is for drags, and
+    // waiting 150ms to size the canvas for the first time would show a frame at
+    // the wrong size.
+    this.updateOrthoFrustum()
+    this.updatePerspFrustum()
+    this._applyResize(new Vector2(window.innerWidth, window.innerHeight))
     this.pointerHandler = new Pointer(
       this.renderer,
       this.camera,
@@ -163,6 +188,9 @@ export class Demo {
     // Initialize modules
     this.lighting = new Lighting(this.scene, this.renderer, this.params)
     this.city = new City(this.scene, this.params)
+    // Back-reference, so the systems City owns (interaction, lot growth) can
+    // reach the run recorder without being handed it one by one.
+    this.city.demo = this
     // The board's ground plane grows with the play area, so City needs to reach
     // the lighting rig that owns it.
     this.city.lighting = this.lighting
@@ -178,6 +206,16 @@ export class Demo {
     this.mana = new Mana(0, 100)
     // TEMP (?clean): infinite energy so screenshots aren't gated on the economy.
     if (CLEAN_MODE) { this.mana.infinite = true; this.mana.current = 99999 }
+    // Per-round economy record, for balancing. ?dev only; see EconLog.
+    // The run recorder owns the file both of these end up in, so it goes first -
+    // EconLog saves through it at the end of every round.
+    if (DEV_MODE) {
+      this.run = new RunRecorder(this) // seed + every player action, by sim tick
+      this.econ = new EconLog(this) // per-round economy figures
+      this.mana.econ = this.econ
+    }
+    // Sim steps per frame while replaying (?speed=N). One is real time.
+    this.replaySpeed = 1
     this.city.mana = this.mana
     // Income boxes popping out of generators - world-space meshes now, so they
     // scale with the city as the camera zooms.
@@ -253,6 +291,15 @@ export class Demo {
     // board actually goes quiet - not when the spawn window shuts - so the menu
     // never opens over a field still full of creeps.
     this.creeps.audio.onRoundCleared = (waveIdx) => {
+      // Close the round's economy record before anything else - the boss reward
+      // opens a menu and grows the board, which would land in the next round's
+      // numbers rather than this one's.
+      // Nothing to close if the king already died - that round was written down
+      // and stamped 'died' at the moment it happened.
+      if (!this.kingDead) {
+        this.econ?.end()
+        this.econ?.begin(waveIdx + 2) // the level now being built for, 1-based
+      }
       if (!this.creeps.isBossWave(waveIdx)) return
       if (this.isGameOver || this.kingDead) return
       this._runBossReward()
@@ -452,18 +499,77 @@ export class Demo {
     if (DEV_MODE) document.body.appendChild(this.stats.dom)
   }
 
+  /**
+   * Say something when the GPU gives up, instead of freezing in silence.
+   *
+   * A hung tab is the one bug with no evidence: the render loop stops, nothing
+   * is logged, and by the time anyone looks the state is gone. WebGPU does tell
+   * you - a lost device resolves `device.lost`, and validation failures surface
+   * through the uncaptured-error handler - but only if someone is listening.
+   *
+   * Both paths print what the game was doing at the time, because "it froze
+   * after a resize at level 21" and "it froze" are very different bug reports.
+   */
+  _watchDevice() {
+    const device = this.renderer.backend?.device
+    if (!device) return
+    const state = () => ({
+      level: this.creeps?.waveNumber != null ? this.creeps.waveNumber + 1 : '?',
+      creeps: this.creeps?.creeps.length ?? '?',
+      towers: this.city?.towers.length ?? '?',
+      size: `${window.innerWidth}x${window.innerHeight}`,
+      dpr: window.devicePixelRatio,
+    })
+    device.lost?.then((info) => {
+      console.error('[gpu] device lost:', info.reason, info.message, state())
+    })
+    device.addEventListener?.('uncapturederror', (e) => {
+      // First one only: a broken pipeline re-errors every frame, and a thousand
+      // identical stack traces buries the one that mattered.
+      if (this._gpuErrored) return
+      this._gpuErrored = true
+      console.error('[gpu] uncaptured error:', e.error?.message || e.error, state())
+    })
+  }
+
+  /**
+   * Window resized.
+   *
+   * The expensive half is DEBOUNCED. Dragging a window edge fires this ~60 times
+   * a second, and every call reallocates the swap chain plus three render
+   * targets - the half-res mask, the full-res overlay and the two-attachment
+   * glow target. On WebGPU each of those destroys and recreates GPU textures
+   * while frames are still in flight, and on a late-game board (a full batched
+   * mesh, a hundred creeps, all their effect meshes) the driver cannot keep up:
+   * the tab locks solid. Once, after the drag settles, costs the same as one of
+   * those sixty and is indistinguishable to look at.
+   *
+   * The camera frusta are updated immediately - they are pure maths, and they
+   * are what keeps the picture from stretching while the drag is in progress.
+   */
   onResize(_e, toSize) {
-    const { renderer } = this
     const size = new Vector2(window.innerWidth, window.innerHeight)
     if (toSize) size.copy(toSize)
 
     this.updateOrthoFrustum()
     this.updatePerspFrustum()
 
+    clearTimeout(this._resizeTimer)
+    this._resizeTimer = setTimeout(() => this._applyResize(size), RESIZE_SETTLE)
+  }
+
+  /** The costly part of a resize: the swap chain and the post-processing targets. */
+  _applyResize(size) {
+    // Nothing to do if we already ran at this size - a resize event can fire
+    // without the window actually changing (devtools docking, mobile chrome).
+    if (this._sizedTo && this._sizedTo.equals(size)) return
+    this._sizedTo = size.clone()
+
+    const { renderer } = this
     renderer.setSize(size.x, size.y)
     renderer.domElement.style.width = `${size.x}px`
     renderer.domElement.style.height = `${size.y}px`
-
+    this.city?.onResize?.(size.x, size.y) // Line2 outline measures in pixels
     if (this.postFX) this.postFX.resize()
   }
 
@@ -472,8 +578,9 @@ export class Demo {
 
     const { controls, clock, postFX } = this
 
-    // Clamp: a stall (alt-tab, a breakpoint, a long GC) otherwise arrives as one
-    // enormous dt and the sim leaps a chunk of the game in a single step.
+    // Real elapsed time, clamped: a stall (alt-tab, a breakpoint, a long GC)
+    // otherwise arrives as one enormous dt. Used for the CAMERA, which should
+    // track the wall clock however the frame went.
     const dt = Math.min(clock.getDelta(), Demo.MAX_DT)
 
     controls.update(dt)
@@ -483,19 +590,33 @@ export class Demo {
     // panel is up. The king dying does NOT freeze anything on its own - the city
     // keeps running for GAME_OVER_DELAY seconds first (see kingDead below).
     if (this.started && !this.paused && !this.isGameOver && !this.tabHidden) {
-      this.stepGame(dt)
-    }
-
-    // Countdown from the king's death to the panel.
-    if (this.kingDead && !this.isGameOver) {
-      this.gameOverDelay -= dt
-      if (this.gameOverDelay <= 0) this.showGameOver()
+      // Several sim steps per rendered frame when a recording is being fast-
+      // forwarded. This is what the fixed timestep buys: the world does not care
+      // how often it is drawn, so playback can run as fast as the machine can
+      // simulate while still producing exactly the same run.
+      const steps = this.run?.replaying ? this.replaySpeed : 1
+      for (let i = 0; i < steps; i++) {
+        if (this.isGameOver) break // it can end partway through a batch
+        // Before the world moves: playback fires anything recorded for this
+        // tick, so an action lands in the same state it was taken in.
+        this.run?.advance()
+        this.stepGame(Demo.SIM_DT)
+        // Inside the loop, not after it. The king's death does not stop the
+        // city - it runs on for GAME_OVER_DELAY while the creeps finish the job
+        // - so this countdown is world time like everything else. Ticked once a
+        // FRAME it fell behind a fast-forwarded replay by exactly the replay
+        // speed, handing the creeps four times as long to knock things down
+        // after the run had already ended.
+        if (this.kingDead && !this.isGameOver) {
+          this.gameOverDelay -= Demo.SIM_DT
+          if (this.gameOverDelay <= 0) this.showGameOver()
+        }
+      }
     }
 
     this.creepTimeline.update()
     this.waveArrows.update(dt)
     this.floatingText.update(this.camera, dt)
-    this.tilePalette.update(dt)
 
     // Feed turret range circles to the coverage-glow mask.
     if (!this._turretCircles) this._turretCircles = []
@@ -506,12 +627,47 @@ export class Demo {
     this.stats.end()
   }
 
+  /**
+   * Run anything scheduled with `after()` that is now due.
+   *
+   * Sim time, not wall clock: these fire things that change the world - the
+   * board opening after a boss round, the upgrade screen - and a setTimeout
+   * would put them at a different point in the game depending on the frame rate
+   * or the replay speed.
+   */
+  _pumpTimers() {
+    if (!this._timers?.length) return
+    this.simTime += Demo.SIM_DT
+    for (let i = this._timers.length - 1; i >= 0; i--) {
+      const t = this._timers[i]
+      if (this.simTime < t.at) continue
+      this._timers.splice(i, 1)
+      t.fn()
+    }
+  }
+
+  /** Call `fn` after `seconds` of SIM time. Returns a handle for cancel(). */
+  after(seconds, fn) {
+    if (!this._timers) { this._timers = []; this.simTime = this.simTime || 0 }
+    const t = { at: this.simTime + seconds, fn }
+    this._timers.push(t)
+    return t
+  }
+
+  /** Drop a scheduled callback that has not fired yet. */
+  cancelAfter(handle) {
+    const i = this._timers?.indexOf(handle) ?? -1
+    if (i >= 0) this._timers.splice(i, 1)
+  }
+
   /** Advance all game systems by `dt` seconds. */
   stepGame(dt) {
+    this._pumpTimers()
     // The score stops the moment the king dies, not when the panel appears -
     // the run ended at the death, the extra seconds are just the aftermath.
     if (!this.kingDead) this.mana.tick(dt)
     this.mana.setLevel(this.creeps.waveNumber + 1)
+    this.econ?.tick(dt)
     this.city.update(dt)
     this.trails.update(dt)
     // Clean screenshot mode: the wave clock never runs, so no creeps ever come.
@@ -519,6 +675,12 @@ export class Demo {
     this.lootBoxes.update(dt)
     this.soldiers.update(dt)
     this.turrets.update(dt)
+    // The palette belongs to the SIM, not the frame: its refill timer decides
+    // which tile is in which slot, so a recorded placement only finds the tile
+    // it was recorded with if the timer advanced by the same clock the world
+    // did. Ticked per frame on real time, a 4x replay refilled four times too
+    // slowly and placed whatever happened to be there instead.
+    this.tilePalette.update(dt)
   }
 
   /** True while the board should ignore build/destroy input. */
@@ -538,24 +700,27 @@ export class Demo {
     const alive = () => !this.isGameOver && !this.kingDead
     this._cancelBossReward()
     // 1. Let the fanfare and the last debris settle.
+    // Sim time, not setTimeout: growing the board changes the energy cap, the
+    // spawn ring and the play area, so it has to happen at the same point in the
+    // GAME every time rather than a fixed number of milliseconds later.
     this._bossTimers = []
-    this._bossTimers.push(setTimeout(() => {
+    this._bossTimers.push(this.after(Demo.BOSS_COOLDOWN, () => {
       if (!alive()) return
       // 2. The board opens up.
       if (this.city.growPlayArea()) this.updateZoomLimit()
-    }, Demo.BOSS_COOLDOWN * 1000))
+    }))
     // 3. ...and once that has played, the choice.
-    this._cardTimer = setTimeout(() => {
+    this._cardTimer = this.after(Demo.BOSS_COOLDOWN + Demo.EXPAND_TIME + Demo.CARD_DELAY, () => {
       this._cardTimer = null
       if (alive()) this.powerUps.show()
-    }, (Demo.BOSS_COOLDOWN + Demo.EXPAND_TIME + Demo.CARD_DELAY) * 1000)
+    })
   }
 
   /** Drop any boss beat still in flight, so a second one can't stack on it. */
   _cancelBossReward() {
-    for (const t of this._bossTimers || []) clearTimeout(t)
+    for (const t of this._bossTimers || []) this.cancelAfter(t)
     this._bossTimers = []
-    if (this._cardTimer) clearTimeout(this._cardTimer)
+    if (this._cardTimer) this.cancelAfter(this._cardTimer)
     this._cardTimer = null
   }
 
@@ -637,6 +802,18 @@ export class Demo {
     if (this.kingDead) return
     this.kingDead = true
     this.gameOverDelay = Demo.GAME_OVER_DELAY
+    // Close the round the king died in. Rounds are otherwise only closed when
+    // the board goes quiet, so the one that actually ended the run - the one
+    // worth reading - was the one round never written down.
+    this.econ?.end('died')
+    if (this.run) {
+      this.run.diedAt = {
+        tick: this.run.tick,
+        seconds: Math.round(this.run.tick * Demo.SIM_DT),
+        level: this.creeps.waveNumber + 1,
+        score: Math.floor(this.mana.elapsed),
+      }
+    }
     // Plays out across the GAME_OVER_DELAY window while the creeps finish the
     // job, and has decayed by the time the score panel goes up.
     Sounds.play('game-over', 1.0, 0, 0.85)
@@ -646,6 +823,10 @@ export class Demo {
   showGameOver() {
     if (this.isGameOver) return
     this.isGameOver = true
+    // The run is over: write it out. A recording is only worth having if it
+    // survives the tab, and the interesting runs are the ones that end.
+    if (this.run) this.run.endedBy = 'gameover'
+    this.run?.save()
     // Now that everything really has stopped, take the wave audio down with it.
     Sounds.stop('tick-fast')
     Sounds.fadeOut('horn-boss', 0.5)
@@ -842,17 +1023,35 @@ export class Demo {
       cursor: 'pointer',
       backdropFilter: 'blur(4px)',
     })
-    btn.addEventListener('click', () => {
-      // Jump the creep wave schedule forward 20s, sliding the timeline over, and
-      // credit the skipped time to the survival-score clock.
-      const SKIP = 20
-      this.creeps.skipAhead(SKIP)
-      this.creepTimeline.tweenTo(this.creeps.elapsed)
-      this.mana.elapsed += SKIP
-      this.mana.render()
-    })
-    document.body.appendChild(btn)
+    btn.addEventListener('click', () => this.skipAhead())
     this.fastForwardButton = btn
+    document.body.appendChild(btn)
+  }
+
+  /**
+   * Jump the wave schedule forward 20 seconds.
+   *
+   * What it skips is the WAITING, and the waiting is worth something: the
+   * generators do not run through it (income lives in stepGame, which this does
+   * not call), so pulling the wave forward costs twenty seconds of production
+   * while the wave still arrives at full strength. That is the trade the button
+   * offers - tempo for economy - and it is the reason to think before pressing
+   * it rather than mashing it through every build phase.
+   *
+   * It does NOT credit the score. The score is seconds survived, and skipping
+   * is the opposite of surviving them: crediting the skip paid out for time
+   * nobody lived through, so the fastest way to a high score was to press this
+   * as often as it would let you.
+   *
+   * A player action like any other, so it is recorded - a replay that skipped
+   * the same twenty seconds sees a different wave arrive at a different tick,
+   * and diverges from there.
+   */
+  skipAhead() {
+    const SKIP = 20
+    this.run?.record('skip', {})
+    this.creeps.skipAhead(SKIP)
+    this.creepTimeline.tweenTo(this.creeps.elapsed)
   }
 
   exportPNG() {

@@ -1,33 +1,40 @@
-import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color } from 'three/webgpu'
+import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color, Vector2 } from 'three/webgpu'
 import { fxMaterial, glow } from './fx.js'
 
 /**
  * Arrows on the ground pointing IN from the sides the next wave arrives from.
  *
- * Each warned edge shows the original BIG arrow sitting just outside the
- * outline (tip touching it), plus a short trail of SMALLER arrows continuing
- * inward toward the king - the warning reads as the path the swarm will take.
+ * Each warned edge shows the original BIG arrow (head overlapping the board,
+ * tail out in the field, exactly where it always sat) plus a trail of SMALLER
+ * arrows running the whole way in to the king - innermost tip one cell from
+ * it - so the warning reads as the path the swarm will take.
  *
  * House fx material throughout: additive blending (a floor overlay that can
  * never darken the ground) with depthTest on / depthWrite off, so towers can
  * still occlude the inner arrows at low camera angles.
  */
-// The big arrow: length and width equal so it reads the same from every side.
-const BIG_CELLS = 3.2
-// The trail: 2-cell arrows every other 2 cells (2 of arrow, 2 of gap),
-// marching inward from the outline toward the king.
-const SMALL_CELLS = 2
-const TRAIL_COUNT = 2
-const TRAIL_PERIOD_CELLS = 4 // arrow + gap
+// Length and width are equal on purpose: the arrow sits in a square, so it
+// looks the same size whichever side a wave is coming from.
+const LENGTH_CELLS = 3.2 // the big edge arrow, tip to tail
+const SMALL_CELLS = 2 // the trail arrows
+const TRAIL_GAP_CELLS = 1 // daylight between consecutive trail arrows
+const KING_CLEARANCE_CELLS = 1 // innermost tip stops this far from the king
 const Y = 0.12 // on the floor, above the grid and the flow field
-// A clump pouring out of an edge kicks that edge's arrows to full brightness
-// and lets them fall back over FLASH_TIME - opacity only, never scale.
-const FLASH_TIME = 0.7
+// How far INSIDE the bounds the big arrow sits, in cells. Its tip used to touch
+// the outline from outside; overlapping the board a little ties it to the
+// ground it is warning about rather than floating off the edge of it.
+const OVERLAP_CELLS = 2
+// A swarm pouring out of an edge sets that edge's arrows blinking -
+// FLASH_PULSES beats over FLASH_TIME, decaying as it goes. Opacity only,
+// never scale.
+const FLASH_TIME = 1.2
+const FLASH_PULSES = 4
 const FLASH_ALPHA = 1.0
-// Opacity blinks in the window before a swarm arrives on an edge - both the
-// pre-wave countdown and each mid-wave swarm get the same warning.
+// ...and BEFORE a swarm arrives, the edge blinks ARRIVAL_FLASHES times across
+// FLASH_WINDOW seconds - both the pre-wave countdown and each mid-wave swarm
+// (Creeps.nextSwarmIn) get the same warning.
 const ARRIVAL_FLASHES = 5
-const FLASH_WINDOW = 2.5 // seconds of flashing = ARRIVAL_FLASHES at 2Hz
+const FLASH_WINDOW = 2.5
 const ALPHA_STEADY = 0.7 // "they are over there", not "brace"
 const ALPHA_COUNTDOWN = 0.45 // early countdown, before the flashing starts
 const ALPHA_LOW = 0.25 // the off half of a flash
@@ -52,31 +59,70 @@ export class WaveArrows {
     this.creeps = demo.creeps
     this.city = demo.city
     this._colour = new Color()
+    this._kingC = new Vector2()
 
-    this.bigGeo = triangle(BIG_CELLS)
+    this.bigGeo = triangle(LENGTH_CELLS)
     this.smallGeo = triangle(SMALL_CELLS)
 
-    this.flashes = [0, 0, 0, 0] // per-edge clump-flash envelope, 1 -> 0
+    this.flashes = [0, 0, 0, 0] // per-edge flash envelope, 1 -> 0
     this.edges = []
     for (let i = 0; i < 4; i++) {
-      // One material per edge: the big arrow and its trail flash as one thing.
+      // One material per edge: the big arrow and its whole trail brighten and
+      // blink as one thing. Trail meshes are grown lazily - how many fit
+      // depends on how far the board has opened.
       const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
-      const meshes = []
-      for (let k = 0; k <= TRAIL_COUNT; k++) {
-        const mesh = glow(new Mesh(k === 0 ? this.bigGeo : this.smallGeo, mat))
-        mesh.visible = false
-        mesh.renderOrder = 4
-        mesh.scale.setScalar(this.city.cellUnit)
-        demo.scene.add(mesh)
-        meshes.push(mesh)
-      }
-      this.edges.push({ meshes, mat })
+      const big = glow(new Mesh(this.bigGeo, mat))
+      big.visible = false
+      big.renderOrder = 4
+      big.scale.setScalar(this.city.cellUnit)
+      demo.scene.add(big)
+      this.edges.push({ big, trail: [], mat })
     }
   }
 
-  /** Kick an edge's arrows to full - a clump just started pouring out of it. */
+  /**
+   * Distance from the centre to the big arrow's MIDDLE. Half a length past the
+   * bounds would put its tip exactly on the outline; OVERLAP_CELLS pulls it
+   * back in so the head lies over the board and the tail hangs out in the
+   * field the creeps walk in from.
+   */
+  _radius() {
+    return this.city.visibleHalf + (LENGTH_CELLS / 2 - OVERLAP_CELLS) * this.city.cellUnit
+  }
+
+  /** Start an edge's arrows blinking - a swarm is pouring out of it. */
   flash(edge) {
     if (edge >= 0 && edge < this.flashes.length) this.flashes[edge] = 1
+  }
+
+  /**
+   * Brightness of an edge's blink right now, 0..1.
+   *
+   * A decaying pulse train rather than a single fade: `env` is how much of the
+   * warning is left, `pulse` is where it is within the current beat. Multiplied,
+   * the arrows blink FLASH_PULSES times and each beat is weaker than the last,
+   * so it reads as a countdown running out rather than one thing that happened.
+   */
+  _flashLevel(edge) {
+    const env = this.flashes[edge]
+    if (env <= 0) return 0
+    const elapsed = (1 - env) * FLASH_TIME
+    const pulse = Math.abs(Math.sin((elapsed / FLASH_TIME) * Math.PI * FLASH_PULSES))
+    return env * pulse
+  }
+
+  /** The trail pool for an edge, grown to `n` meshes on demand. */
+  _trailMeshes(edge, n) {
+    const e = this.edges[edge]
+    while (e.trail.length < n) {
+      const mesh = glow(new Mesh(this.smallGeo, e.mat))
+      mesh.visible = false
+      mesh.renderOrder = 4
+      mesh.scale.setScalar(this.city.cellUnit)
+      this.demo.scene.add(mesh)
+      e.trail.push(mesh)
+    }
+    return e.trail
   }
 
   update(dt = 0) {
@@ -115,46 +161,72 @@ export class WaveArrows {
     this._colour.set(boss ? 0xff2a4a : 0xcc5500)
     const edges = clock.waveEdges(wave)
     const cu = this.city.cellUnit
-    const half = this.city.visibleHalf
-    // Big arrow centred half a length past the bounds: tip on the outline.
-    const rBig = half + (BIG_CELLS / 2) * cu
+    const r = this._radius()
+
+    // The trail aims at the KING, not the board centre - same anchor the old
+    // king-side arrow used.
+    const king = this.city.king
+    const kingOk = king && king.visible && this.city.kingAlive
+    const kc = kingOk ? king.box.getCenter(this._kingC) : null
+    const kx = kingOk ? kc.x + this.city.gridOffsetX : 0
+    const kz = kingOk ? kc.y + this.city.gridOffsetZ : 0
 
     for (let edge = 0; edge < 4; edge++) {
-      const { meshes, mat } = this.edges[edge]
-      if (!edges.includes(edge)) { for (const m of meshes) m.visible = false; continue }
-      mat.color.copy(this._colour)
+      const e = this.edges[edge]
+      if (!edges.includes(edge)) {
+        e.big.visible = false
+        for (const m of e.trail) m.visible = false
+        continue
+      }
+      e.mat.color.copy(this._colour)
 
       // How long until something pours out of THIS edge: the wave countdown
       // covers its opening swarms; mid-wave, each edge's next planned swarm.
       const swarmIn = countdown ? away : creeps.nextSwarmIn(edge)
       let alpha
       if (swarmIn <= FLASH_WINDOW) {
-        // ARRIVAL_FLASHES square-wave blinks across the window - discrete
-        // opacity flashes, not a throb, and never scale.
+        // ARRIVAL_FLASHES square-wave blinks across the window before it lands.
         const on = ((FLASH_WINDOW - swarmIn) / FLASH_WINDOW) * ARRIVAL_FLASHES % 1 < 0.5
         alpha = on ? FLASH_ALPHA : ALPHA_LOW
       } else {
         alpha = countdown ? ALPHA_COUNTDOWN : ALPHA_STEADY
       }
-      // The clump flash rides OVER whatever the arrows are already doing, so a
-      // clump pouring during the steady phase still reads as an event.
-      const f = this.flashes[edge]
-      mat.opacity = f > 0 ? Math.max(alpha, FLASH_ALPHA * f) : alpha
+      // The pouring flash rides OVER whatever the arrows are already doing.
+      const f = this._flashLevel(edge)
+      e.mat.opacity = f > 0 ? Math.max(alpha, FLASH_ALPHA * f) : alpha
 
-      // Edges 0/1 are the two X sides, 2/3 the two Z sides. The big arrow sits
-      // outside the outline; the small trail continues inward toward the king.
-      // Every arrow points the way the creeps will travel.
-      for (let k = 0; k < meshes.length; k++) {
-        const mesh = meshes[k]
-        // k=0: the big arrow. k>=1: small arrow centred (k*period - 1) cells
-        // INSIDE the outline (2 gap + 2 arrow per period).
-        const r = k === 0 ? rBig : half - (k * TRAIL_PERIOD_CELLS - 1) * cu
-        let x = 0, z = 0, yaw = 0
-        if (edge === 0) { x = -r; yaw = Math.PI / 2 } // from -X, pointing +X
-        else if (edge === 1) { x = r; yaw = -Math.PI / 2 }
-        else if (edge === 2) { z = -r; yaw = 0 } // from -Z, pointing +Z
-        else { z = r; yaw = Math.PI }
-        mesh.position.set(x, Y, z)
+      // Edges 0/1 are the two X sides, 2/3 the two Z sides. Every arrow points
+      // the way the creeps will travel.
+      let x = 0, z = 0, yaw = 0
+      if (edge === 0) { x = -r; yaw = Math.PI / 2 } // from -X, pointing +X
+      else if (edge === 1) { x = r; yaw = -Math.PI / 2 }
+      else if (edge === 2) { z = -r; yaw = 0 } // from -Z, pointing +Z
+      else { z = r; yaw = Math.PI }
+      e.big.position.set(x, Y, z)
+      e.big.rotation.set(0, yaw, 0)
+      e.big.visible = true
+
+      // The trail: small arrows from just short of the big arrow all the way in
+      // to the king, TRAIL_GAP_CELLS of daylight apart, innermost tip
+      // KING_CLEARANCE_CELLS from the king.
+      if (!kingOk) { for (const m of e.trail) m.visible = false; continue }
+      const period = (SMALL_CELLS + TRAIL_GAP_CELLS) * cu
+      // Distance (along the approach axis) from the king to the first trail
+      // arrow's CENTRE, then step outward until we'd run into the big arrow.
+      const first = (KING_CLEARANCE_CELLS + SMALL_CELLS / 2) * cu
+      const max = r - (LENGTH_CELLS / 2 + TRAIL_GAP_CELLS) * cu
+      const n = Math.max(0, Math.floor((max - first) / period) + 1)
+      const trail = this._trailMeshes(edge, n)
+      for (let k = 0; k < trail.length; k++) {
+        const mesh = trail[k]
+        if (k >= n) { mesh.visible = false; continue }
+        const d = first + k * period
+        let tx = kx, tz = kz
+        if (edge === 0) tx -= d
+        else if (edge === 1) tx += d
+        else if (edge === 2) tz -= d
+        else tz += d
+        mesh.position.set(tx, Y, tz)
         mesh.rotation.set(0, yaw, 0)
         mesh.visible = true
       }
@@ -162,6 +234,9 @@ export class WaveArrows {
   }
 
   _hideAll() {
-    for (const { meshes } of this.edges) for (const m of meshes) m.visible = false
+    for (const e of this.edges) {
+      e.big.visible = false
+      for (const m of e.trail) m.visible = false
+    }
   }
 }

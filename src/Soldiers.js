@@ -3,6 +3,7 @@ import { Sounds } from './lib/Sounds.js'
 import { isBarracks, towerTopY, roofGeomIndex } from './blockTypes.js'
 import { Creeps } from './Creeps.js'
 import { Tower } from './Tower.js'
+import { simShuffle, simRand } from './lib/rng.js'
 import { Buffs } from './buffs.js'
 import { ExtraGeometry } from './lib/ExtraGeometry.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
@@ -153,12 +154,11 @@ export class Soldiers {
     return snapToCell(v, this.cell, offset)
   }
 
-  /** True if a world point sits in a cell a soldier can't enter: a building, or
-   *  off the board. */
+  /** True if a world point sits in a cell a soldier can't enter: a building, a
+   *  boulder, or off the board. See City.blocksWalk - one mask, so anything new
+   *  that units have to walk around is added in one place. */
   blocked(x, z) {
-    const cell = this.city.worldToCell(x, z)
-    if (!cell) return true
-    return !!(this.city.occupied[cell.gy] && this.city.occupied[cell.gy][cell.gx])
+    return this.city.blocksWalkWorld(x, z)
   }
 
   /**
@@ -222,7 +222,7 @@ export class Soldiers {
     // Step out onto the first free cell around the barracks rather than
     // materialising inside it.
     let sx = home.x, sz = home.y
-    for (const [dx, dz] of [...DIRS].sort(() => Math.random() - 0.5)) {
+    for (const [dx, dz] of simShuffle(DIRS)) {
       const cx = this.snap(home.x + dx * this.cell, this.city.gridOffsetX)
       const cz = this.snap(home.y + dz * this.cell, this.city.gridOffsetZ)
       if (this.cellFree(cx, cz, null)) { sx = cx; sz = cz; break }
@@ -299,7 +299,7 @@ export class Soldiers {
   stepWander(s) {
     const homeDist = Math.hypot(s.toX - s.homeX, s.toZ - s.homeZ) / this.cell
     if (homeDist > HOME_RADIUS && this.stepToward(s, s.homeX, s.homeZ)) return
-    for (const [dx, dz] of [...DIRS].sort(() => Math.random() - 0.5)) {
+    for (const [dx, dz] of simShuffle(DIRS)) {
       if (this.tryStep(s, dx, dz)) return
     }
   }
@@ -319,11 +319,11 @@ export class Soldiers {
     if (s.t < 1 || !this.blocked(s.toX, s.toZ)) return false
     s.pause = 0
     s.evicting = true
-    for (const [dx, dz] of [...DIRS].sort(() => Math.random() - 0.5)) {
+    for (const [dx, dz] of simShuffle(DIRS)) {
       if (this.tryStep(s, dx, dz)) return true
     }
     // Nothing free: ignore the queue and take any cell that isn't built on.
-    for (const [dx, dz] of [...DIRS].sort(() => Math.random() - 0.5)) {
+    for (const [dx, dz] of simShuffle(DIRS)) {
       const nx = s.toX + dx * this.cell, nz = s.toZ + dz * this.cell
       if (this.blocked(nx, nz)) continue
       const occ = this.city.occupancy
@@ -397,11 +397,11 @@ export class Soldiers {
         if (s.pause <= 0) {
           if (s.target) {
             this.stepToward(s, s.target.mesh.position.x, s.target.mesh.position.z)
-          } else if (Math.random() < IDLE_STAND_CHANCE) {
-            s.pause = IDLE_STAND[0] + Math.random() * (IDLE_STAND[1] - IDLE_STAND[0])
+          } else if (simRand() < IDLE_STAND_CHANCE) {
+            s.pause = IDLE_STAND[0] + simRand() * (IDLE_STAND[1] - IDLE_STAND[0])
           } else {
             this.stepWander(s)
-            s.pause = IDLE_PAUSE[0] + Math.random() * (IDLE_PAUSE[1] - IDLE_PAUSE[0])
+            s.pause = IDLE_PAUSE[0] + simRand() * (IDLE_PAUSE[1] - IDLE_PAUSE[0])
           }
         }
       }

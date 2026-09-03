@@ -56,6 +56,10 @@ const MAX_GENS = 30 // hard cap on simultaneously placed generators
 // play area (11).
 // Seconds the ground takes to ease outward when a ring opens. Demo paces the
 // boss-reward beat against this.
+// Sim seconds a demolished tower is held out of the pool while it falls. The
+// tween is 0.15 + floors x 0.06 + 0.1 + 0.4, so this clears the six-floor cap.
+const DEMOLISH_FALL_HOLD = 1.2
+
 const EXPAND_TIME = 1.2
 // The grid flashing in behind the rect once it lands, and how far past its
 // resting weight that flash peaks.
@@ -85,6 +89,9 @@ const KING_HIT_FLASH = 0.45
 // can do something about the king or you cannot. It re-arms if the king is built
 // back out of range and driven down again.
 const KING_ALARM_PLAYS = 5
+// Accent a lot's outline and growth fill wear. Fixed: those only show on dormant
+// lots, and there are none - see initGrid.
+const LOT_COLOR = 2
 // Line width shared by the king's two markers - the ground ring and the beam
 // standing on the tile - so they read as one thing rather than two.
 const KING_MARK_WIDTH = 0.16
@@ -276,8 +283,11 @@ export class City {
     for (let lotY = 0; lotY < this.numLotsY; lotY++) {
       const row = []
       for (let lotX = 0; lotX < this.numLotsX; lotX++) {
-        const lotColorIndex = MathUtils.randInt(0, this.accentColors.length - 1)
-        row.push({ lotX, lotY, colorIndex: lotColorIndex, towers: [], active: true })
+        // Every lot starts ACTIVE, so nothing is ever dormant - and the only two
+        // things a lot's colour feeds (its outline and the dashed growth fill)
+        // are shown for dormant lots alone. It used to be rolled per lot, 169
+        // draws off the random stream to tint things nobody sees.
+        row.push({ lotX, lotY, colorIndex: LOT_COLOR, towers: [], active: true })
       }
       this.lots.push(row)
     }
@@ -440,6 +450,30 @@ export class City {
     }
   }
 
+  /**
+   * Can a WALKING unit stand on this cell?
+   *
+   * The one place the two obstacle masks meet: `occupied` (tower footprints) and
+   * the boulders Rocks keeps. Soldiers used to ask only about towers and walked
+   * straight through rocks; the flow field ORs both together itself. One
+   * question, so a new obstacle only has to be added here.
+   *
+   * Creeps deliberately do NOT use this. A tower in a creep's way is a target,
+   * not an obstacle - the bulldozing path checks rocks alone precisely so that
+   * it stops and attacks what it walks into rather than stepping around it.
+   */
+  blocksWalk(gx, gy) {
+    if (gx < 0 || gy < 0 || gx >= this.gridCellsX || gy >= this.gridCellsY) return true
+    if (this.occupied[gy]?.[gx]) return true
+    return this.rocks ? this.rocks.blocks(gx, gy) : false
+  }
+
+  /** blocksWalk, asked in world space. Off-board reads as blocked. */
+  blocksWalkWorld(wx, wz) {
+    const cell = this.worldToCell(wx, wz)
+    return cell ? this.blocksWalk(cell.gx, cell.gy) : true
+  }
+
   /** Map a world-space ground point to a global cell (gx,gy), or null if OOB. */
   worldToCell(worldX, worldZ) {
     const gx = Math.floor((worldX - this.gridOffsetX) / this.cellUnit)
@@ -485,6 +519,10 @@ export class City {
   placeTileFree(gx, gy, cells, opts, silent = false) {
     const t = this.towerPool.pop()
     if (!t) return null
+    // A slot coming out of the pool carries nothing from its last life. It only
+    // gets here after its fall has landed, but a stale claim would make the new
+    // tile invisible - it would be exempted from matrix updates forever.
+    t.falling = false
 
     const w = Math.max(...cells.map((c) => c[0])) + 1
     const h = Math.max(...cells.map((c) => c[1])) + 1
@@ -536,31 +574,86 @@ export class City {
   }
 
   /** Free a placed tower's cells and return it to the pool (no debris/sound). */
-  freePlacedTower(tower) {
+  freePlacedTower(tower, opts = {}) {
     for (const [dx, dy] of tower.cells) this.occupied[tower.cellY + dy][tower.cellX + dx] = false
     const lot = this.lots[tower.lotY][tower.lotX]
     const k = lot.towers.indexOf(tower)
     if (k >= 0) lot.towers.splice(k, 1)
 
-    // Land any running animation before the tower goes back in the pool. A
-    // half-finished roof tween left roofAnimating stuck true, and the next tile
-    // to reuse this slot inherited both the flag and the old footprint scale.
-    tower.resetAnimation()
     tower.placed = false
     tower.dormant = true
     tower.tetro = null
     tower.visible = false
     tower.numFloors = 0
-    this.updateTowerMatrices(tower)
-    this.towerPool.push(tower)
+    // Clear the partial damage. `dmg` carries overkill from one block to the
+    // next WITHIN a tower, which is the point of it - but a tower is a pool
+    // slot, and without this the next tile dealt into it inherited whatever
+    // the last occupant had taken. A fresh wall on a cell where something died
+    // could break in one hit instead of three, which is invisible to the
+    // player and makes "blocks lost per round" mean nothing.
+    tower.dmg = 0
+    if (opts.animate) {
+      // Its instances are mid-fall. Leave them alone and hold the tower out of
+      // the pool until the animation lands, or the next tile to be dealt this
+      // slot inherits a half-finished tween and the old footprint scale.
+      this._fallingTowers = (this._fallingTowers || new Set()).add(tower)
+    } else {
+      // Land any running animation before the tower goes back in the pool.
+      tower.resetAnimation()
+      this.updateTowerMatrices(tower)
+      this.towerPool.push(tower)
+    }
     this.onTowerChanged(tower)
     this.enclosure.update()
   }
 
+  /**
+   * Run the fall animation on a tower that has already been removed.
+   *
+   * Reads the height BEFORE the caller zeroes it, and returns the tower to the
+   * pool once it lands - the one thing that genuinely has to wait for the
+   * animation, because the instances are what is being animated.
+   */
+  _playDemolishFall(tower) {
+    const floors = tower.numFloors
+    // The fall is a tween; the tower rejoining the pool is NOT.
+    //
+    // The pool is a stack - placement pops off it - so WHEN a tower is pushed
+    // back decides WHICH tower object the next tile is dealt into. That is game
+    // state, and it used to be decided by a gsap onComplete, i.e. by the wall
+    // clock: at 16x playback the same animation spans sixteen times as much of
+    // the game, the pool comes back in a different order, and from there the
+    // two runs are placing different objects on the same cells.
+    //
+    // So the release runs on sim time, comfortably past the longest fall
+    // (0.15 + floors x 0.06 + 0.1 + 0.4, about a second at the six-floor cap).
+    // The LOOK still belongs to the tween - floors dropping one by one, each
+    // with its own thunk, the roof bouncing down after them. Nothing about that
+    // changed.
+    tower.falling = true // the tween owns the instances until it lands
+    tower.animateDelete(this.towerMesh, this.floorHeight, floors, () => {
+      tower.resetAnimation()
+      tower.visible = false
+      tower.numFloors = 0
+      tower.falling = false // ...and now the roof goes with the rest of it
+      this.updateTowerMatrices(tower)
+    })
+    // Only the POOL RETURN moves to sim time, because only it is game state.
+    this.demo.after(DEMOLISH_FALL_HOLD, () => {
+      if (this._fallingTowers?.delete(tower)) this.towerPool.push(tower)
+    })
+  }
+
   /** Free a tower's cells and remove it (no debris). Placed tiles return to the
    *  pool; pre-built center-lot towers free their footprint and hide. */
-  demolishTower(tower) {
-    if (tower.placed) { this.freePlacedTower(tower); return }
+  demolishTower(tower, opts = {}) {
+    // Play the fall BEFORE the tower is freed - it needs the instances, and it
+    // needs their current heights. The removal itself does not wait for it (see
+    // TowerInteraction.demolishTower for why): the animation is handed the
+    // instances for the length of the fall, and the tower is not returned to the
+    // pool until it lands.
+    if (opts.animate) this._playDemolishFall(tower)
+    if (tower.placed) { this.freePlacedTower(tower, opts); return }
     const cu = this.cellUnit
     const gx0 = Math.round(tower.box.min.x / cu), gy0 = Math.round(tower.box.min.y / cu)
     const tw = Math.round((tower.box.max.x - tower.box.min.x) / cu)
@@ -573,6 +666,7 @@ export class City {
     }
     tower.visible = false
     tower.numFloors = 0
+    tower.dmg = 0 // same reason as freePlacedTower
     this.onTowerChanged(tower)
     this.enclosure.update()
   }
@@ -1005,7 +1099,12 @@ export class City {
       for (let f = 0; f < targetFloors; f++) {
         const delay = buildStart + staggerDelay + f * floorDelay
         maxDelay = Math.max(maxDelay, delay)
-        setTimeout(() => {
+        // Sim time, not setTimeout: this sets numFloors, which is game state -
+        // and the timer below flips introBuilt, which arms the king's damage
+        // ring. On wall clock both landed at a different point in the game
+        // depending on the frame rate, so the ring started burning creeps
+        // earlier or later than it did in the run being replayed.
+        this.demo.after(delay, () => {
           tower.numFloors = f + 1
           // Play pop sound with pitch based on floor height, volume based on distance
           const pitch = 0.8 + (f / maxFloorsFor(tower)) * 1.2
@@ -1022,20 +1121,20 @@ export class City {
             () => this.updateTowerMatrices(tower),
             null // no debris
           )
-        }, delay * 1000)
+        })
       }
     })
 
     // Unmute sounds and restore debris after intro completes. Also refresh
     // tower visuals once so monasteries/connectors reflect the settled city
     // (the intro builds via updateTowerMatrices, which skips that pass).
-    setTimeout(() => {
+    this.demo.after(maxDelay + 1, () => {
       Sounds.unmute(['stone', 'tick', 'clink'])
       this.debris.enabled = debrisWasEnabled
       this.updateTowerVisuals()
       // The last block is up: the king's beam and ring may strike in now.
       this.introBuilt = true
-    }, (maxDelay + 1) * 1000)
+    })
 
     // 4. Camera zoom animation (angle-based distance)
     const target = controls.target.clone()
@@ -1461,6 +1560,22 @@ export class City {
     }
   }
 
+  /**
+   * The visible tower whose footprint covers a grid cell, or null.
+   *
+   * Used by run playback to name a tower without depending on object identity,
+   * which cannot survive being written to a file. A cell pair does.
+   */
+  towerAtCell(gx, gy) {
+    const cu = this.cellUnit
+    const x = gx * cu + cu / 2, y = gy * cu + cu / 2
+    for (const t of this.towers) {
+      if (!t.visible) continue
+      if (x >= t.box.min.x && x <= t.box.max.x && y >= t.box.min.y && y <= t.box.max.y) return t
+    }
+    return null
+  }
+
   setTowerColor(tower, color) {
     const mesh = this.towerMesh
     for (const idx of tower.floorInstances) mesh.setColorAt(idx, color)
@@ -1492,18 +1607,6 @@ export class City {
     return this.countGens() < MAX_GENS
   }
 
-  /** Cumulative count of how many of a cost-bucket key the PLAYER has placed over
-   *  the whole game (only ever rises - expiry/demolish don't lower it), so the
-   *  escalating price keeps climbing even though gens expire. */
-  recordPlacement(key) {
-    if (!this._placedCounts) this._placedCounts = new Map()
-    this._placedCounts.set(key, (this._placedCounts.get(key) || 0) + 1)
-  }
-
-  placedCount(key) {
-    return this._placedCounts ? (this._placedCounts.get(key) || 0) : 0
-  }
-
   /**
    * Generators used to burn down: a countdown pie on top, a floor lost every
    * N energy pulses, and a lifetime cap on how many floors one would accept.
@@ -1526,6 +1629,23 @@ export class City {
    */
   updateTowerMatrices(tower) {
     const { dummy, towerMesh } = this
+
+    // Mid-fall: the demolish tween owns these instances until it lands, so
+    // leave them alone.
+    //
+    // Removal is immediate now - a demolished tower stops blocking creeps and
+    // sealing enclosures the moment it is torn down, rather than when an
+    // animation happens to finish - which means `visible` goes false while the
+    // stack is still falling. Without this the branch below hid every instance
+    // on the same frame and the tween drew to nothing: the tile vanished whole
+    // instead of coming down floor by floor.
+    //
+    // `falling` is the TWEEN's claim on the instances and is cleared the moment
+    // it lands. That is deliberately not the same thing as being held out of
+    // the pool, which runs on sim time and lasts longer - keying this off the
+    // pool hold instead left the exemption still in force when the fall
+    // finished, so the roof was never hidden and sat on the empty cell.
+    if (tower.visible === false && tower.falling) return
 
     // Hidden tower: hide all of its instances (floors + roof) and bail.
     if (tower.visible === false) {
@@ -1679,8 +1799,13 @@ export class City {
     // with the grid, because the material it feeds is rebuilt with it too.
     this.gridFade = uniform(1)
     const span = this.visibleHalf * 2
-    // Fine cell grid - centered at origin (same as lot grid). One line per buildable cell.
-    const cellGrid = new GridHelper(span, span / this.cellUnit, 0x888888, 0x888888)
+    // The cell grid runs PAST the bounds, out over the field the creeps walk in
+    // across (the same one lot of margin the ground under it covers - see
+    // Lighting.setBoardSize). The board ends where the white outline is; the grid
+    // carrying on past it says the ground out there is real, which is where you
+    // watch a wave form up.
+    const gridSpan = span + this.cellSize * 2
+    const cellGrid = new GridHelper(gridSpan, gridSpan / this.cellUnit, 0x888888, 0x888888)
     cellGrid.material.transparent = true
     cellGrid.material.opacity = CELL_GRID_OPACITY
     cellGrid.position.set(0, 0.01, 0)
@@ -1688,7 +1813,7 @@ export class City {
     this.cellGrid = cellGrid
 
     // Grid intersection dots using procedural plane shader
-    const dotPlaneGeometry = new PlaneGeometry(span, span)
+    const dotPlaneGeometry = new PlaneGeometry(gridSpan, gridSpan)
     dotPlaneGeometry.rotateX(-Math.PI / 2)
     const dotMaterial = new MeshBasicNodeMaterial()
     dotMaterial.transparent = true
@@ -1696,7 +1821,7 @@ export class City {
     dotMaterial.side = 2 // DoubleSide
 
     // Procedural dots at grid intersections (one per buildable cell, matching cell grid)
-    const cellCoord = uv().mul(span / this.cellUnit)
+    const cellCoord = uv().mul(gridSpan / this.cellUnit)
     const fractCoord = fract(cellCoord)
     const toGridX = min(fractCoord.x, float(1).sub(fractCoord.x))
     const toGridY = min(fractCoord.y, float(1).sub(fractCoord.y))

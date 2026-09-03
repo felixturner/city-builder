@@ -42,6 +42,9 @@ const SWARM_SLOT_SPAN = 0.85 // clump slots stop this far through the attack win
 // swarm is the unit the wave is read in, so two of them running together read
 // as one shapeless push - the lull is what makes them countable.
 const SWARM_LULL = 0.8
+// How long before a swarm pours that its arrow starts blinking. Long enough to
+// turn and look, short enough that it is clearly about THIS swarm.
+const SWARM_WARN_LEAD = 1.5
 
 // Creeps claim the cell they are walking into and won't enter a claimed one, so
 // a swarm queues rather than stacking. After this many blocked attempts a creep
@@ -96,6 +99,7 @@ const HIT_SHAKE_ANGLE = 0.3 // radians of tilt at the start of the shake
 // Seconds a creep glows shield-yellow after a barrier burns it.
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
+import { simRand, simSpread, simPick } from './lib/rng.js'
 import { fxMaterial, glow, unglow, NO_AO_MRT } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 import { advanceHop, towerWorldCenter } from './lib/gridUnit.js'
@@ -312,6 +316,11 @@ export class Creeps {
 
     this._p = new Vector2()
     this._sv = new Vector2()
+    // Scratch for towerWorld() inside the per-creep loops. These run for every
+    // creep every step - at seventy creeps a fresh Vector2 each was thousands of
+    // throwaway objects a second, which is GC the frame budget does not need.
+    // Never held across a call: read it and use it.
+    this._tw = new Vector2()
     this._black = new Color(0x080808)
     // One shared material for the burn flash. Creeps already share materials by
     // TYPE, so tinting a creep's own material would light up every creep of that
@@ -381,8 +390,8 @@ export class Creeps {
    * early on and a 45% cut by level 7. Levels 1-6 added 18 creeps between them;
    * level 7 alone added 22, and it landed like a wall.
    *
-   * Boss levels get their bump from spawnBossWave, which drops its giants and
-   * escorts ON TOP of this - so the every-fourth-level spike is a separate,
+   * Boss levels get their bump from the giants dealt into the wave's clumps
+   * (see _assignBossGiants) - so the every-fourth-level spike is a separate,
    * deliberate thing rather than an accident of the curve.
    */
   get creepsThisWave() {
@@ -404,11 +413,11 @@ export class Creeps {
     const forceShooter = !!opts.forceShooter
     // Some creeps are "big": 2x size, 2x HP, knock 2 floors per kill. Late + rare.
     const w = this.waveNumber
-    const big = !giant && !forceShooter && w >= this.bigUnlockWave && Math.random() < this.bigChance
+    const big = !giant && !forceShooter && w >= this.bigUnlockWave && simRand() < this.bigChance
     // Shooters stop at range and lob little blocks at towers.
-    const shooter = !giant && (forceShooter || (!big && w >= this.shooterUnlockWave && Math.random() < this.shooterChance))
+    const shooter = !giant && (forceShooter || (!big && w >= this.shooterUnlockWave && simRand() < this.shooterChance))
     // Laser creeps stop at range and fire a turret-style beam at towers.
-    const laser = !giant && !forceShooter && !big && !shooter && w >= this.laserUnlockWave && Math.random() < this.laserChance
+    const laser = !giant && !forceShooter && !big && !shooter && w >= this.laserUnlockWave && simRand() < this.laserChance
     // Bombers fly across at altitude and drop bombs.
 
     // Heads-up blips for the two threats you can't just out-wall: a bright high
@@ -422,7 +431,7 @@ export class Creeps {
     const baseY = giant ? 3 : (big ? 1.5 : 0.8)
 
     // Giants are always smashers - too big to use the gaps a seeker threads.
-    const smasher = giant ? true : Math.random() < this.smasherChance
+    const smasher = giant ? true : simRand() < this.smasherChance
     const bodyMat = giant ? this.giantMat
       : laser ? this.laserMat
         : shooter ? (smasher ? this.shooterSmasherMat : this.shooterSeekerMat)
@@ -437,9 +446,9 @@ export class Creeps {
     // instead of being scattered down the whole side; without it, anywhere.
     const r = this.reach
     const t = opts.offset === undefined
-      ? this.snap((Math.random() * 2 - 1) * r)
+      ? this.snap(simSpread(2 * r))
       : this.snap(MathUtils.clamp(
-        opts.offset + MathUtils.randFloatSpread(SWARM_SPREAD_CELLS * this.cell), -r, r))
+        opts.offset + simSpread(SWARM_SPREAD_CELLS * this.cell), -r, r))
     const edge = opts.edge ?? this.currentWaveEdge()
     let x, z
     if (edge === 0) { x = -r; z = t }
@@ -524,14 +533,27 @@ export class Creeps {
    * 12 creeps to hundreds, so 1-3 giants plus 5 shooters went from a serious
    * threat to noise. Boss 1 used to be easier than the ordinary wave two later.
    */
-  spawnBossWave(waveIdx) {
+  /**
+   * Hand this wave's giants out across its clumps, one riding in with each.
+   *
+   * They used to all spawn on the first frame of the attack phase, from one
+   * edge - so a boss round was its entire boss content in the opening seconds
+   * and an ordinary wave for the remaining twenty. Spread over the slots, each
+   * push has a giant at the head of it and the round stays a boss round the
+   * whole way through.
+   *
+   * Evenly spaced over the clumps, wrapping when there are more giants than
+   * clumps, so the first and last pushes always carry one.
+   */
+  _assignBossGiants(waveIdx, plan) {
     const o = this.bossOrdinal(waveIdx)
-    const edge = this.waveEdges(waveIdx)[0] // all come in from the same side
-    // Just the giants. A boss round is an ordinary round with bosses ADDED - it
-    // used to also throw in 3 + 4n shooter escorts, which made boss levels a
-    // spike in ordinary creeps as well and muddied what the round actually was.
-    // The normal wave still runs alongside this on its usual schedule.
-    for (let i = 0; i < o; i++) this.spawn({ giant: true, edge })
+    if (!plan.length) return
+    for (let i = 0; i < o; i++) {
+      const idx = plan.length > 1
+        ? Math.round((i * (plan.length - 1)) / Math.max(1, o - 1)) % plan.length
+        : 0
+      plan[idx].giants = (plan[idx].giants || 0) + 1
+    }
   }
 
   /**
@@ -544,14 +566,14 @@ export class Creeps {
    * ring, so nothing enters beyond the board's own corners.
    */
   edgeOffset() {
-    const spread = (Math.random() + Math.random() - 1) // -1..1, peaked at 0
+    const spread = (simRand() + simRand() - 1) // -1..1, peaked at 0
     return this.snap(spread * this.fieldHalf)
   }
 
   /** An edge for a creep spawning in the wave now in progress. */
   currentWaveEdge() {
     const edges = this.waveEdges(this.waveNumber)
-    return edges[Math.floor(Math.random() * edges.length)]
+    return simPick(edges)
   }
 
   /**
@@ -694,12 +716,12 @@ export class Creeps {
     // centre. They used to fly one of four axis-aligned lanes, so every bomber
     // run looked like the last and you could learn the four lines; a free
     // heading means the diagonal crossings are the common case.
-    const angle = Math.random() * Math.PI * 2
+    const angle = simRand() * Math.PI * 2
     const x = Math.cos(angle) * r
     const z = Math.sin(angle) * r
     const aim = this.city.lotSize * 0.4
-    const dx = (Math.random() * 2 - 1) * aim - x
-    const dz = (Math.random() * 2 - 1) * aim - z
+    const dx = simSpread(2 * aim) - x
+    const dz = simSpread(2 * aim) - z
     const len = Math.hypot(dx, dz) || 1
     const vx = (dx / len) * this.flySpeed
     const vz = (dz / len) * this.flySpeed
@@ -728,7 +750,7 @@ export class Creeps {
       entryVol: 0.3,
       vx, vz,
       bombTimer: this.bombInterval * 0.5,
-      bob: Math.random() * Math.PI * 2,
+      bob: simRand() * Math.PI * 2,
       shootTimer: 0,
       baseY: this.bomberY,
       maxHits: Math.max(1, Math.round(this.hitPoints * Buffs.creepHp * this.rampMul().hp)),
@@ -837,7 +859,7 @@ export class Creeps {
     const needLOS = c.shooter || c.laser
     let best = null
     let bestScore = -Infinity
-    const tw = new Vector2()
+    const tw = this._tw
     for (const tower of this.city.towers) {
       if (!tower.visible) continue
       this.towerWorld(tower, tw)
@@ -859,30 +881,37 @@ export class Creeps {
    * Clear line from a creep to a tower - no other tower standing between them.
    *
    * Turrets have had this since they existed (Turrets.hasLOS); the creeps that
-   * shoot back did not, so they happily fired through your walls. Same approach:
-   * raycast the tower BatchedMesh, with a margin at each end so the shooter's own
-   * cell and the target's don't count as blockers.
+   * shoot back did not, so they happily fired through your walls.
+   *
+   * Same method as the turret side, and for the same reason: this used to
+   * raycast the tower BatchedMesh, whose instance matrices are written by gsap
+   * as towers build, shake and fall. That made "can this creep see that wall"
+   * depend on where an animation had got to in WALL-CLOCK time - so a replay,
+   * which reaches the same tween at a different point in the game, gave
+   * different answers, and the two runs forked with an identical board and an
+   * identical RNG stream. Footprints and floor counts are game state; the mesh
+   * is a picture of it.
    */
   hasLOS(c, tower) {
-    const mesh = this.city.towerMesh
-    if (!mesh) return true
-    if (!this._losRay) {
-      this._losRay = new Raycaster()
-      this._losFrom = new Vector3()
-      this._losDir = new Vector3()
-    }
+    const city = this.city
+    const cu = city.cellUnit
     this.towerWorld(tower, this._sv)
-    const ty = Math.max(0.5, tower.numFloors * 0.5) * this.city.floorHeight
-    this._losFrom.set(c.mesh.position.x, c.baseY + 0.6, c.mesh.position.z)
-    this._losDir.set(this._sv.x - this._losFrom.x, ty - this._losFrom.y, this._sv.y - this._losFrom.z)
-    const dist = this._losDir.length()
-    const margin = this.city.cellUnit * 0.7
+    const ty = Math.max(0.5, tower.numFloors * 0.5) * city.floorHeight
+    const fx = c.mesh.position.x, fy = c.baseY + 0.6, fz = c.mesh.position.z
+    const dx = this._sv.x - fx, dz = this._sv.y - fz
+    const dist = Math.hypot(dx, dz)
+    const margin = cu * 0.7 // the shooter's own cell and the target's don't block
     if (dist <= margin * 2) return true
-    this._losDir.divideScalar(dist)
-    this._losRay.set(this._losFrom, this._losDir)
-    this._losRay.near = margin
-    this._losRay.far = dist - margin
-    return this._losRay.intersectObject(mesh, false).length === 0
+    const steps = Math.ceil(dist / (cu * 0.5)) // half a cell: nothing is stepped over
+    for (let i = 1; i < steps; i++) {
+      const f = i / steps
+      const along = dist * f
+      if (along < margin || dist - along < margin) continue
+      const t = this.towerAt(fx + dx * f, fz + dz * f)
+      if (!t || !t.visible || t.numFloors < 1 || t === tower) continue
+      if (t.numFloors * city.floorHeight >= fy + (ty - fy) * f) return false
+    }
+    return true
   }
 
   /**
@@ -994,9 +1023,9 @@ export class Creeps {
     // again next step. Waiting a beat is what makes a swarm queue up behind its
     // own front rank instead of piling into one cell.
     if (closer.length === 0 && worse.length === 0) return null
-    const pool = (closer.length === 0 || (worse.length && Math.random() < MISSTEP_CHANCE))
+    const pool = (closer.length === 0 || (worse.length && simRand() < MISSTEP_CHANCE))
       ? worse : closer
-    const pick = pool[Math.floor(Math.random() * pool.length)]
+    const pick = simPick(pool)
     return [STEP_DX[pick], STEP_DZ[pick]]
   }
 
@@ -1012,7 +1041,7 @@ export class Creeps {
   _planStepGreedy(c) {
     const king = this.city.king
     if (!king || !king.visible) return 'done'
-    const tw = new Vector2()
+    const tw = this._tw
     this.towerWorld(king, tw)
     const goalX = tw.x, goalZ = tw.y
 
@@ -1275,8 +1304,7 @@ export class Creeps {
     const waveIdx = this.waveNumber
     if (waveIdx !== this._lastWave) {
       this._lastWave = waveIdx
-      this._planWave()
-      if (this.isBossWave(waveIdx)) this.spawnBossWave(waveIdx)
+      this._planWave() // a boss round's giants are dealt into the plan's clumps
     }
 
     const phase = this.clock.cyclePhase - this.clock.buildTime // 0..waveActive
@@ -1284,6 +1312,15 @@ export class Creeps {
     // swarm has finished pouring first (see _planWave), so in practice this
     // releases one at a time - the loop stays a while because a squeezed
     // late-game schedule can still land two on the same frame.
+    // Warn BEFORE the swarm, not as it lands: the arrow it belongs to starts
+    // blinking SWARM_WARN_LEAD seconds out, so the warning is something you can
+    // still act on rather than a note about what just happened.
+    const next = this._plan?.[this._planIndex]
+    if (next && !next.warned && next.at - phase <= SWARM_WARN_LEAD) {
+      next.warned = true
+      this.waveArrows?.flash(next.edge)
+    }
+
     while (this._plan && this._planIndex < this._plan.length
       && this._plan[this._planIndex].at <= phase) {
       this._release(this._plan[this._planIndex++])
@@ -1361,8 +1398,10 @@ export class Creeps {
     if (last > span) for (let i = 0; i < n; i++) starts[i] *= span / last
 
     // Round-robin across the wave's edges rather than rolling each clump: with a
-    // random pick, a two-front wave could send every clump down one side and
-    // leave the other arrow pointing at nothing.
+    // random pick a multi-edge wave could send every clump down one side and
+    // leave the other arrow pointing at nothing. (Waves are single-front now,
+    // so this is a one-element rotation - kept because the plan should not care
+    // how many edges it is given.)
     const edges = this.waveEdges(this.waveNumber)
     this._plan = sizes.map((size, i) => ({
       size,
@@ -1370,6 +1409,9 @@ export class Creeps {
       edge: edges[i % edges.length],
       offset: this.edgeOffset(),
     }))
+    if (this.isBossWave(this.waveNumber)) {
+      this._assignBossGiants(this.waveNumber, this._plan)
+    }
     this._planIndex = 0
     this._released = 0
 
@@ -1382,7 +1424,7 @@ export class Creeps {
       const n = Math.round(total * this.bomberChance)
       for (let i = 0; i < n; i++) {
         const t = ((i + 0.5) / n) * this.waveActive
-        this._bombers.push(t + MathUtils.randFloatSpread(this.waveActive / (n * 2)))
+        this._bombers.push(t + simSpread(this.waveActive / (n * 2)))
       }
     }
     this._bomberIndex = 0
@@ -1402,13 +1444,14 @@ export class Creeps {
   /** Start a planned clump pouring, sound its horn, and flash its arrow. */
   _release(clump) {
     this._active.push({ ...clump, left: clump.size, timer: SWARM_GAP })
+    // A boss round's giants ride in with the clumps rather than all landing on
+    // the first frame - same edge and entry point, so one leads its swarm in.
+    for (let i = 0; i < (clump.giants || 0); i++) {
+      this.spawn({ giant: true, edge: clump.edge, offset: clump.offset })
+    }
     // A war horn per clump, but not the first of a wave: that one lands on the
     // same frame as the wave horn, and two at once is a muddle.
     if (this._released > 0) Sounds.play('horn', SWARM_HORN_RATE, 0.06, SWARM_HORN_VOLUME)
-    // The horn says a swarm is coming; the flash says WHICH SIDE. On a two-front
-    // wave both arrows are up the whole time, so without this the sound named no
-    // direction and you had to wait to see where they came out.
-    this.waveArrows?.flash(clump.edge)
     this._released++
   }
 
@@ -1541,7 +1584,7 @@ export class Creeps {
         }
 
         // Lunge toward the target on each knock.
-        const tw = new Vector2()
+        const tw = this._tw
         this.towerWorld(target, tw)
         const dx = tw.x - c.toX
         const dz = tw.y - c.toZ

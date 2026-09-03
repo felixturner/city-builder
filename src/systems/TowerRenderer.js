@@ -5,6 +5,7 @@ import { ACCENT_COLORS } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, SHIELD_COLOR } from '../blockTypes.js'
+import { simInt, simPick } from '../lib/rng.js'
 
 // Fallback only - the king normally wears one of the three accents.
 // Damage rattle on a tile that just took a blow. World units of horizontal
@@ -90,7 +91,7 @@ export class TowerRenderer {
     // Rectangular tops only (no quart). Pick from the rect set, then demote
     // footprint-constraint violators to a plain grey rect.
     const pool = [TopType.SQUARE, TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.PATH_GENERATOR]
-    tower.typeTop = pool[MathUtils.randInt(0, pool.length - 1)]
+    tower.typeTop = simPick(pool)
     const size = tower.box.getSize(this.city.towerSize)
     const w = Math.round(size.x / this.city.cellUnit)
     const h = Math.round(size.y / this.city.cellUnit)
@@ -99,7 +100,7 @@ export class TowerRenderer {
     if (isTurret(tower) && (!(w === 1 && h === 1) || this.countLotTurrets(tower) >= 2)) {
       tower.typeTop = TopType.SQUARE
     }
-    tower.setTopColorIndex(MathUtils.randInt(0, Tower.COLORS.length - 1))
+    tower.setTopColorIndex(simInt(0, Tower.COLORS.length - 1))
     this.applyTypeVisuals(tower)
   }
 
@@ -266,6 +267,7 @@ export class TowerRenderer {
       return tower.numFloors
     }
     tower.dmg -= blockHp
+    city.mana?.econ?.blockLost()
 
     const center = tower.box.getCenter(city.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * city.floorHeight

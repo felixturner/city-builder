@@ -5,7 +5,7 @@ import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TopType, isGrey, claimsEnclosure, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
 import { fxMaterial, glow } from '../fx.js'
-import { priceOfTower } from './tileCost.js'
+import { priceOfTower, refundOfTower } from './tileCost.js'
 
 /**
  * TowerInteraction - all player input on towers (hover, build, destroy, place,
@@ -122,6 +122,14 @@ export class TowerInteraction {
   buildFloor(tower) {
     const city = this.city
     if (!this.canBuild(tower)) return
+    // The tower's INDEX, not just its cell. A tile is identified on playback by
+    // its origin cell, and `towerAtCell` resolves that against bounding BOXES -
+    // but tetrominoes are L- and S-shaped, so two that share no cells can still
+    // have overlapping boxes. Playback then picked whichever came first in the
+    // array and built a floor on the neighbour of the one that was clicked.
+    // The pool array is fixed for the life of the run, so an index names the
+    // tile exactly. The cell stays for readability.
+    city.demo?.run?.record('floor', { gx: tower.cellX, gy: tower.cellY, i: city.towers.indexOf(tower) })
     tower.handleClick(city, city.floorHeight, maxFloorsFor(tower), city.debris,
       city.towers, () => city.onTowerChanged(tower), () => {
         city.updateTowerVisuals()
@@ -156,6 +164,20 @@ export class TowerInteraction {
    */
   canBuild(tower) {
     const city = this.city
+    // Still standing?
+    //
+    // The press captures a tower OBJECT on pointer-down and builds on it at
+    // pointer-up, which can be most of a second later - long enough for a creep
+    // to take its last block. `freePlacedTower` then leaves it invisible, zero
+    // floors and back in the pool, and none of the checks below noticed: zero
+    // is under the height cap, so the click was charged for and `handleClick`
+    // set numFloors on a tile that is not on the board.
+    //
+    // It also forked replays. The action records the tower's CELL, and on
+    // playback that cell is empty, so the build the live run made simply did
+    // not happen - identical inputs, different boards, and everything after it
+    // diverging from a click that should never have been allowed.
+    if (!tower.visible || tower.numFloors < 1) return false
     // The king's height IS its health - building it back up would make the one
     // loss condition in the game something you can simply pay off.
     if (tower.king) {
@@ -173,7 +195,7 @@ export class TowerInteraction {
     // Exactly what the same thing costs from the tray - one shared price
     // function, so raising a wall can never drift away from buying one.
     const cost = priceOfTower(city, tower)
-    if (!city.freeClicks && !city.mana.spend(cost)) {
+    if (!city.freeClicks && !city.mana.spend(cost, false, true)) { // true: a floor, not a new tile
       Sounds.play('error', 1.0, 0.06, 0.35) // can't afford this build
       return false
     }
@@ -192,7 +214,42 @@ export class TowerInteraction {
     const city = this.city
     const tower = this.towerFor(intersection)
     if (!tower || !tower.visible || tower.king) return // the king can't be demolished
-    tower.animateDelete(city.towerMesh, city.floorHeight, tower.numFloors, () => city.demolishTower(tower))
+    this.demolishTower(tower)
+  }
+
+  /**
+   * Tear a tower down.
+   *
+   * The tower is removed from the world NOW; the stack falling floor by floor is
+   * what you watch afterwards.
+   *
+   * It used to be the other way round - the removal ran from the fall
+   * animation's onComplete, most of a second of WALL CLOCK later - so a
+   * demolished tower went on blocking creep paths, sealing enclosures and
+   * counting as a wall for the whole animation. A recorded run replayed at 4x
+   * left it standing four times as long in world terms, and the board ended up
+   * different. Game state should not be waiting on an animation to finish.
+   *
+   * The fall is played by a stand-in that owns the instances until it lands (see
+   * City.demolishTower), so nothing is drawing to a slot the pool has handed out
+   * again.
+   */
+  demolishTower(tower) {
+    const city = this.city
+    city.demo?.run?.record('demolish', { gx: tower.cellX, gy: tower.cellY, i: city.towers.indexOf(tower) })
+    // Half of what its floors cost, handed back - so tearing something down is a
+    // move you can make when you are desperate rather than a pure loss. Taken
+    // before the tower is freed, while it still has its height.
+    const refund = refundOfTower(city, tower)
+    city.demolishTower(tower, { animate: true })
+    if (refund > 0 && city.mana) {
+      city.mana.add(refund)
+      const c = tower.box.getCenter(city.towerCenter)
+      city.floatingText?.spawn(
+        c.x + city.gridOffsetX, 2, c.y + city.gridOffsetZ,
+        `+${refund}`, ENERGY_COLOR, 0, 'pick-up'
+      )
+    }
   }
 
   /** Hide the tower and spin a radial build-wheel; finishReroll() on completion. */
