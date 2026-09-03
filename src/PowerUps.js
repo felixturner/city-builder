@@ -218,7 +218,15 @@ export class PowerUpScreen {
       // what they chose an hour ago - the run has already parted company, and
       // hanging tells you less than finishing does.
       if (!recorded) console.warn('[run] no recorded card for this boss round - taking the first')
-      this.pickRecorded(recorded || cards[0].id)
+      // Applied on the NEXT step, not inline.
+      //
+      // Live, this screen opens part-way through a step and pauses the game, so
+      // the tick does not move while it is up; the player's click then lands in
+      // the gap AFTER that step, and the card's effects are first seen by the
+      // one after. Picking inline here applied them half a step early - and
+      // `refreshAfterBuff` redraws the trail network, which draws from the sim
+      // RNG, so the whole stream shifted by a tick from the first boss round on.
+      this.demo.after(0, () => this.pickRecorded(recorded || cards[0].id))
       return
     }
 

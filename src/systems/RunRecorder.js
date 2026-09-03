@@ -32,6 +32,16 @@ import { currentSeed, simDraws, simState } from '../lib/rng.js'
 /** Level a run is on, for a diagnostic line. 1-based, like the HUD. */
 function demoLevel(demo) { return (demo.creeps?.waveNumber ?? 0) + 1 }
 
+// Everything the divergence hunt used, kept behind a flag: ?dev&trace.
+//
+// Finding the last few bugs needed damage, turret cooldowns, creep positions and
+// the full tower/creep lists recorded every tick or every sample - which put a
+// seventeen-minute run at 10MB. What stays on by default is the pair that found
+// most of them: the RNG draw count and a hash of the board, one integer each per
+// tick. That is enough to say WHICH TICK a run and its replay part company, and
+// the heavy set can be switched on for the one run that needs it.
+const TRACE_FULL = new URLSearchParams(location.search).has('trace')
+
 export class RunRecorder {
   // Ticks between world fingerprints: 30 is half a second, ~380 samples over a
   // three-minute run. Fine enough to point at a moment, small enough that the
@@ -165,8 +175,10 @@ export class RunRecorder {
    */
   _sampleDraws() {
     let h = 0
-    for (const c of this.demo.creeps?.creeps || []) h += c.hits || 0
-    this.hits.push(h)
+    if (TRACE_FULL) {
+      for (const c of this.demo.creeps?.creeps || []) h += c.hits || 0
+      this.hits.push(h)
+    }
     if (this.replaying && !this._hitsDiverged && this._expectHits) {
       const wantH = this._expectHits[this.hits.length - 1]
       if (wantH !== undefined && wantH !== h) {
@@ -193,11 +205,13 @@ export class RunRecorder {
     // stands somewhere else, which is the difference between "the shot picked
     // the wrong target" and "the target was somewhere else".
     let ch2 = 0
-    for (const c of this.demo.creeps?.creeps || []) {
-      ch2 = (ch2 + Math.round(c.mesh.position.x * 1000)
-        + Math.imul(Math.round(c.mesh.position.z * 1000), 31)) | 0
+    if (TRACE_FULL) {
+      for (const c of this.demo.creeps?.creeps || []) {
+        ch2 = (ch2 + Math.round(c.mesh.position.x * 1000)
+          + Math.imul(Math.round(c.mesh.position.z * 1000), 31)) | 0
+      }
+      this.pos.push(ch2)
     }
-    this.pos.push(ch2)
     if (this.replaying && !this._posDiverged && this._expectPos) {
       const wantP = this._expectPos[this.pos.length - 1]
       if (wantP !== undefined && wantP !== ch2) {
@@ -209,8 +223,10 @@ export class RunRecorder {
     }
 
     let cd = 0
-    for (const [, v] of this.demo.turrets?.cooldowns || []) cd = (cd + Math.round(v * 1000)) | 0
-    this.cool.push(cd)
+    if (TRACE_FULL) {
+      for (const [, v] of this.demo.turrets?.cooldowns || []) cd = (cd + Math.round(v * 1000)) | 0
+      this.cool.push(cd)
+    }
 
     let bh = 0
     for (const t of this.demo.city?.towers || []) {
@@ -324,7 +340,7 @@ export class RunRecorder {
       //
       // Cost is a few hundred numbers every half second: worth it for a
       // dev-only file that exists to be diffed.
-      tw: (demo.city?.towers || [])
+      tw: !TRACE_FULL ? undefined : (demo.city?.towers || [])
         .filter((t) => t.visible && t.numFloors >= 1)
         .map((t) => [t.cellX, t.cellY, t.numFloors])
         .sort((a, b) => a[0] - b[0] || a[1] - b[1]),
@@ -333,7 +349,7 @@ export class RunRecorder {
       // the same number - so "identical positions, different damage" could not
       // be trusted, and it was the whole basis for calling this a targeting
       // problem rather than a movement one.
-      cr: creeps.map((c) => [
+      cr: !TRACE_FULL ? undefined : creeps.map((c) => [
         Math.round(c.mesh.position.x * 1000),
         Math.round(c.mesh.position.z * 1000),
         c.hits || 0,
@@ -430,10 +446,10 @@ export class RunRecorder {
       // say where it stopped matching, and nothing in the game reads them.
       trace: this.trace,
       draws: this.draws,
-      hits: this.hits,
       board: this.board,
-      cool: this.cool,
-      pos: this.pos,
+      hits: this.hits.length ? this.hits : undefined,
+      cool: this.cool.length ? this.cool : undefined,
+      pos: this.pos.length ? this.pos : undefined,
       // Only present on a playback that found something. `null` means this
       // replay matched the run it came from on every measure.
       diverged: this.replaying ? this.report : undefined,

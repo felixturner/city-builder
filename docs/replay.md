@@ -9,12 +9,24 @@ rather than what a different game did.
 
 ```
 ?dev                  play, recording to logs/run-<id>.json
-?dev&replay           play back the newest recording (4x)
+?dev&replay           play back the newest RECORDED run (never a replay)
+?dev&replay=18-24-20  ...a specific one; any part of its filename will do
 ?dev&replay&speed=16  ...faster. 1-60; music goes quiet above 4
+?dev&trace            record the heavy diagnostic set (see Finding the next one)
 ```
 
-The file is written at the end of every round and again at game over, so a run
-that crashes still has everything up to its last round. In the console,
+Names are local time, and a playback is filed as `logs/replay-<id>.json` so it
+can never be picked up as a baseline. Pin a run with `?replay=<id>` while
+changing constants underneath it, or the next game played silently becomes the
+thing you are comparing against.
+
+A run file also says how it ended. `endedBy: 'gameover'` is a real ending;
+anything else means the file is a snapshot of a game still in progress, and its
+numbers are not comparable to a finished one.
+
+The file is written at the end of every round, when the page goes away, and
+again at game over, so a run that crashes still has everything up to its last
+round. In the console,
 `__run.save()` writes it out mid-game and `__econ` holds the per-round figures.
 
 Playback checks itself. Each round is compared against the recording and the
@@ -177,11 +189,32 @@ charged for and built onto a pooled tile.
 
 ### Finding the next one
 
-The run file carries per-tick arrays - `draws` (sim RNG draw count), `hits`
-(damage dealt), `board` (a position-weighted hash of every standing tower),
-`cool` (turret cooldowns) and `pos` (creep positions) - plus a `trace` every 30
-ticks holding the actual tower and creep lists, and a `diverged` report naming
-the first tick each of them parted company.
+Playback checks itself and writes what it found into the replay file as
+`diverged` - naming the first tick each measure stopped matching. `null` means
+it matched on every one.
+
+Always recorded, one integer per tick:
+
+| | |
+|---|---|
+| `draws` | how many values the sim RNG has handed out |
+| `board` | position-weighted hash of every standing tower - height bound to cell |
+
+Those two cost about 1MB on a seventeen-minute run and answer the two questions
+worth asking first: WHICH TICK did they part company, and was it the stream or
+the board.
+
+`?dev&trace` adds the heavy set, for the one run that needs it:
+
+| | |
+|---|---|
+| `hits` | damage dealt to creeps, per tick |
+| `cool` | turret cooldowns, per tick |
+| `pos` | creep positions at full precision, per tick |
+| `tw` / `cr` | the actual tower and creep lists, every 30 ticks |
+
+Those found the last few bugs and took a run to 10MB doing it, which is why they
+are off by default.
 
 The ORDER they diverge in is the diagnosis. RNG draws first means something drew
 an extra value. Damage first, with the draws still level, means combat resolved
