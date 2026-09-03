@@ -1,7 +1,7 @@
 import { Mesh, PlaneGeometry, GridHelper, MeshBasicNodeMaterial, Line2NodeMaterial, Vector2 } from 'three/webgpu'
 import { Line2 } from 'three/examples/jsm/lines/webgpu/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
-import { uniform, uv, fract, step, min, float } from 'three/tsl'
+import { uniform, uv, fract, step, min, float, vec3, mrt } from 'three/tsl'
 import gsap from 'gsap'
 import { CITY } from '../palette.js'
 
