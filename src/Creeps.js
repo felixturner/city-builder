@@ -10,7 +10,7 @@ import {
   Vector3,
   Color,
 } from 'three/webgpu'
-import { Sounds, BOSS_HORN_PREROLL, MAX_RISER_PREROLL } from './lib/Sounds.js'
+import { Sounds } from './lib/Sounds.js'
 import { isShield, shieldCharges, shieldRadiusCells, KING_WARN_CELLS } from './blockTypes.js'
 import { SHIELD_LINE } from './palette.js'
 
@@ -59,6 +59,7 @@ const MAX_CREEP_SHOTS = 12
 // wave horn (1.0) and well under its volume (0.55).
 const SWARM_HORN_RATE = 1.35
 const SWARM_HORN_VOLUME = 0.3
+const SWARM_ALERT_VOLUME = 0.28
 
 // What a shield perimeter burns a creep for on its own - the rate an unsupported
 // shield has always run at. Each support tower reaching it adds another point
@@ -699,6 +700,9 @@ export class Creeps {
       // same stone thunk for it as for a bullet.
       Sounds.play('shield-hit', 1.0, 0.08, 0.8)
       this.burnFlash(cr)
+      // The ring that did it flashes too - the barrier is the thing you should
+      // be looking at, not just the creep it caught.
+      this.city.flashBarrier(owner)
       this.hit(cr, dmg)
       if (onBurn && onBurn()) return true
     }
@@ -1319,6 +1323,12 @@ export class Creeps {
     if (next && !next.warned && next.at - phase <= SWARM_WARN_LEAD) {
       next.warned = true
       this.waveArrows?.flash(next.edge)
+      // The alert goes WITH the stutter, not with the swarm. They are one
+      // warning - the arrow you look at and the sound that makes you look -
+      // and played at release instead they arrived a second and a half apart,
+      // which reads as two unrelated events. The horn stays on the release: it
+      // is the swarm arriving, not the warning about it.
+      Sounds.play('swarm-alert', 1.0, 0.06, SWARM_ALERT_VOLUME)
     }
 
     while (this._plan && this._planIndex < this._plan.length
@@ -1428,17 +1438,6 @@ export class Creeps {
       }
     }
     this._bomberIndex = 0
-  }
-
-  /** Seconds until the next planned swarm on `edge` this wave, or Infinity.
-   *  WaveArrows reads this to flash an edge's arrows BEFORE its swarm pours. */
-  nextSwarmIn(edge) {
-    if (!this.clock.isSpawning || !this._plan) return Infinity
-    const phase = this.clock.cyclePhase - this.clock.buildTime
-    for (let i = this._planIndex; i < this._plan.length; i++) {
-      if (this._plan[i].edge === edge) return this._plan[i].at - phase
-    }
-    return Infinity
   }
 
   /** Start a planned clump pouring, sound its horn, and flash its arrow. */

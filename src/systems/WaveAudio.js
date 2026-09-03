@@ -1,4 +1,4 @@
-import { Sounds, BOSS_HORN_PREROLL, MAX_RISER_PREROLL } from '../lib/Sounds.js'
+import { Sounds, MAX_RISER_PREROLL } from '../lib/Sounds.js'
 
 /**
  * The score around a wave: countdown ticker, riser, horn, and the music bed.
@@ -52,7 +52,6 @@ export class WaveAudio {
   reset() {
     this.resetCues()
     this._audioWave = -1
-    this._bossCuedWave = -1
     this._activeNow = false
   }
 
@@ -62,10 +61,13 @@ export class WaveAudio {
    * a tight loop (that would fire a horn per simulated step).
    *
    * Timeline for a wave that starts at T:
-   *    T-10  boss clock + riser begin (ticks pitched down) [boss waves]
-   *    T-6   normal clock + riser begin                  [normal waves]
-   *    T-2.5 boss horn starts, so its 2.5s swell peaks at T
-   *    T     wave horn + spawns
+   *    T-15  boss clock + riser begin (ticks pitched down) [boss waves]
+   *    T-10  normal clock + riser begin                    [normal waves]
+   *    T     horn + spawns
+   *
+   * The clock and the riser both run up to the spawn and are timed to land ON
+   * it. The horn is the arrival itself, so it fires on the boundary - including
+   * the boss horn, which used to start 2.5s early to peak with the giants.
    */
   update(dt) {
     if (!this.creeps.spawnEnabled) return
@@ -104,17 +106,20 @@ export class WaveAudio {
       Sounds.play(r.name, 1.0, 0, r.volume * (bossNext ? 1.25 : 1.0))
     }
 
-    // Boss horn pre-roll: start early so the swell peaks as the giants land.
-    if (bossNext && away <= BOSS_HORN_PREROLL && this._bossCuedWave !== wave) {
-      this._bossCuedWave = wave
-      const { rate, volume } = this.creeps.bossHornVoice(wave)
-      Sounds.play('horn-boss', rate, 0.02, volume)
-    }
-
-    // Wave horn on the boundary. Boss waves already have their horn running.
+    // The horn on the boundary, when the wave actually starts - boss or not.
+    //
+    // The boss horn used to start 2.5s early so its swell
+    // peaked as the giants landed. Predicting the moment meant committing to it
+    // before it happened, and giants take long enough to walk in that a horn
+    // firing as they spawn still lands well before they matter.
     if (spawning && wave !== this._audioWave) {
       this._audioWave = wave
-      if (!clock.isBossWave(wave)) Sounds.play('horn', 1.0, 0.06, 0.55)
+      if (bossNext) {
+        const { rate, volume } = this.creeps.bossHornVoice(wave)
+        Sounds.play('horn-boss', rate, 0.02, volume)
+      } else {
+        Sounds.play('horn', 1.0, 0.06, 0.55)
+      }
     }
 
     // A round is not over when the spawns stop - it's over when the last creep

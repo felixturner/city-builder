@@ -462,7 +462,7 @@ export class EnergySystem {
     // Both fire on every rewiring of the trail network, which happens constantly
     // as you build - kept well down so they read as feedback, not events.
     if (newConnection) Sounds.play('energy', 1.0, 0.15, 0.3) // distinct from the per-tick 'dink'
-    if (lostConnection) Sounds.play('warning1', 1.0, 0.15, 0.25)
+    if (lostConnection) Sounds.play('support-lost', 1.0, 0.15, 0.25)
     this._connectorKeys = pairKeys
 
     // Restore steady colour on towers that just lost all their connections.
@@ -500,8 +500,15 @@ export class EnergySystem {
     const phase = tower.incomePhase * span
     const c = tower.box.getCenter(this._c)
     const cx = c.x + city.gridOffsetX
-    const cy = towerTopY(tower, city.floorHeight) + 0.5
     const cz = c.y + city.gridOffsetZ
+    // Out of the middle of the king's floating cube rather than off its roof.
+    // The cube is what reads as the king from across the board, and energy
+    // leaving from under it looked like it came from the tile it hovers over.
+    // Its Y is driven on sim time (City.updateKingMarker), so reading it here
+    // is reproducible.
+    const cy = tower.king && city.kingMarker
+      ? city.kingMarker.position.y
+      : towerTopY(tower, city.floorHeight) + 0.5
     let left = amt
     for (let i = 0; i < n; i++) {
       // Integer amounts that still sum to exactly `amt`.
@@ -597,7 +604,10 @@ export class EnergySystem {
       // updateEnclosureGenerators); this is a slow bonus trickle ON TOP, so an
       // unsealed king still brings in enough to rebuild from. Emitted one unit
       // at a time over its own 5s tick rather than as a silent lump.
-      if (city.king && city.king.visible) {
+      // `kingEarning` is set a second after the beam strikes in (City), so the
+      // opening trickle follows the king lighting up instead of landing on the
+      // same frame as it.
+      if (city.king && city.king.visible && city.kingEarning) {
         this.scheduleIncome(city.king, KING_BONUS, GREY_INTERVAL, 'king')
       }
     }

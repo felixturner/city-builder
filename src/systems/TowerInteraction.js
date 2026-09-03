@@ -295,7 +295,7 @@ export class TowerInteraction {
     tower.numFloors = 1 // same as a freshly dropped tile: one block + roof
     city.renderer.rerollTower(tower)
     city.updateTowerMatrices(tower)
-    Sounds.play('pop', 0.8, 0.15, 0.7)
+    Sounds.play('pop', 0.8, 0.15, 0.6)
     city.onTowerChanged(tower)
   }
 

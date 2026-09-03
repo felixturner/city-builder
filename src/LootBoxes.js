@@ -199,7 +199,6 @@ export class LootBoxes {
   open(b, i) {
     b.opening = true
     this.boxes.splice(i, 1) // out of the update loop; gsap drives it from here
-    Sounds.play('energy-down-2', 1.2, 0.05, 0.4) // was alert3
 
     const level = (this.demo.creeps?.waveNumber ?? 0) + 1
     b.reward = CRATE_REWARD * level
@@ -237,7 +236,10 @@ export class LootBoxes {
         debris.spawn(b.x, m.position.y + 0.5, b.z, 1.2, c, CONFETTI_PER_COLOUR)
       }
     }
-    Sounds.play('pick-up', 1.0, 0.04, 0.7)
+    // The only cue a crate gets. Sealing one used to blip 'energy-down-2' as
+    // the rattle started, which announced the crate a beat before it paid out
+    // and made the burst read as the second half of something.
+    Sounds.play('pick-up', 1.0, 0.04, 1.2)
     // The energy is not handed over here - see open(). This is the confetti.
   }
 

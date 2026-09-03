@@ -31,17 +31,12 @@ import gsap from 'gsap'
 //   horn-boss     10.73s   0.59s  9.44s   -         slow swell, peaks at 2.54s
 //   countdown     16.04s   0.02s 15.52s   1.002s    16 beeps on an exact 1Hz grid
 //   tick-fast     20.50s   0.04s 20.47s   0.233s    88 mechanical ticks
-//   tick-rapid    25.31s   0.02s 25.33s   0.188s    137 ticks, bright + urgent
-//   count         12.93s   1.03s 11.08s   1.170s    11 counts, slightly loose
-//   gen-expire     4.44s   0.15s  4.17s   -         deep descending, ~73Hz
 // ---------------------------------------------------------------------------
 
 /** Beat period in seconds for the rhythmic beds, and their first-beat offset. */
 const CADENCE = {
   countdown: { beat: 1.002, first: 0.024, beats: 16 },
   'tick-fast': { beat: 0.233, first: 0.046, beats: 88 },
-  'tick-rapid': { beat: 0.188, first: 0.120, beats: 137 },
-  count: { beat: 1.170, first: 1.108, beats: 11 },
 }
 
 /** [startMs, durationMs] sprites that skip measured lead-in silence. */
@@ -50,12 +45,7 @@ const TRIM = {
   horn2: [140, 8360],
   horn3: [380, 5520],
   'horn-boss': [560, 10170],
-  'gen-expire': [140, 4300],
 }
-
-/** How long the boss horn takes to reach its peak - start it this far ahead of
- *  the spawn so the hit lands with the giants, not after them. */
-export const BOSS_HORN_PREROLL = 2.5
 
 /**
  * Continuous background beds. All of them loop for the whole session and are
@@ -99,9 +89,9 @@ const RISERS = {
   // `long` splits them by how much runway they need. The short one fits inside
   // the tail of a normal wave's ticker; the two Titans need ~11s, so they're
   // reserved for boss waves where there's room for a build that size.
-  riser1: { peak: 5.38, volume: 0.63, long: false },
-  riser2: { peak: 10.80, volume: 0.28, long: true },
-  riser3: { peak: 10.60, volume: 0.28, long: true },
+  riser1: { peak: 5.38, volume: 0.54, long: false },
+  riser2: { peak: 10.80, volume: 0.24, long: true },
+  riser3: { peak: 10.60, volume: 0.24, long: true },
 }
 
 /** Longest pre-roll any riser needs - arm the pick at least this far out. */
@@ -154,17 +144,15 @@ const CORE = new Set([
 ])
 
 /**
- * Declared once, played nowhere. Kept out of the load set rather than deleted -
- * the files are still on disk if a cue wants them back - because loading them
- * cost 1.6MB up front, tick-rapid and count being 1.2MB of that between them:
- *
- *   break  burn  count  debris  energy-2  gen-expire
- *   incorrect  round-end  round-start  tick-rapid
+ * Everything below is loaded up front. Sounds that ended up unused have been
+ * moved to assets/sfx/incoming/, which is gitignored and not served - they cost
+ * 1.6MB of load between them, tick-rapid and count being 1.2MB of that. Move a
+ * file back out of incoming/ and add its name here to bring one into play.
  */
 const SIMPLE = [
   'pop', 'tick', 'roll', 'good', 'intro', 'error', 'pluck',
   'energy', 'power-down', 'spawn', 'step1', 'step2', 'break2', 'hit', 'dink',
-  'mortar-shoot', 'mortar-hit', 'warning1', 'success', 'shield-hit', 'king-warning', 'pick-up',
+  'mortar-shoot', 'mortar-hit', 'support-lost', 'king-enc-lost', 'swarm-alert', 'success', 'shield-hit', 'king-warning', 'pick-up',
   'board-expand',
   // long-form event sounds
   'horn-boss', 'countdown', 'tick-fast', 'gen-online', 'sting',
@@ -206,7 +194,6 @@ const COOLDOWN = {
   'gen-warn': 0.6,
   horn: 1.0,
   'horn-boss': 1.0,
-  'gen-expire': 0.25,
   'gen-online': 0.4,
   sting: 0.5,
   // Threat blips: several can fire in the same burst, and one per event would

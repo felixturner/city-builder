@@ -44,7 +44,7 @@ import { TowerRenderer } from './systems/TowerRenderer.js'
 import { ACCENT_COLORS, PINK } from './palette.js'
 import { Buffs } from './buffs.js'
 import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_MAX_FLOORS, KING_WARN_FLOORS, KING_WARN_CELLS } from './blockTypes.js'
-import { fxMaterial, glow, NO_AO_MRT } from './fx.js'
+import { fxMaterial, glow, stutter, NO_AO_MRT } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
 // A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
@@ -80,6 +80,9 @@ const LOTS_PER_BOSS = 2 // rings opened per boss round cleared
 const KING_COLOR = 0 // pink - the king's own accent
 const KING_MARKER_SIZE = 1.04 // world units across, before the corner-up tilt
 const KING_MARKER_HOVER = 1.4 // rest height above the king's roof
+// Sim seconds between the king's beam striking in and its first energy. Long
+// enough to read as cause and effect rather than coincidence.
+const KING_EARN_DELAY = 1.0
 // Seconds for a damage flash to fade back to the tower's own colour. The king
 // holds its flash longer - its hits are the ones you have to notice from the
 // far side of the board, so it stays lit after an ordinary wall has settled.
@@ -557,7 +560,7 @@ export class City {
 
     this.renderer.applyTileVisuals(t)
     this.updateTowerMatrices(t)
-    if (!silent) Sounds.play('pop', 0.8, 0.15, 0.7)
+    if (!silent) Sounds.play('pop', 0.8, 0.15, 0.6)
     this.onTowerChanged(t)
     this.enclosure.update()
     return t
@@ -804,11 +807,20 @@ export class City {
       beam.visible = false
       if (this.kingRing) this.kingRing.visible = false
       this._kingShown = false
+      this.kingEarning = false
       return
     }
     // First frame it is allowed to show: kick it in rather than having it appear
     // between one frame and the next.
-    if (!this._kingShown) { this._kingShown = true; this.flickerKingBeam() }
+    if (!this._kingShown) {
+      this._kingShown = true
+      this.flickerKingBeam()
+      // The king starts earning a beat AFTER it lights up, so the first energy
+      // is visibly a consequence of the king coming on rather than something
+      // that happened to arrive at the same moment.
+      this.kingEarning = false
+      this.demo?.after(KING_EARN_DELAY, () => { this.kingEarning = true })
+    }
     // While the flicker is running it owns visibility - this would otherwise
     // switch the beam back on between the timeline's own frames.
     if (!this._kingFlicker) beam.visible = true
@@ -842,13 +854,7 @@ export class City {
     if (!parts.length) return
     this._kingFlicker = true
     Sounds.play('good')
-    // Uneven on/off times: an even stutter reads as a strobe rather than
-    // something struggling to catch.
-    const tl = gsap.timeline({ onComplete: () => { this._kingFlicker = false } })
-    for (const [t, on] of [
-      [0, true], [0.05, false], [0.09, true], [0.14, false],
-      [0.22, true], [0.26, false], [0.36, true],
-    ]) tl.set(parts, { visible: on }, t)
+    stutter(gsap, parts, { onComplete: () => { this._kingFlicker = false } })
   }
 
   /**
@@ -871,6 +877,32 @@ export class City {
     mesh.renderOrder = -1 // under the turret/shield rings, like the other ground art
     this.scene.add(mesh)
     this.kingRing = mesh
+  }
+
+  /**
+   * Flash a barrier ring white for an instant - something just burned crossing
+   * it.
+   *
+   * The rings are permanent fixtures, so without this the only sign a creep had
+   * been burned was the creep's own flash and the sound; the perimeter that did
+   * it sat there unchanged. Now the ring is what you look at.
+   *
+   * `owner` is the tower that owns the barrier - the king, or a shield, whose
+   * ring lives in RangeVisuals rather than here.
+   */
+  flashBarrier(owner) {
+    const mesh = owner.king ? this.kingRing : this.rangeVisuals?.shield.meshes.get(owner)
+    if (!mesh) return
+    const mat = mesh.material
+    // Remembered on first use: these materials are built in two different
+    // places, and the flash has to return to whichever colour this one is.
+    if (!mat.userData.baseColor) mat.userData.baseColor = mat.color.clone()
+    const base = mat.userData.baseColor
+    gsap.killTweensOf(mat.color)
+    mat.color.setRGB(1, 1, 1)
+    gsap.to(mat.color, {
+      r: base.r, g: base.g, b: base.b, duration: 0.22, ease: 'power2.out',
+    })
   }
 
   /** Fire the game-over hook once (the king died). */
@@ -905,9 +937,13 @@ export class City {
     disc.renderOrder = 6
     this.scene.add(disc)
     const r = this.visibleHalf // fully transparent right at the current map edge
-    gsap.to(disc.scale, { x: r, y: r, duration: 1.0, ease: 'expo.out' })
+    // Scale and fade share a duration AND an ease, so the disc's growth and its
+    // disappearance are one motion. On different eases the expo scale was done
+    // in the first third of a second while the power2 fade was still going, and
+    // what you saw was a full-size disc sitting there apparently not fading.
+    gsap.to(disc.scale, { x: r, y: r, duration: 2.0, ease: 'expo.out' })
     gsap.to(mat, {
-      opacity: 0, duration: 1.0, ease: 'power2.out',
+      opacity: 0, duration: 2.0, ease: 'expo.out',
       onComplete: () => {
         this.scene.remove(disc)
         disc.geometry.dispose()

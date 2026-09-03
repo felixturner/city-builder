@@ -596,7 +596,7 @@ export class Tower {
 
     Sounds.play('tick', 1.0, 0)
     // Pitch increases with floor height (0.8 at ground, 2.0 at top)
-    Sounds.play('pop', 0.8 + (numFloors / maxFloors) * 1.2, 0.15, 0.7)
+    Sounds.play('pop', 0.8 + (numFloors / maxFloors) * 1.2, 0.15, 0.6)
 
     // Everything from here is looks: press the stack down, then let the new
     // floor emerge as it comes back up. If the tower is gone by the time these

@@ -149,7 +149,7 @@ export class Enclosure {
     }
 
     // King seal: the king is "enclosed" while no neighbouring cell is reachable
-    // from the boundary. success on a fresh seal, warning1 when it gets breached.
+    // from the boundary. success on a fresh seal, king-enc-lost when breached.
     if (this.city.king && this.city.king.visible) {
       const kx = this.city.king.cellX, ky = this.city.king.cellY
       let kingExposed = false
@@ -159,7 +159,10 @@ export class Enclosure {
       }
       const enclosed = !kingExposed
       if (this._kingEnclosed !== undefined) {
-        if (this._kingEnclosed && !enclosed) Sounds.play('warning1') // enclosure breached
+        // Its own sound, not the one a cut support trail plays: that is a small
+        // blip about one building, and this is the ring around the king being
+        // broken open.
+        if (this._kingEnclosed && !enclosed) Sounds.play('king-enc-lost')
         else if (!this._kingEnclosed && enclosed) Sounds.play('success') // king newly sealed
       }
       this._kingEnclosed = enclosed

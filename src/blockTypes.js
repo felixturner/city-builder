@@ -48,9 +48,11 @@ export const tileColorIndex = (typeTop) =>
 
 /** Accent index for the barracks (the one accent no generator uses). */
 export const BARRACKS_COLOR = 1
-/** Shields share the yellow accent - their ring is the thing that identifies
- *  them, and the palette only has three colours to spend. */
-export const SHIELD_COLOR = 1
+/** Shields wear the king's pink - the two defensive centrepieces share a colour,
+ *  and SHIELD_LINE draws the barrier ring in the same one. This was left on 1
+ *  (yellow) when shields turned pink, so the tile, its ring and the support
+ *  pulse over it were three different colours. */
+export const SHIELD_COLOR = 0
 
 /** Shield radius in CELLS for a shield of `floors` storeys. Shared by the ring
  *  that draws it and the test that decides what crosses it, so the circle never

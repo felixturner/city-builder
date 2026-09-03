@@ -3,7 +3,7 @@ import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three
 import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges, turretRangeCells } from '../blockTypes.js'
 import { Buffs } from '../buffs.js'
 import { SHIELD_LINE } from '../palette.js'
-import { fxMaterial, glow } from '../fx.js'
+import { fxMaterial, glow, stutter } from '../fx.js'
 
 // Resting opacity of a shield ring, and where a flicker returns to.
 const SHIELD_OPACITY = 0.95
@@ -134,7 +134,7 @@ export class RangeVisuals {
       seen.add(t)
       t.box.getCenter(this._zc)
       const m = this.shield.place(t, this._zc.x + city.gridOffsetX, this._zc.y + city.gridOffsetZ)
-      if (!m.userData.flashing) m.visible = true
+      m.visible = true
     }
     this.shield.hideUnseen(seen)
   }
@@ -146,30 +146,16 @@ export class RangeVisuals {
    * anything you can see: the ring is sized by height, so it stayed exactly as
    * it was and the bonus arrived invisibly.
    *
-   * Two fast blinks rather than a fade, and done by toggling `visible` rather
-   * than tweening opacity: these are node materials, and their opacity is baked
-   * into the shader graph rather than read per frame, so animating it does
-   * nothing. The king's low-health flicker does the same thing for the same
-   * reason (City.flashKing).
+   * The house stutter (fx.stutter), blinking OPACITY rather than `visible`.
+   * Same thing to look at, but updateShieldRings sets every ring visible on
+   * each refresh - and a refresh runs in this very frame, since the support
+   * recompute is what called this - so a visible-toggle needed a flag to stop
+   * it being switched straight back on. Nothing writes the opacity per frame.
    */
   flashShield(tower) {
     const m = this.shield.meshes.get(tower)
     if (!m) return
-    gsap.killTweensOf(m)
-    // The same stutter the king's beam and ring strike in with
-    // (City.flickerKingBeam): uneven on/off times, because an even one reads as
-    // a strobe rather than something catching. Held for the length of it, since
-    // updateShieldRings sets every ring visible on each refresh and one runs in
-    // this very frame - the refresh that recomputed the support is what called
-    // this.
-    m.userData.flashing = true
-    const tl = gsap.timeline({
-      onComplete: () => { m.userData.flashing = false; m.visible = true },
-    })
-    for (const [t, on] of [
-      [0, true], [0.05, false], [0.09, true], [0.14, false],
-      [0.22, true], [0.26, false], [0.36, true],
-    ]) tl.set(m, { visible: on }, t)
+    stutter(gsap, m.material, { prop: 'opacity', on: SHIELD_OPACITY, off: 0 })
   }
 
   /** One accent disc per path generator, sized to its zone of control. */

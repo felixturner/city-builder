@@ -11,6 +11,7 @@ import {
 } from 'three/webgpu'
 import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 import { Sounds } from './lib/Sounds.js'
+import gsap from 'gsap'
 import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
@@ -31,6 +32,11 @@ const NO_AO = NO_AO_MRT
  *    2 damage and flashes a quick colored beam from muzzle to creep. Each laser
  *    tower has its own random color (tower.laserColor, assigned by City).
  */
+// Mortar blast dome: how long it lives, and how strongly it starts. Scale and
+// fade share both, so it grows and disappears as one motion.
+const BLAST_TIME = 0.45
+const BLAST_OPACITY = 0.6
+
 export class Turrets {
   static TURRET_TYPE = 3 // Peg_Top
   static LASER_TYPE = 4 // Divot_Top
@@ -104,7 +110,6 @@ export class Turrets {
     // Expanding transparent blast dome (sphere at y=0 -> only the top half shows).
     this.explosionGeo = new SphereGeometry(1, 16, 12)
     this.explosionRadius = this.mortarRadius // visual blast matches the AoE
-    this.explosions = []
 
     // Turret models from turrets.glb: Cube.002 = peg (bullet), Cube.006 = laser,
     // Cube.008 = mortar.
@@ -381,23 +386,6 @@ export class Turrets {
   update(dt) {
     this.beamPool.update(dt)
 
-    // Blast domes: pop scale to max fast (~0.12s ease-out), fade over ~0.45s.
-    for (let i = this.explosions.length - 1; i >= 0; i--) {
-      const e = this.explosions[i]
-      e.life += dt
-      const dur = 0.45
-      const f = e.life / dur
-      const popF = Math.min(1, e.life / 0.12)
-      const scale = this.explosionRadius * (1 - (1 - popF) * (1 - popF)) // ease-out to max
-      e.mesh.scale.setScalar(Math.max(0.001, scale))
-      e.mat.opacity = Math.max(0, 1 - f) * 0.6
-      if (f >= 1) {
-        this.scene.remove(e.mesh)
-        e.mat.dispose()
-        this.explosions.splice(i, 1)
-      }
-    }
-
     // Advance projectiles, resolve hits.
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i]
@@ -515,13 +503,25 @@ export class Turrets {
     // Blast dome: sphere centered at ground (y=0) so only the top half shows;
     // pops its scale up fast then fades out (animated in update()).
     const mat = fxMaterial(new MeshBasicNodeMaterial({
-      color: this._explodeColor.clone(), opacity: 0.6,
+      color: this._explodeColor.clone(), opacity: BLAST_OPACITY,
     }))
     const mesh = glow(new Mesh(this.explosionGeo, mat))
     mesh.position.set(x, 0, z)
     mesh.scale.setScalar(0.001)
     this.scene.add(mesh)
-    this.explosions.push({ mesh, mat, life: 0 })
+    // Scale and fade on ONE duration and ONE ease, like the support pulse and
+    // the king's death wave, so the dome's growth and its disappearance are a
+    // single motion. Hand-rolled per frame it popped to full size in 0.12s and
+    // then faded linearly for another 0.33 - most of its life was a full-size
+    // dome sitting still, which reads as not fading at all.
+    gsap.to(mesh.scale, {
+      x: this.explosionRadius, y: this.explosionRadius, z: this.explosionRadius,
+      duration: BLAST_TIME, ease: 'expo.out',
+    })
+    gsap.to(mat, {
+      opacity: 0, duration: BLAST_TIME, ease: 'expo.out',
+      onComplete: () => { this.scene.remove(mesh); mat.dispose() },
+    })
     Sounds.play('mortar-hit', 1.0, 0.15, 0.47)
   }
 }

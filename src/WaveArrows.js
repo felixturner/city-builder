@@ -1,6 +1,6 @@
 import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color, Vector2 } from 'three/webgpu'
 import gsap from 'gsap'
-import { fxMaterial, glow } from './fx.js'
+import { fxMaterial, glow, stutter } from './fx.js'
 
 /**
  * Arrows on the ground pointing IN from the sides the next wave arrives from.
@@ -11,11 +11,11 @@ import { fxMaterial, glow } from './fx.js'
  * the path the swarm will take.
  *
  * Opacity is driven by gsap, one clear behaviour at a time:
- *   - the arrows FADE IN over FADE_IN seconds when their countdown starts
- *   - an incoming swarm FLICKERS them to zero INCOMING_FLICKS times just
- *     before it pours (0.3s per down-up cycle)
- *   - an open king OVERRIDES everything with a steady alarm flicker, one
- *     quick blink per bleep
+ *   - the arrows STRIKE IN with a stutter when their countdown starts
+ *   - an incoming swarm STUTTERS them, on the king beam's timing, as it pours
+ *   - an open king USED TO override everything with a steady alarm blink. Off
+ *     for now: it ran until the king was sealed, which is most of a bad round,
+ *     and drowned out the one flicker that means something is coming.
  * Between tweens the opacity rests at a steady base level set per frame.
  *
  * House fx material throughout: additive blending with depthTest on /
@@ -28,10 +28,7 @@ const KING_CLEARANCE_CELLS = 1 // innermost tip stops this far from the king
 const Y = 0.12 // on the floor, above the grid and the flow field
 // How far INSIDE the bounds the big arrow sits, in cells.
 const OVERLAP_CELLS = 2
-const FADE_IN = 0.5 // seconds to fade up when the warning first appears
-const FLICK = 0.15 // seconds per leg of a flicker (0.3s down-and-up)
-const INCOMING_FLICKS = 5 // full cycles before a swarm lands
-const INCOMING_LEAD = INCOMING_FLICKS * FLICK * 2 // start so the last flick ends on arrival
+const FLICK = 0.15 // seconds per leg of the exposed-alarm blink
 const BLEEP_PERIOD = 0.7 // seconds between exposed-alarm blinks (matches the siren)
 const ALPHA_STEADY = 0.7 // "they are over there", not "brace"
 const ALPHA_COUNTDOWN = 0.45 // during the pre-wave countdown
@@ -75,7 +72,7 @@ export class WaveArrows {
         shown: false, // fade-in played for the current appearance
         flicker: null, // active incoming-flicker timeline
         alarm: null, // active exposed-alarm timeline
-        armed: false, // incoming flicker already played for the current swarm
+        base: ALPHA_STEADY, // opacity a flicker returns to; set per frame
       })
     }
   }
@@ -84,19 +81,41 @@ export class WaveArrows {
     return this.city.visibleHalf + (LENGTH_CELLS / 2 - OVERLAP_CELLS) * this.city.cellUnit
   }
 
-  /** A swarm is pouring NOW (Creeps calls this). If its incoming flicker
-   *  somehow hasn't played (e.g. a squeezed schedule), play it late. */
+  /**
+   * A swarm is pouring NOW - Creeps calls this from _release. The single
+   * trigger for the stutter.
+   *
+   * There used to be a second, PREDICTIVE one: update() polled Creeps for how
+   * far off the next swarm was, every frame, and started the stutter early so
+   * it finished as the swarm landed - with this as a fallback for when that
+   * missed.
+   * That was worth its complexity while the stutter ran 1.5s. At 0.36s "just
+   * before" and "as it lands" are the same moment, so the prediction bought
+   * nothing - and once the lead-in and the stutter became the same length it
+   * ended exactly as this fired, so every swarm was stuttered twice.
+   */
   flash(edge) {
     const e = this.edges[edge]
     if (e && e.shown && !e.flicker && !e.alarm) this._startFlicker(e)
   }
 
-  /** 5 quick down-to-zero-and-back cycles; ends back at the steady level. */
+  /**
+   * The king's stutter, on an arrow (City.flickerKingBeam).
+   *
+   * Uneven on/off times, each gap longer than the last, so it reads as
+   * something struggling to catch rather than as a strobe - which is what an
+   * even five-cycle blink looked like. Same timing as the beam striking in and
+   * as a shield taking a support trail, so a flicker means one thing across the
+   * whole board.
+   */
   _startFlicker(e) {
     e.flicker?.kill()
-    e.flicker = gsap.to(e.mat, {
-      opacity: 0, duration: FLICK, ease: 'none',
-      yoyo: true, repeat: INCOMING_FLICKS * 2 - 1,
+    // Blinks back to the edge's current level, not to 1 - the arrows rest
+    // dimmer during a countdown than they do mid-wave.
+    // Blinks back to the edge's current level, not to 1 - the arrows rest
+    // dimmer during a countdown than they do mid-wave.
+    e.flicker = stutter(gsap, e.mat, {
+      prop: 'opacity', on: e.base, off: 0,
       onComplete: () => { e.flicker = null },
     })
   }
@@ -122,7 +141,6 @@ export class WaveArrows {
     gsap.killTweensOf(e.mat)
     e.mat.opacity = 0
     e.shown = false
-    e.armed = false
     e.big.visible = false
     for (const m of e.trail) m.visible = false
   }
@@ -170,7 +188,6 @@ export class WaveArrows {
     const edges = clock.waveEdges(wave)
     const cu = this.city.cellUnit
     const r = this._radius()
-    const exposed = !!creeps.exposedActive
 
     // The trail aims at the KING, not the board centre.
     const king = this.city.king
@@ -185,32 +202,24 @@ export class WaveArrows {
       e.mat.color.copy(this._colour)
 
       const base = countdown ? ALPHA_COUNTDOWN : ALPHA_STEADY
+      e.base = base // the stutter blinks back to this
 
-      // First frame of this appearance: fade in from nothing.
+      // First frame of this appearance: strike in with the stutter, the same way
+      // the king's beam does and the same way a swarm pouring reads. A half
+      // second fade said "something is gradually becoming true"; these arrows
+      // are an alarm going off.
       if (!e.shown) {
         e.shown = true
-        e.armed = false
-        gsap.killTweensOf(e.mat)
-        gsap.fromTo(e.mat, { opacity: 0 }, { opacity: base, duration: FADE_IN, ease: 'power1.out' })
+        this._startFlicker(e)
       }
 
-      // The open-king alarm overrides every other flicker while it lasts.
-      if (exposed && !e.alarm) this._startAlarm(e)
-      else if (!exposed && e.alarm) { this._stopAlarm(e); e.mat.opacity = base }
+      // The open-king alarm is off for now - it ran forever until the king was
+      // sealed and drowned out the one flicker that means something is coming.
+      // _startAlarm is left in place for when it comes back.
+      if (e.alarm) { this._stopAlarm(e); e.mat.opacity = base }
 
-      if (!exposed) {
-        // A swarm is close: flicker down to zero INCOMING_FLICKS times, timed
-        // to finish as it lands. One run per swarm - re-armed when the next
-        // one is still far away.
-        const swarmIn = countdown ? away : creeps.nextSwarmIn(edge)
-        if (swarmIn > INCOMING_LEAD + 0.25) e.armed = false
-        if (!e.armed && swarmIn <= INCOMING_LEAD && swarmIn > 0) {
-          e.armed = true
-          this._startFlicker(e)
-        }
-        // Steady level between animations.
-        if (!e.flicker && !gsap.isTweening(e.mat)) e.mat.opacity = base
-      }
+      // Steady level between animations.
+      if (!e.flicker && !gsap.isTweening(e.mat)) e.mat.opacity = base
 
       // Placement. Edges 0/1 are the two X sides, 2/3 the two Z sides; every
       // arrow points the way the creeps will travel.
