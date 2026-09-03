@@ -259,7 +259,8 @@ export class LootBoxes {
   payOut(b) {
     const mana = this.city.mana
     if (!mana) return
-    mana.econ?.earnFrom('crate', mana.add(b.reward))
+    const gained = mana.add(b.reward)
+    mana.econ?.earnFrom('crate', gained)
 
     this.city.floatingText?.spawn(
       b.x, b.textY, b.z, `+${b.reward} energy`, ENERGY_COLOR, 0, null

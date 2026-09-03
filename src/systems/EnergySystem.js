@@ -582,7 +582,13 @@ export class EnergySystem {
         }
         // The resource lands at the moment its caption pops, not up front, so
         // the bar climbs in step with the bleeps.
-        city.mana.econ?.earnFrom(e.src, city.mana.add(e.amt))
+        // Banked FIRST, attributed second. These were one expression -
+        // `city.mana.econ?.earnFrom(src, city.mana.add(amt))` - and optional
+        // chaining short-circuits the whole call including its arguments, so
+        // with no econ log (i.e. any game not run with ?dev) the add never
+        // happened and nothing in the city earned anything at all.
+        const gained = city.mana.add(e.amt)
+        city.mana.econ?.earnFrom(e.src, gained)
         // No "+N" caption here any more: the flying box and the bar climbing
         // already say it, and at full income the board was carpeted in them.
         // The sound the caption used to carry fires on its own.
