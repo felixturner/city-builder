@@ -357,7 +357,7 @@ export class Turrets {
     const target = this.nearestCreep(muzzle.x, muzzle.z, range, muzzle)
     if (!target) return false
 
-    const mesh = new Mesh(this.projGeo, this.projMatFor(tower.colorIndex))
+    const mesh = new Mesh(this.projGeo, this.projMatFor(tower.accentIndex))
     mesh.position.copy(muzzle)
     mesh.castShadow = true
     this.scene.add(mesh)

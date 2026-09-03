@@ -14,6 +14,14 @@ const SLOTS = 4
 const REFILL_TIME = 1.33 // seconds for a used/discarded palette slot to refill
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
+// The drag ghost's two states. Both white: placeable is nearly solid, blocked
+// is a thin wash you can see the board through. Over the 0x999999 floor that is
+// about 0xfa against 0xc5 - "a thing" against "not really there", rather than
+// two shades of the same block.
+const GHOST_ALPHA_OK = 0.95
+const GHOST_ALPHA_BLOCKED = 0.4
+const GHOST_BLOCKED_LIFT = 0.5 // blocked tint: halfway from the tile to white
+
 // Tray opacity while a tile is in hand, so the ghost stays readable through it.
 const TRAY_DRAG_OPACITY = '0.25'
 
@@ -76,7 +84,7 @@ export class TilePalette {
       TopType.BARRACKS, TopType.SHIELD,
     ]
     for (const typeTop of singles) {
-      tiles.push({ w: 1, h: 1, typeTop, colorIndex: tileColorIndex(typeTop) })
+      tiles.push({ w: 1, h: 1, typeTop, accentIndex: tileColorIndex(typeTop) })
     }
     return tiles
   }
@@ -95,8 +103,8 @@ export class TilePalette {
       return { wall: true, shapeName: spec.shapeName, rot: simInt(0, states - 1) }
     }
     // Generators use their fixed type colour; turrets keep a random accent.
-    const colorIndex = tileColorIndex(spec.typeTop)
-    return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex }
+    const accentIndex = tileColorIndex(spec.typeTop)
+    return { w: spec.s, h: spec.s, typeTop: spec.typeTop, accentIndex }
   }
 
   /** Cell offsets for a tile at a given rotation (tetromino state / transposed rect). */
@@ -118,9 +126,9 @@ export class TilePalette {
     if (isShield(tile)) {
       out.set(SHIELD_LINE)
     } else if (isGenerator(tile)) {
-      out.copy(this.city.accentColors[tile.colorIndex])
+      out.copy(this.city.accentColors[tile.accentIndex])
     } else if (isTurret(tile) || isBarracks(tile)) {
-      out.set(CITY.ghostBlocked)
+      out.set(CITY.hardware)
     } else {
       out.copy(Tower.WALL_COLOR)
     }
@@ -304,10 +312,10 @@ export class TilePalette {
     const opts = tile.wall
       ? {
         tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
-        typeTop: TopType.SQUARE, colorIndex: 0,
+        typeTop: TopType.SQUARE, accentIndex: 0,
       }
       : {
-        typeTop: tile.typeTop, colorIndex: tile.colorIndex,
+        typeTop: tile.typeTop, accentIndex: tile.accentIndex,
         rotation: this._roofRotation(tile, rot),
       }
     const placed = city.placeTileFree(e.gx, e.gy, cells, opts)
@@ -654,11 +662,16 @@ export class TilePalette {
     // the rotate button still works.
     this._setTrayFaded(true)
     const base = this._tileColor3(tile, new Color())
-    // Placeable = bright white; blocked = the tile colour pulled well toward
-    // black, so the two states can't be mistaken and the dark one still can't
-    // vanish into the (light) floor.
+    // Placeable is solid white. Blocked is halfway between white and the tile's
+    // own colour, at a much lower alpha - so it stays a pale wash you can see
+    // the board through, while still carrying a hint of WHICH tile is in hand.
+    //
+    // Darkening the blocked state was the obvious move and the wrong one:
+    // shadeForFloor darkens the top of a real stack in exactly the same way, so
+    // a dark ghost read as a block already placed rather than as one being
+    // turned away.
     const hi = this._white.clone()
-    const lo = base.clone().multiplyScalar(0.35)
+    const lo = base.clone().lerp(this._white, GHOST_BLOCKED_LIFT)
     this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, lo, rot, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined }
     mat.color.copy(base)
   }
@@ -684,7 +697,7 @@ export class TilePalette {
     const gx = c.gx - ax
     const gy = c.gy - ay
     // Coloured generators are subject to the enclosure colour-claim rule.
-    const claimColor = !tile.wall && isGenerator(tile) ? tile.colorIndex : -1
+    const claimColor = !tile.wall && isGenerator(tile) ? tile.accentIndex : -1
     let valid = city.fits(gx, gy, cells, claimColor)
     // One enclosure generator per enclosure: block placing into an already-claimed area.
     // One claimant per enclosure - and the king counts, so you can't drop a hole
@@ -759,11 +772,16 @@ export class TilePalette {
     }
     ghost.visible = true
     // Tick as the ghost snaps to a new cell, so the grid feels magnetic rather
-    // than the tile just sliding. Pitched up when the cell is a legal drop.
+    // than the tile just sliding.
+    //
+    // Pitch carries whether the cell is legal - 1.0 against 0.7, a clear drop.
+    // Blocked is a little quieter too, but only a little: at half the volume it
+    // read as further away rather than as different, and was easy to miss
+    // entirely.
     const cellKey = `${t.gx},${t.gy}`
     if (cellKey !== this.drag.lastCell) {
       this.drag.lastCell = cellKey
-      if (!this.drag.suppressSnap) Sounds.play('snap', t.valid ? 1.0 : 0.75, 0.06, t.valid ? 0.15 : 0.08)
+      if (!this.drag.suppressSnap) Sounds.play('snap', t.valid ? 1.0 : 0.7, 0.06, t.valid ? 0.15 : 0.11)
     }
     const cu = city.cellUnit
     if (tile.wall) {
@@ -785,9 +803,9 @@ export class TilePalette {
       // Corner-shaped roofs have a facing; the symmetric ones don't care.
       ghost.rotation.y = this._roofRotation(tile, this.drag.rot)
     }
-    // Placeable is unmistakably bright, blocked unmistakably dark.
+    // Placeable is solid; blocked is a pale wash.
     mat.color.copy(t.valid ? this.drag.hi : this.drag.lo)
-    mat.opacity = t.valid ? 0.95 : 0.7
+    mat.opacity = t.valid ? GHOST_ALPHA_OK : GHOST_ALPHA_BLOCKED
   }
 
   /** Dim the tray so a ghost dragged over it stays readable. */
@@ -820,10 +838,10 @@ export class TilePalette {
       const opts = tile.wall
         ? {
           tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
-          typeTop: TopType.SQUARE, colorIndex: 0,
+          typeTop: TopType.SQUARE, accentIndex: 0,
         }
         : {
-          typeTop: tile.typeTop, colorIndex: tile.colorIndex,
+          typeTop: tile.typeTop, accentIndex: tile.accentIndex,
           rotation: this._roofRotation(tile, rot),
         }
       const placed = city.placeTileFree(target.gx, target.gy, target.cells, opts)

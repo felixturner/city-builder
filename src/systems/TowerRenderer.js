@@ -41,16 +41,16 @@ export class TowerRenderer {
   applyLitTowers() {
     const city = this.city
     for (const tower of city.towers) {
-      tower.isLit = tower.typeTop === TopType.SUPPORT
-      if (tower.isLit) {
-        const accent = city.accentColors[tower.colorIndex]
-        tower.litColor = accent.clone()
+      tower.pulses = tower.typeTop === TopType.SUPPORT
+      if (tower.pulses) {
+        const accent = city.accentColors[tower.accentIndex]
+        tower.pulseColor = accent.clone()
         city.setTowerColor(tower, accent)
       } else {
-        tower.litColor = null
+        tower.pulseColor = null
         if (isTurret(tower)) {
           this.colorTurretTower(tower)
-          city.setTowerColor(tower, tower.baseColor)
+          city.setTowerColor(tower, tower.blockColor)
         }
       }
     }
@@ -58,9 +58,9 @@ export class TowerRenderer {
 
   /** Turrets keep grey blocks but stash the lot accent on laserColor. */
   colorTurretTower(tower) {
-    tower.laserColor = this.city.accentColors[tower.colorIndex].clone()
-    tower.baseColor = this.turretColor
-    tower.topColor = this.turretColor
+    tower.laserColor = this.city.accentColors[tower.accentIndex].clone()
+    tower.blockColor = this.turretColor
+    tower.roofColor = this.turretColor
   }
 
   /** Hide towers based on distance-weighted skip chance (dormant/empty stay hidden). */
@@ -115,11 +115,11 @@ export class TowerRenderer {
     const ids = city.tetroGeom.get(`${tower.tetro.name}:${tower.tetro.rot}`)
     for (const idx of tower.floorInstances) mesh.setGeometryIdAt(idx, ids.bodyId)
     mesh.setGeometryIdAt(tower.roofInstance, ids.roofId)
-    tower.isLit = false
-    tower.litColor = null
+    tower.pulses = false
+    tower.pulseColor = null
     tower.laserColor = null
-    tower.topColor = Tower.WALL_COLOR
-    tower.baseColor = tower.topColor // under-blocks match the top
+    tower.roofColor = Tower.WALL_COLOR
+    tower.blockColor = tower.roofColor // under-blocks match the top
     this.shadeStack(tower)
   }
 
@@ -142,7 +142,7 @@ export class TowerRenderer {
     // than hidden or removed, so you can see exactly which parts of the city
     // went dark and roughly how far the shutdown reached.
     const dark = this.city.upkeep?.isDark(tower)
-    const base = dark ? this._darkShade(tower.baseColor) : tower.baseColor
+    const base = dark ? this._darkShade(tower.blockColor) : tower.blockColor
     for (let f = 0; f < tower.floorInstances.length; f++) {
       Tower.shadeForFloor(base, f, n, this._shade)
       mesh.setColorAt(tower.floorInstances[f], this._shade)
@@ -178,23 +178,23 @@ export class TowerRenderer {
 
     if (tower.king) {
       // The king wears one of the three light city accents, picked in placeKing.
-      const accent = city.accentColors[tower.colorIndex] || KING_COLOR
-      tower.isLit = false
-      tower.litColor = null
-      tower.baseColor = accent.clone()
-      tower.topColor = accent.clone().multiplyScalar(Tower.ROOF_SHADE_BIAS)
-      for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.baseColor)
-      mesh.setColorAt(tower.roofInstance, tower.topColor)
+      const accent = city.accentColors[tower.accentIndex] || KING_COLOR
+      tower.pulses = false
+      tower.pulseColor = null
+      tower.blockColor = accent.clone()
+      tower.roofColor = accent.clone().multiplyScalar(Tower.ROOF_SHADE_BIAS)
+      for (const idx of tower.floorInstances) mesh.setColorAt(idx, tower.blockColor)
+      mesh.setColorAt(tower.roofInstance, tower.roofColor)
       return
     }
 
     if (isBarracks(tower)) {
       // Barracks wear turret grey - the rooftop soldier is what identifies them.
-      tower.isLit = false
-      tower.litColor = null
+      tower.pulses = false
+      tower.pulseColor = null
       tower.laserColor = null
-      tower.baseColor = this.turretColor
-      tower.topColor = this.turretColor
+      tower.blockColor = this.turretColor
+      tower.roofColor = this.turretColor
       this.shadeStack(tower)
       return
     }
@@ -203,33 +203,33 @@ export class TowerRenderer {
       // Shields wear the dedicated shield red, same as their barrier ring -
       // a hazard colour, deliberately outside the three building accents.
       const accent = new Color(SHIELD_LINE)
-      tower.isLit = false
-      tower.litColor = null
+      tower.pulses = false
+      tower.pulseColor = null
       tower.laserColor = null
-      tower.baseColor = accent.clone()
-      tower.topColor = accent.clone()
+      tower.blockColor = accent.clone()
+      tower.roofColor = accent.clone()
       this.shadeStack(tower)
       return
     }
 
-    tower.isLit = tower.typeTop === TopType.SUPPORT
+    tower.pulses = tower.typeTop === TopType.SUPPORT
     if (isGenerator(tower)) {
       // Generators always use their fixed accent colour — no per-instance colour variation.
-      tower.colorIndex = genColorIndex(tower.typeTop) ?? 0
-      const accent = city.accentColors[tower.colorIndex]
-      tower.litColor = accent.clone()
-      tower.baseColor = accent.clone()
-      tower.topColor = accent.clone()
+      tower.accentIndex = genColorIndex(tower.typeTop) ?? 0
+      const accent = city.accentColors[tower.accentIndex]
+      tower.pulseColor = accent.clone()
+      tower.blockColor = accent.clone()
+      tower.roofColor = accent.clone()
       for (const idx of tower.floorInstances) mesh.setColorAt(idx, accent)
       mesh.setColorAt(tower.roofInstance, this._shade.copy(accent).multiplyScalar(Tower.ROOF_SHADE_BIAS))
     } else {
-      tower.litColor = null
+      tower.pulseColor = null
       if (isTurret(tower)) {
         this.colorTurretTower(tower)
       } else {
         tower.laserColor = null
-        tower.baseColor = Tower.WALL_COLOR
-        tower.topColor = Tower.WALL_COLOR
+        tower.blockColor = Tower.WALL_COLOR
+        tower.roofColor = Tower.WALL_COLOR
       }
       this.shadeStack(tower)
     }
@@ -272,7 +272,7 @@ export class TowerRenderer {
 
     const center = tower.box.getCenter(city.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * city.floorHeight
-    const color = tower.litColor || tower.baseColor
+    const color = tower.pulseColor || tower.blockColor
     city.debris.spawn(center.x + city.gridOffsetX, y, center.y + city.gridOffsetZ, 0.8, color, 10)
     if (!tower.king) Sounds.play('break2', 1.0, 0.2)
 

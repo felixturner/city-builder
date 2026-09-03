@@ -223,7 +223,7 @@ export class Enclosure {
       if (better) winners.set(rid, t)
     }
     for (const [rid, t] of winners) {
-      regions[rid].color = t.colorIndex
+      regions[rid].color = t.accentIndex
       t.enclosureRegionCells = regions[rid].count
     }
 

@@ -101,8 +101,8 @@ export class LootBoxes {
     // Every star is the same yellow. They used to draw one of the three accents
     // at random, which made a colour that means nothing - the accents are the
     // vocabulary the tiles use, and a crate borrowing one read as a tile type.
-    const colorIndex = STAR_COLOR
-    const accent = ACCENT_COLORS[colorIndex]
+    const accentIndex = STAR_COLOR
+    const accent = ACCENT_COLORS[accentIndex]
     // Emissive is back to a sane level now that glow is opt-in by layer: the
     // crate no longer has to out-shine the whole board to be picked out by a
     // luminance threshold, it just has to be on the layer.
@@ -125,7 +125,7 @@ export class LootBoxes {
     mesh.castShadow = true
     this.scene.add(mesh)
     this.boxes.push({
-      mesh, mat, colorIndex, x, z,
+      mesh, mat, accentIndex, x, z,
       phase: Math.random() * Math.PI * 2, // so they don't bob in lockstep
       active: true, // set properly by refresh()
       opening: false,

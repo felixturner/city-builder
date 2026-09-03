@@ -141,8 +141,8 @@ export class Trails {
     // Get lit towers grouped by color index
     const litByColor = [[], [], []] // 3 color indices
     for (const tower of this.city.towers) {
-      if (tower.visible && tower.isLit) {
-        litByColor[tower.colorIndex].push(tower)
+      if (tower.visible && tower.pulses) {
+        litByColor[tower.accentIndex].push(tower)
       }
     }
 
@@ -164,7 +164,7 @@ export class Trails {
       if (validColors.length === 0) break
 
       const colorData = validColors[Math.floor(Math.random() * validColors.length)]
-      const colorIndex = colorData.idx
+      const accentIndex = colorData.idx
       const litTowers = colorData.towers
 
       // Pick a random start tower
@@ -188,7 +188,7 @@ export class Trails {
       const path = this.findPath(startTower, targetTower)
       if (path && path.length >= 2) {
         this.paths.push(path)
-        this.createPathMesh(path, pathsCreated, colorIndex)
+        this.createPathMesh(path, pathsCreated, accentIndex)
         pathsCreated++
       }
     }
@@ -198,7 +198,7 @@ export class Trails {
 
   /**
    * Draw connectors for an explicit list of tower pairs (power lines).
-   * Each pair is [towerA, towerB]; the trail color follows towerA's colorIndex.
+   * Each pair is [towerA, towerB]; the trail color follows towerA's accentIndex.
    * @param {Array<[Tower, Tower]>} pairs
    */
   setConnectors(pairs) {
@@ -209,7 +209,7 @@ export class Trails {
       if (path && path.length >= 2) {
         this.paths.push(path)
         this.pathTowers.push([a, b])
-        this.createPathMesh(path, idx, a.colorIndex)
+        this.createPathMesh(path, idx, a.accentIndex)
         idx++
       }
     }
@@ -485,7 +485,7 @@ export class Trails {
   /**
    * Create a mesh for a path with glowing animated material
    */
-  createPathMesh(path, pathIndex, colorIndex) {
+  createPathMesh(path, pathIndex, accentIndex) {
     if (path.length < 2) return
 
     // Calculate total path length for UV mapping
@@ -564,7 +564,7 @@ export class Trails {
     geometry.computeVertexNormals()
 
     // Create glowing animated material
-    const material = this.createGlowMaterial(colorIndex)
+    const material = this.createGlowMaterial(accentIndex)
 
     const mesh = glow(new Mesh(geometry, material))
     mesh.frustumCulled = false
@@ -589,9 +589,9 @@ export class Trails {
    * phase moved into the geometry (see createPathMesh) and colour is the only
    * axis left - three materials, compiled once for the whole session.
    */
-  createGlowMaterial(colorIndex) {
+  createGlowMaterial(accentIndex) {
     if (!this._matCache) this._matCache = new Map()
-    const cached = this._matCache.get(colorIndex)
+    const cached = this._matCache.get(accentIndex)
     if (cached) return cached
 
     const material = new MeshBasicNodeMaterial()
@@ -607,7 +607,7 @@ export class Trails {
     const crossPos = uv().x
 
     // Get the trail color for this path (one of the tower colors)
-    const trailColor = this.trailColors[colorIndex]
+    const trailColor = this.trailColors[accentIndex]
 
     // Animated position walking down the path (in world units). The per-path
     // phase offset that used to live here is baked into uv.y instead, so this
@@ -648,7 +648,7 @@ export class Trails {
       normal: vec3(0, 1, 0)
     })
 
-    this._matCache.set(colorIndex, material)
+    this._matCache.set(accentIndex, material)
     return material
   }
 

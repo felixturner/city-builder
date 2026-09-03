@@ -167,7 +167,7 @@ export class RangeVisuals {
       seen.add(t)
       t.box.getCenter(this._zc)
       const m = this.zoc.place(t, this._zc.x + city.gridOffsetX, this._zc.y + city.gridOffsetZ)
-      m.material.color.copy(city.accentColors[t.colorIndex])
+      m.material.color.copy(city.accentColors[t.accentIndex])
       m.visible = true
     }
     this.zoc.hideUnseen(seen)

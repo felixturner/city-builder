@@ -119,7 +119,7 @@ export class Soldiers {
       // barracks is built up or knocked down - re-derive only when it changes.
       if (mesh.userData.floors !== t.numFloors) {
         mesh.userData.floors = t.numFloors
-        Tower.roofShade(t, t.topColor || t.baseColor, mesh.material.color)
+        Tower.roofShade(t, t.roofColor || t.blockColor, mesh.material.color)
       }
       // Re-place every frame, riding the roof's ANIMATED height while the roof is
       // in flight. The floor count jumps the instant a block is added while the

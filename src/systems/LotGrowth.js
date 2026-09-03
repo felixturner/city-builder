@@ -185,14 +185,14 @@ export class LotGrowth {
         const lot = city.lots[lotY][lotX]
         const geom = new BufferGeometry()
         geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
-        const outline = new LineSegments(geom, this.outlineMats[lot.colorIndex])
+        const outline = new LineSegments(geom, this.outlineMats[lot.accentIndex])
         outline.visible = false // lot outlines hidden (continuous build surface)
         lot.outline = outline
         city.scene.add(outline)
 
         const center = city.gridToWorld(gx0 + city.lotSize / 2, gz0 + city.lotSize / 2)
         const fillMat = new LineBasicNodeMaterial({
-          color: city.accentColors[lot.colorIndex].clone(),
+          color: city.accentColors[lot.accentIndex].clone(),
           transparent: true,
           opacity: 0,
           depthWrite: false,

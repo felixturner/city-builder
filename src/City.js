@@ -257,7 +257,7 @@ export class City {
         // things a lot's colour feeds (its outline and the dashed growth fill)
         // are shown for dormant lots alone. It used to be rolled per lot, 169
         // draws off the random stream to tint things nobody sees.
-        row.push({ lotX, lotY, colorIndex: LOT_COLOR, towers: [], active: true })
+        row.push({ lotX, lotY, accentIndex: LOT_COLOR, towers: [], active: true })
       }
       this.lots.push(row)
     }
@@ -398,7 +398,7 @@ export class City {
   /**
    * Place a palette tile freely into empty cells. `cells` is the footprint
    * (offsets from gx,gy); `opts` carries render info: { tetro?: {name,rot},
-   * typeTop, colorIndex }. Grabs a pooled tower and builds it at
+   * typeTop, accentIndex }. Grabs a pooled tower and builds it at
    * level 1 - a tile is a block with a roof on it or it is nothing at all, so
    * there is no roof-only state to place into. Returns the tower or null if the
    * pool is exhausted.
@@ -435,7 +435,7 @@ export class City {
     t.rotation = opts.rotation || 0 // corner-shaped roofs (shield/barracks) have a facing
     t.resetAnimation() // belt and braces: nothing in-flight from a previous life
     t.skipFactor = 2 // always passes visibility
-    t.colorIndex = opts.colorIndex
+    t.accentIndex = opts.accentIndex
     t.typeTop = opts.typeTop
 
     for (const [dx, dy] of cells) this.occupied[gy + dy][gx + dx] = true
@@ -454,7 +454,7 @@ export class City {
     const center = tower.box.getCenter(this.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * this.floorHeight
     this.debris.spawn(center.x + this.gridOffsetX, y, center.y + this.gridOffsetZ, 0.8,
-      tower.litColor || tower.baseColor, 12)
+      tower.pulseColor || tower.blockColor, 12)
     Sounds.play('break2', 1.0, 0.2)
     this.freePlacedTower(tower)
   }
@@ -620,7 +620,7 @@ export class City {
     // Its own top type, so no predicate that switches on typeTop can mistake
     // the king for a generator or a turret.
     const t = this.placeTileFree(ccx, ccy, [[0, 0]], {
-      typeTop: TopType.KING, colorIndex: kingColor, king: true,
+      typeTop: TopType.KING, accentIndex: kingColor, king: true,
     }, true)
     if (!t) return
     // The king can outgrow the pool's per-tower allocation (Crown the King adds
@@ -657,8 +657,8 @@ export class City {
     const mat = mesh.material
     // Remembered on first use: these materials are built in two different
     // places, and the flash has to return to whichever colour this one is.
-    if (!mat.userData.baseColor) mat.userData.baseColor = mat.color.clone()
-    const base = mat.userData.baseColor
+    if (!mat.userData.blockColor) mat.userData.blockColor = mat.color.clone()
+    const base = mat.userData.blockColor
     gsap.killTweensOf(mat.color)
     mat.color.setRGB(1, 1, 1)
     gsap.to(mat.color, {
@@ -762,7 +762,7 @@ export class City {
       // Create floor instances (base geometry)
       for (let f = 0; f < this.floorSlots; f++) {
         const idx = this.towerMesh.addInstance(geomIds[tower.typeBottom])
-        this.towerMesh.setColorAt(idx, tower.baseColor)
+        this.towerMesh.setColorAt(idx, tower.blockColor)
         this.towerMesh.setVisibleAt(idx, false)
         tower.floorInstances.push(idx)
         this.instanceToTower.set(idx, tower)
@@ -770,7 +770,7 @@ export class City {
 
       // Create roof instance (top geometry)
       tower.roofInstance = this.towerMesh.addInstance(geomIds[roofGeomIndex(tower.typeTop)])
-      this.towerMesh.setColorAt(tower.roofInstance, tower.topColor)
+      this.towerMesh.setColorAt(tower.roofInstance, tower.roofColor)
       this.towerMesh.setVisibleAt(tower.roofInstance, false)
       this.instanceToTower.set(tower.roofInstance, tower)
     }
@@ -789,13 +789,13 @@ export class City {
       t.floorInstances = []
       for (let f = 0; f < this.floorSlots; f++) {
         const idx = this.towerMesh.addInstance(geomIds[defBottom])
-        this.towerMesh.setColorAt(idx, t.baseColor)
+        this.towerMesh.setColorAt(idx, t.blockColor)
         this.towerMesh.setVisibleAt(idx, false)
         t.floorInstances.push(idx)
         this.instanceToTower.set(idx, t)
       }
       t.roofInstance = this.towerMesh.addInstance(geomIds[0])
-      this.towerMesh.setColorAt(t.roofInstance, t.topColor)
+      this.towerMesh.setColorAt(t.roofInstance, t.roofColor)
       this.towerMesh.setVisibleAt(t.roofInstance, false)
       this.instanceToTower.set(t.roofInstance, t)
       this.towers.push(t)
@@ -858,7 +858,7 @@ export class City {
       const staggerDelay = (dist / maxDist) * staggerDuration
 
       // Animate each floor sequentially (no debris during intro)
-      const baseColor = tower.isLit && tower.litColor ? tower.litColor : tower.baseColor
+      const blockColor = tower.pulses && tower.pulseColor ? tower.pulseColor : tower.blockColor
       const floorShade = new Color()
       // Volume fades based on distance (0 at 3 lots away)
       const maxSoundDist = this.cellSize * 3 // 3 lots
@@ -879,7 +879,7 @@ export class City {
           // Each block goes in at its own shade in the stack gradient - no
           // brighten-then-settle, which during the intro read as the city
           // flickering as it built.
-          Tower.shadeForFloor(baseColor, f, maxFloorsFor(tower), floorShade)
+          Tower.shadeForFloor(blockColor, f, maxFloorsFor(tower), floorShade)
           tower.animateNewFloor(
             this.towerMesh,
             this.floorHeight,
@@ -1147,7 +1147,7 @@ export class City {
    * A tile being chewed on had no colour tell at all - only the shake and a
    * thunk - so a wall under attack looked the same as one nobody had touched.
    * The tint can't go through the generators' pulse path, which needs a
-   * `litColor` that walls and the king don't have: lerp the tower's own base
+   * `pulseColor` that walls and the king don't have: lerp the tower's own block
    * colour toward white by the envelope instead.
    */
   updateHitFlashes(dt) {
@@ -1159,7 +1159,7 @@ export class City {
       // to them would tint an unrelated tile.
       if (!tower.visible) { this._hitFlashes.delete(tower); continue }
       f.t = Math.max(0, f.t - dt / f.dur)
-      this._flashColor.copy(tower.baseColor).lerp(WHITE_C, f.t * 0.85)
+      this._flashColor.copy(tower.blockColor).lerp(WHITE_C, f.t * 0.85)
       this.setTowerColor(tower, this._flashColor)
       // Back to its own shading once the flash is spent, so the stack gradient
       // returns rather than the whole tower being left one flat colour.
@@ -1192,7 +1192,7 @@ export class City {
   growTowerSlots(tower, slots) {
     while (tower.floorInstances.length < slots) {
       const idx = this.towerMesh.addInstance(this.geomIds[tower.typeBottom])
-      this.towerMesh.setColorAt(idx, tower.baseColor)
+      this.towerMesh.setColorAt(idx, tower.blockColor)
       this.towerMesh.setVisibleAt(idx, false)
       tower.floorInstances.push(idx)
       this.instanceToTower.set(idx, tower)

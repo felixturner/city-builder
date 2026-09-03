@@ -29,7 +29,7 @@ export function cellBounds(cells) {
 export function tileColor(tile, accents) {
   if (tile.wall) return `#${Tower.WALL_COLOR.getHexString()}`
   if (isShield(tile)) return SHIELD_LINE
-  if (isGenerator(tile)) return `#${accents[tile.colorIndex].getHexString()}`
+  if (isGenerator(tile)) return `#${accents[tile.accentIndex].getHexString()}`
   if (isTurret(tile) || isBarracks(tile)) return '#9aa0aa'
   return `#${Tower.WALL_COLOR.getHexString()}`
 }

@@ -40,7 +40,7 @@ export const LIME = ACCENTS[1]
 export const BLUE = ACCENTS[2]
 
 /** Accent INDEX by name, for the fields that store an index into ACCENT_COLORS
- *  (tower.colorIndex, tile specs, the enclosure claim map). */
+ *  (tower.accentIndex, tile specs, the enclosure claim map). */
 export const ACCENT = { PINK: 0, LIME: 1, BLUE: 2 }
 
 /** Build currency: every energy figure, caption and pulse. */
@@ -73,8 +73,10 @@ export const CITY = {
   outline: 0xffffff,
   /** Ground grid lines, fine and coarse. */
   grid: 0x888888,
-  /** A tile in hand that cannot be placed where the cursor is. */
-  ghostBlocked: 0x9aa0aa,
+  /** Turret and barracks blocks: a cool grey, a shade off the wall, so hardware
+   *  reads as hardware. (Not the blocked drag ghost - that is the held tile's
+   *  own colour darkened, see TilePalette.) */
+  hardware: 0x9aa0aa,
 }
 
 /**

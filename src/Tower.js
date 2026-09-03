@@ -58,7 +58,7 @@ export class Tower {
 
   /** The colour a tower's roof should be: the shade of the highest block under
    *  it, with the lighting bias applied. Single source for the renderer AND the
-   *  hover tween - the tween used to write flat topColor here, which quietly
+   *  hover tween - the tween used to write a flat roof colour here, which quietly
    *  undid the stack gradient every time the pointer crossed a tower. */
   static roofShade(tower, base, out) {
     // The tower's CAP, not how many instance slots it was handed. Every tower is
@@ -78,10 +78,19 @@ export class Tower {
     this.box = new Box2()
     this.numFloors = 0  // Height in floors. A LIVE tile is always >= 1; 0 only ever means a pooled/hidden slot.
     this.rotation = 0
-    this.topColor = Tower.WALL_COLOR
-    this.baseColor = Tower.WALL_COLOR
+    // A tower is two colours: the stack of floor blocks, and the roof on top -
+    // usually the same hue with the roof a shade darker (ROOF_SHADE_BIAS).
+    this.roofColor = Tower.WALL_COLOR
+    this.blockColor = Tower.WALL_COLOR
+    // What it brightens TO while pulsing, and whether it pulses at all. Only
+    // support towers do; everything else leaves these null/false.
+    this.pulseColor = null
+    this.pulses = false
     this.skipFactor = 0 // For realtime visibility toggle
-    this.colorIndex = 0 // Hover color index
+    // Which of the three city accents this tile wears, as an index into
+    // City.accentColors. Only generators, the king and lot fills use it; walls
+    // and turrets have a fixed grey and leave it at 0.
+    this.accentIndex = 0
     this.visible = true
     this.empty = false // permanent inactive slot (a pre-baked gap)
     this.emptyTower = false // demolished tower: grey floor outline, click to regen
@@ -609,11 +618,11 @@ export class Tower {
     // The block goes in at its own shade in the gradient; the DEBRIS stays
     // lightened, because a spray of particles reads better bright and is gone
     // before anything can compare it to the block it came off.
-    const baseColor = this.isLit && this.litColor ? this.litColor : this.baseColor
+    const blockColor = this.pulses && this.pulseColor ? this.pulseColor : this.blockColor
     const newFloorColor = Tower.shadeForFloor(
-      baseColor, oldNumFloors, maxFloorsFor(this), new Color()
+      blockColor, oldNumFloors, maxFloorsFor(this), new Color()
     )
-    const debrisColor = Tower.lightenColor(baseColor)
+    const debrisColor = Tower.lightenColor(blockColor)
     const center = this.box.getCenter(new Vector2())
     const newFloorY = (oldNumFloors + 1) * floorHeight
 

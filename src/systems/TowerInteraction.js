@@ -262,7 +262,7 @@ export class TowerInteraction {
 
     const center = tower.box.getCenter(city.towerCenter)
     const mat = fxMaterial(new MeshBasicNodeMaterial({
-      color: city.accentColors[tower.colorIndex].clone(),
+      color: city.accentColors[tower.accentIndex].clone(),
       opacity: 0.85,
     }))
     const ring = glow(new Mesh(this.rerollRingGeoFor(0), mat))

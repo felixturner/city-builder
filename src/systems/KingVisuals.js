@@ -229,7 +229,7 @@ export class KingVisuals {
     const king = this.city.king
     if (!king || !king.visible) return
     if (!this._pulseColor) this._pulseColor = new Color()
-    this._pulseColor.copy(king.baseColor).lerp(WHITE_C, 0.6 * p).multiplyScalar(1 + p * 0.9)
+    this._pulseColor.copy(king.blockColor).lerp(WHITE_C, 0.6 * p).multiplyScalar(1 + p * 0.9)
     this.city.setTowerColor(king, this._pulseColor)
   }
 
@@ -307,7 +307,7 @@ export class KingVisuals {
   refreshKingMarkerColor() {
     const king = this.city.king
     if (!this.kingMarker || !king) return
-    Tower.roofShade(king, king.topColor || king.baseColor, this.kingMarker.material.color)
+    Tower.roofShade(king, king.roofColor || king.blockColor, this.kingMarker.material.color)
   }
 
   /**

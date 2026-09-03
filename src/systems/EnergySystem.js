@@ -178,7 +178,7 @@ export class EnergySystem {
     // for every building, which made a shield lighting up and a generator
     // lighting up look like the same event.
     if (gained) {
-      city.spawnSupportRing?.(x, z, city.accentColors[t.colorIndex ?? SUPPORT_ACCENT])
+      city.spawnSupportRing?.(x, z, city.accentColors[t.accentIndex ?? SUPPORT_ACCENT])
     }
     city.floatingText?.spawn(
       x, towerTopY(t, city.floorHeight) + 1.0, z,
@@ -343,7 +343,7 @@ export class EnergySystem {
     for (let i = 0; i < plus.length; i++) {
       for (let j = i + 1; j < plus.length; j++) {
         const a = plus[i], b = plus[j]
-        if (a.colorIndex !== b.colorIndex) continue
+        if (a.accentIndex !== b.accentIndex) continue
         const combinedReach = (a.numFloors + b.numFloors) * 2 // 2 cells of reach per floor
         if (combinedReach <= 0) continue
         a.box.getCenter(this._ca)
@@ -404,7 +404,7 @@ export class EnergySystem {
         if (city.upkeep.isDark(b)) continue // a dark building can't be supported
         if (isWall(b)) continue // walls are the thing trails route AROUND
         // Same-colour gen pairs are already linked above; don't double-draw.
-        if (isSupport(b) && b.colorIndex === a.colorIndex) continue
+        if (isSupport(b) && b.accentIndex === a.accentIndex) continue
         b.box.getCenter(this._cb)
         const dist = this._ca.distanceTo(this._cb) / cell
         if (dist < reach) {
@@ -469,7 +469,7 @@ export class EnergySystem {
     const connected = new Set()
     for (const [a, b] of pairs) { connected.add(a); connected.add(b) }
     for (const t of this.connectedTowers) {
-      if (!connected.has(t) && t.isLit && t.litColor) city.setTowerColor(t, t.litColor)
+      if (!connected.has(t) && t.pulses && t.pulseColor) city.setTowerColor(t, t.pulseColor)
     }
     this.connectedTowers = connected
   }
@@ -633,13 +633,13 @@ export class EnergySystem {
 
   _pulseTower(tower, dt) {
     // Decay ALWAYS, even with no lit colour to tint. This used to bail out
-    // first, which meant the king - whose litColor is null - had its pulseEnv
+    // first, which meant the king - whose pulseColor is null - had its pulseEnv
     // set to 1 on its first arrival and never brought back down, pinning
     // anything reading the envelope (the enclosure floor) permanently on.
     tower.pulseEnv = Math.max(0, (tower.pulseEnv || 0) - dt / PULSE_DECAY)
-    if (!tower.litColor) return
+    if (!tower.pulseColor) return
     const brightness = 0.7 + tower.pulseEnv * 0.7 // 0.7..1.4
-    this._pulseColor.copy(tower.litColor).multiplyScalar(brightness)
+    this._pulseColor.copy(tower.pulseColor).multiplyScalar(brightness)
     this.city.setTowerColor(tower, this._pulseColor)
   }
 
