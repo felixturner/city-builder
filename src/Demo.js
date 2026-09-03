@@ -160,6 +160,9 @@ export class Demo {
         this.city.flow.debugEnabled = !this.city.flow.debugEnabled
         this.city.computeFlowField()
       }
+      // TilePalette claims Escape first (capture phase) while a tile is in
+      // hand, and stops it there - with something held, Escape means "put it
+      // back", not "pause".
       if (e.key === 'Escape') this.ui.toggleMenu()
     })
 

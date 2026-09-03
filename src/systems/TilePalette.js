@@ -49,10 +49,17 @@ export class TilePalette {
     this._onMove = (e) => this._pointerMove(e)
     this._onUp = (e) => this._pointerUp(e)
     this._onStickyDown = (e) => this._stickyDown(e)
-    // Esc drops a stuck tile back into its slot.
+    // Esc drops the held tile back into its slot.
+    //
+    // Capture phase, and it stops there: Demo also listens for Escape to open
+    // the pause menu, so cancelling a drag used to pause the game at the same
+    // time. Whichever is more local wins - with a tile in hand Escape means
+    // "put this down", and only means "menu" when your hands are empty.
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.drag && this.drag.sticky) this._cancelDrag()
-    })
+      if (e.key !== 'Escape' || !this.drag) return
+      e.stopPropagation()
+      this._cancelDrag()
+    }, true)
     // Space or R rotates the held tile 90deg CW while dragging. Two keys because
     // R is what the muscle memory reaches for and Space is what a thumb finds.
     window.addEventListener('keydown', (e) => {
@@ -568,6 +575,12 @@ export class TilePalette {
     if (!this.drag) return
     const { slot, ghost } = this.drag
     this._endSticky()
+    // A drag can be cancelled while the button is still down (Esc mid-drag), and
+    // _endSticky only unhooks the STICKY listeners. Removing a listener that was
+    // never added is a no-op, so take both sets off unconditionally rather than
+    // leaving a pointerup that fires later with nothing in hand.
+    window.removeEventListener('pointermove', this._onMove)
+    window.removeEventListener('pointerup', this._onUp)
     this._setTrayFaded(false)
     this.city.scene.remove(ghost)
     if (this.demo.controls) this.demo.controls.enabled = true
@@ -741,10 +754,19 @@ export class TilePalette {
    * the cursor.
    */
   _overUI(x, y) {
-    const b = this.rotateBtn
-    if (!b || b.style.display === 'none') return false
-    const r = b.getBoundingClientRect()
-    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+    const inside = (el) => {
+      if (!el || el.style.display === 'none') return false
+      const r = el.getBoundingClientRect()
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+    }
+    // The rotate button, and the slot the held tile CAME FROM.
+    //
+    // The rest of the tray is an ordinary drop target - release over it and the
+    // tile lands on the board underneath, which is the point of being able to
+    // build there. But that left no way to change your mind, so the one square
+    // that is unambiguously "put it back" is the square it came out of.
+    if (inside(this.rotateBtn)) return true
+    return !!this.drag && inside(this.slots[this.drag.slot]?.el)
   }
 
   _dragMove(e) {

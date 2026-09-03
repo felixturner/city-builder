@@ -56,7 +56,7 @@ export class GUIManager {
       // to look at when you just want to see the city. Toggle them on to plan.
       creepFlow: false,
       bloom: true,
-      bloomStrength: 0.77,
+      bloomStrength: 0.5,
       bloomRadius: 0.49,
       // 0 on purpose: the glow LAYER is the selection now, not brightness.
       // Raising this just dims the dimmest FX rather than excluding anything.

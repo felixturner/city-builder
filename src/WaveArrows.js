@@ -23,12 +23,20 @@ import { WARN } from './palette.js'
  * depthWrite off, so towers can occlude the inner arrows at low angles.
  */
 const LENGTH_CELLS = 3.2 // the big edge arrow, tip to tail
-const SMALL_CELLS = 2 // the trail arrows
-const TRAIL_GAP_CELLS = 1 // daylight between consecutive trail arrows
-const KING_CLEARANCE_CELLS = 1 // innermost tip stops this far from the king
+// The trail arrows. One cell long with one cell of daylight, so the period is
+// two whole cells - and since the king stands on a cell centre and the first
+// arrow is a whole number of cells from it, every arrow lands on a cell centre
+// too. Any fractional size or gap and the trail drifts against the grid it is
+// drawn over.
+const SMALL_CELLS = 1
+const TRAIL_GAP_CELLS = 1
+const KING_CLEARANCE_CELLS = 1 // cells from the king to the first trail arrow
 const Y = 0.12 // on the floor, above the grid and the flow field
-// How far INSIDE the bounds the big arrow sits, in cells.
-const OVERLAP_CELLS = 2
+// How far the big arrow's tail sits OUTSIDE the play area, in cells. It used to
+// overlap the board by two, which put the thing announcing an attack on top of
+// the ground you are defending; out in the field it reads as coming from
+// somewhere else.
+const OUTSET_CELLS = 0
 const FLICK = 0.15 // seconds per leg of the exposed-alarm blink
 const BLEEP_PERIOD = 0.7 // seconds between exposed-alarm blinks (matches the siren)
 const ALPHA_STEADY = 0.7 // "they are over there", not "brace"
@@ -79,7 +87,7 @@ export class WaveArrows {
   }
 
   _radius() {
-    return this.city.visibleHalf + (LENGTH_CELLS / 2 - OVERLAP_CELLS) * this.city.cellUnit
+    return this.city.visibleHalf + (LENGTH_CELLS / 2 + OUTSET_CELLS) * this.city.cellUnit
   }
 
   /**
@@ -233,12 +241,12 @@ export class WaveArrows {
       e.big.rotation.set(0, yaw, 0)
       e.big.visible = true
 
-      // The trail: small arrows from just short of the big arrow all the way
-      // in to the king, TRAIL_GAP_CELLS apart, innermost tip
-      // KING_CLEARANCE_CELLS from the king.
+      // The trail: small arrows from just short of the big one all the way in
+      // to the king, every other cell centre.
       if (!kingOk) { for (const m of e.trail) m.visible = false; continue }
       const period = (SMALL_CELLS + TRAIL_GAP_CELLS) * cu
-      const first = (KING_CLEARANCE_CELLS + SMALL_CELLS / 2) * cu
+      // Whole cells from the king, so each arrow centres on a cell centre.
+      const first = KING_CLEARANCE_CELLS * cu
       const max = r - (LENGTH_CELLS / 2 + TRAIL_GAP_CELLS) * cu
       const n = Math.max(0, Math.floor((max - first) / period) + 1)
       const trail = this._trailMeshes(e, n)

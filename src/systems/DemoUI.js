@@ -154,9 +154,9 @@ export class DemoUI {
       position: 'fixed', inset: '0', zIndex: '2000',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       gap: '28px',
-      // Same as the game-over panel: a light scrim to lift the text off the
-      // city without hiding it.
-      background: 'rgba(0,0,0,0.15)',
+      // No scrim. The text carries its own shadow, and pausing is when you want
+      // to LOOK at the city - dimming it is the one thing the screen should not
+      // do. The game-over panel keeps its scrim: that run is over.
       pointerEvents: 'none',
     })
     const title = document.createElement('div')
