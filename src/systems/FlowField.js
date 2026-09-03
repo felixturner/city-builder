@@ -1,5 +1,6 @@
 import { Group, Vector3, ArrowHelper } from 'three/webgpu'
-import { isGrey } from '../blockTypes.js'
+import { isWall } from '../blockTypes.js'
+import { WARN } from '../palette.js'
 
 /**
  * Creep pathfinding: a multi-source BFS flow field over the cell grid, plus the
@@ -70,7 +71,7 @@ export class FlowField {
         if (x < 0 || y < 0 || x >= W || y >= H) continue
         const i = y * W + x
         if (t.king) kingGoals.push(i) // primary goal
-        else if (isGrey(t)) wall[i] = 1 // walls block; creeps route around / smash through gaps
+        else if (isWall(t)) wall[i] = 1 // walls block; creeps route around / smash through gaps
         else genGoals.push(i) // gens/turrets: second-priority goals
       }
     }
@@ -172,7 +173,7 @@ export class FlowField {
       const cx = gx * cu + cu / 2 + this.city.gridOffsetX
       const cz = gy * cu + cu / 2 + this.city.gridOffsetZ
       // Colour by flow target: red = leads to the king, green = leads to a gen/turret.
-      const col = this.toKing[idx] ? 0xff2020 : 0x22ff22
+      const col = this.toKing[idx] ? WARN.flowBlocked : WARN.flowOk
       if (d === 0) { // goal cell: tall up-arrow (where the flow converges)
         let g = this._goalArrows[m]
         if (!g) {

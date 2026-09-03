@@ -1,6 +1,7 @@
 import * as CANNON from 'cannon-es'
 import { Object3D, BoxGeometry, InstancedMesh, Color, DynamicDrawUsage, MeshPhysicalMaterial, Vector2, MathUtils } from 'three/webgpu'
 import { Sounds } from './Sounds.js'
+import { CITY, WHITE } from '../palette.js'
 
 /**
  * Debris system - spawns physics-enabled brick particles on tower clicks
@@ -40,7 +41,7 @@ export class Debris {
 
     // Material matching tower material
     this.material = new MeshPhysicalMaterial({
-      color: 0xffffff,
+      color: WHITE,
       roughness: materialParams?.roughness ?? 0.8,
       metalness: materialParams?.metalness ?? 0.0,
       clearcoat: materialParams?.clearcoat ?? 0,
@@ -67,7 +68,7 @@ export class Debris {
     // Hide all instances initially
     for (let i = 0; i < Debris.POOL_SIZE; i++) {
       this.mesh.setMatrixAt(i, this.hiddenMatrix)
-      this.mesh.setColorAt(i, new Color(0x888888))
+      this.mesh.setColorAt(i, new Color(CITY.debris))
     }
     this.mesh.instanceMatrix.needsUpdate = true
     this.mesh.instanceColor.needsUpdate = true

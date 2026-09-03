@@ -1,7 +1,7 @@
 import { Vector2, BufferGeometry, Float32BufferAttribute, LineSegments, LineBasicNodeMaterial } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../palette.js'
-import { isGrey, towerArea } from '../blockTypes.js'
+import { isWall, towerArea } from '../blockTypes.js'
 
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 
@@ -21,11 +21,11 @@ export class LotGrowth {
     this.fillGeo = null
   }
 
-  /** Lot "points" = sum over grey towers of height * footprint area. */
+  /** Lot "points" = sum over walls of height * footprint area. */
   lotStrength(lot) {
     let pts = 0
     for (const t of lot.towers) {
-      if (!t.visible || t.numFloors < 1 || !isGrey(t)) continue
+      if (!t.visible || t.numFloors < 1 || !isWall(t)) continue
       pts += t.numFloors * towerArea(t, this.city.cellUnit, this.city.towerSize)
     }
     return pts

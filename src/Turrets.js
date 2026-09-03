@@ -14,8 +14,9 @@ import { Sounds } from './lib/Sounds.js'
 import gsap from 'gsap'
 import { Creeps } from './Creeps.js'
 import { Buffs } from './buffs.js'
+import { TURRET, WHITE } from './palette.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
-import { roofGeomIndex, turretRangeCells } from './blockTypes.js'
+import { TopType, roofGeomIndex, turretRangeCells } from './blockTypes.js'
 import { fxMaterial, NO_AO_MRT, glow } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 
@@ -38,9 +39,6 @@ const BLAST_TIME = 0.45
 const BLAST_OPACITY = 0.6
 
 export class Turrets {
-  static TURRET_TYPE = 3 // Peg_Top
-  static LASER_TYPE = 4 // Divot_Top
-  static MORTAR_TYPE = 7 // mortar (AoE)
 
   constructor(scene, city, creeps) {
     this.scene = scene
@@ -52,8 +50,8 @@ export class Turrets {
 
     this.projGeo = new SphereGeometry(0.4, 12, 8)
     this.projMat = new MeshStandardNodeMaterial({
-      color: new Color(0xfff3c0),
-      emissive: new Color(0xffd060),
+      color: new Color(TURRET.projectile),
+      emissive: new Color(TURRET.projectileGlow),
       roughness: 0.3,
       metalness: 0,
     })
@@ -103,10 +101,10 @@ export class Turrets {
     this.mortarDur = 0.6 // travel time (seconds) - shorter so it lands near moving creeps
     this.mortarGeo = new SphereGeometry(0.35, 12, 8)
     this.mortarMat = new MeshStandardNodeMaterial({
-      color: new Color(0x808080), roughness: 0.6, metalness: 0.2,
+      color: new Color(TURRET.barrel), roughness: 0.6, metalness: 0.2,
     })
     this.mortarMat.mrtNode = NO_AO()
-    this._explodeColor = new Color(0xff7a30)
+    this._explodeColor = new Color(TURRET.blast)
     // Expanding transparent blast dome (sphere at y=0 -> only the top half shows).
     this.explosionGeo = new SphereGeometry(1, 16, 12)
     this.explosionRadius = this.mortarRadius // visual blast matches the AoE
@@ -121,7 +119,7 @@ export class Turrets {
     this._tc = new Vector2()
     this._from = new Vector3()
     this._to = new Vector3()
-    this._white = new Color(0xffffff)
+    this._white = new Color(WHITE)
   }
 
   /** Load the turret models and build normalized prototypes to clone per tower. */
@@ -193,9 +191,9 @@ export class Turrets {
    * unless the model's height is added to the pick box.
    */
   modelHeight(tower) {
-    const proto = tower.typeTop === Turrets.MORTAR_TYPE ? this.mortarProto
-      : tower.typeTop === Turrets.LASER_TYPE ? this.laserProto
-        : tower.typeTop === Turrets.TURRET_TYPE ? this.pegProto : null
+    const proto = tower.typeTop === TopType.MORTAR ? this.mortarProto
+      : tower.typeTop === TopType.LASER ? this.laserProto
+        : tower.typeTop === TopType.RIFLE ? this.pegProto : null
     return proto ? proto.userData.height : 0
   }
 
@@ -205,12 +203,12 @@ export class Turrets {
     const seen = new Set()
     for (const tower of this.city.towers) {
       if (!tower.visible) continue
-      const isLaser = tower.typeTop === Turrets.LASER_TYPE
-      const isPeg = tower.typeTop === Turrets.TURRET_TYPE
-      const isMortar = tower.typeTop === Turrets.MORTAR_TYPE
-      if (!isPeg && !isLaser && !isMortar) continue
+      const rifle = tower.typeTop === TopType.RIFLE
+      const laser = tower.typeTop === TopType.LASER
+      const mortar = tower.typeTop === TopType.MORTAR
+      if (!rifle && !laser && !mortar) continue
       if (this.city.upkeep.isDark(tower)) continue // browned out: no power, no shots
-      const proto = isMortar ? this.mortarProto : isLaser ? this.laserProto : this.pegProto
+      const proto = mortar ? this.mortarProto : laser ? this.laserProto : this.pegProto
       if (!proto) continue
       seen.add(tower)
 
@@ -449,16 +447,16 @@ export class Turrets {
     // Fire turrets whose cooldown has elapsed.
     for (const tower of this.city.towers) {
       if (!tower.visible) continue
-      const isPeg = tower.typeTop === Turrets.TURRET_TYPE
-      const isLaser = tower.typeTop === Turrets.LASER_TYPE
-      const isMortar = tower.typeTop === Turrets.MORTAR_TYPE
-      if (!isPeg && !isLaser && !isMortar) continue
+      const rifle = tower.typeTop === TopType.RIFLE
+      const laser = tower.typeTop === TopType.LASER
+      const mortar = tower.typeTop === TopType.MORTAR
+      if (!rifle && !laser && !mortar) continue
 
       let cd = (this.cooldowns.get(tower) ?? 0) - dt
       if (cd <= 0) {
-        const fired = isMortar ? this.fireMortar(tower) : isLaser ? this.fireLaser(tower) : this.fire(tower)
+        const fired = mortar ? this.fireMortar(tower) : laser ? this.fireLaser(tower) : this.fire(tower)
         if (fired) {
-          const base = isMortar ? this.mortarCooldown : isLaser ? this.laserCooldown : this.fireCooldown
+          const base = mortar ? this.mortarCooldown : laser ? this.laserCooldown : this.fireCooldown
           // Every support trail reaching this turret speeds it up, and they
           // stack: three of them is +75% fire rate, i.e. the gap between shots
           // divided by 1.75. None is the plain rate, not a penalised one.

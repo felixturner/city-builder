@@ -1,6 +1,7 @@
 import { Mesh, MeshStandardNodeMaterial, Color, MathUtils } from 'three/webgpu'
 import { ExtraGeometry } from '../lib/ExtraGeometry.js'
 import { simInt, simPick } from '../lib/rng.js'
+import { CITY } from '../palette.js'
 
 /**
  * Boulders: permanent, immovable terrain you have to build around.
@@ -35,7 +36,7 @@ export class Rocks {
       // 0x999999). A boulder is terrain rather than something you built, so it
       // stays in the floor's family - but at the floor's exact value the
       // silhouette was doing all the work on its own.
-      color: new Color(0x8a8a8a),
+      color: new Color(CITY.rock),
       roughness: 0.95,
       metalness: 0,
     })

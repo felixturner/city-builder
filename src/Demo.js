@@ -198,7 +198,7 @@ export class Demo {
     // Let interaction read the ground-plane pointer for empty-slot building
     this.city.interaction.pointer = this.pointerHandler
 
-    // Energy/population HUD - grey blocks generate energy and raise its cap
+    // Energy/population HUD - sealed ground generates energy and raise its cap
     // Start on 100 against a 150 cap, so the opening build has room to work with
     // but there is still headroom to bank into before the first wave.
     // No flat base: the cap is the board size (see Mana.setStats), which starts

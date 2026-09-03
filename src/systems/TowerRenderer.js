@@ -1,10 +1,10 @@
 import { MathUtils, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
-import { ACCENT_COLORS, SHIELD_LINE } from '../palette.js'
+import { ACCENT_COLORS, SHIELD_LINE, CITY } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, SHIELD_COLOR } from '../blockTypes.js'
+import { TopType, isTurret, isGenerator, isBarracks, isShield, isWall, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, SHIELD_COLOR } from '../blockTypes.js'
 import { simInt, simPick } from '../lib/rng.js'
 
 // Fallback only - the king normally wears one of the three accents.
@@ -30,18 +30,18 @@ const KING_COLOR = ACCENT_COLORS[0]
 export class TowerRenderer {
   constructor(city) {
     this.city = city
-    this.turretColor = new Color(0xbbbbbb) // grey shade for turret tower blocks
+    this.turretColor = new Color(CITY.turret) // grey shade for turret tower blocks
     this._shade = new Color()
   }
 
   /**
-   * Accent-colour special towers: path generators (plus) and adjacency
+   * Accent-colour special towers: support generators (plus) and adjacency
    * generators (holes) go fully accent; turrets get a stashed laser colour.
    */
   applyLitTowers() {
     const city = this.city
     for (const tower of city.towers) {
-      tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
+      tower.isLit = tower.typeTop === TopType.SUPPORT
       if (tower.isLit) {
         const accent = city.accentColors[tower.colorIndex]
         tower.litColor = accent.clone()
@@ -90,13 +90,13 @@ export class TowerRenderer {
   rerollTower(tower) {
     // Rectangular tops only (no quart). Pick from the rect set, then demote
     // footprint-constraint violators to a plain grey rect.
-    const pool = [TopType.SQUARE, TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.PATH_GENERATOR]
+    const pool = [TopType.SQUARE, TopType.RIFLE, TopType.LASER, TopType.SUPPORT]
     tower.typeTop = simPick(pool)
     const size = tower.box.getSize(this.city.towerSize)
     const w = Math.round(size.x / this.city.cellUnit)
     const h = Math.round(size.y / this.city.cellUnit)
     // Generators only on squares, turrets only on 1x1 (capped 2/lot).
-    if (tower.typeTop === TopType.PATH_GENERATOR && w !== h) tower.typeTop = TopType.SQUARE
+    if (tower.typeTop === TopType.SUPPORT && w !== h) tower.typeTop = TopType.SQUARE
     if (isTurret(tower) && (!(w === 1 && h === 1) || this.countLotTurrets(tower) >= 2)) {
       tower.typeTop = TopType.SQUARE
     }
@@ -213,7 +213,7 @@ export class TowerRenderer {
       return
     }
 
-    tower.isLit = tower.typeTop === TopType.PATH_GENERATOR
+    tower.isLit = tower.typeTop === TopType.SUPPORT
     if (isGenerator(tower)) {
       // Generators always use their fixed accent colour — no per-instance colour variation.
       tower.colorIndex = genColorIndex(tower.typeTop) ?? 0
@@ -261,7 +261,7 @@ export class TowerRenderer {
     // overlap, walls excluded). Damage carries over between floors: overkill on
     // the last block of a level is spent on the next one rather than thrown
     // away.
-    const blockHp = BLOCK_HP + (isGrey(tower) ? Buffs.wallHits : 0)
+    const blockHp = BLOCK_HP + (isWall(tower) ? Buffs.wallHits : 0)
       + city.energy.shieldCoverCount(tower)
     tower.dmg = (tower.dmg || 0) + dmg
     if (tower.dmg < blockHp) {

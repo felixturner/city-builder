@@ -16,7 +16,7 @@
  * (RunRecorder) rather than a log of their own - they describe one run, and
  * splitting them let a replay append rounds to a file no run owned.
  */
-import { TopType, isTurret, isBarracks, isShield, isGrey } from '../blockTypes.js'
+import { TopType, isTurret, isBarracks, isShield, isWall } from '../blockTypes.js'
 
 export class EconLog {
   constructor(demo) {
@@ -35,11 +35,11 @@ export class EconLog {
       earned: 0, // energy actually banked
       wasted: 0, // income that arrived at a full bar
       // ...and where that came from. `earned` alone cannot say whether a run
-      // was carried by path generators or by sealed ground, and the per-round
-      // pathGenMana / enclosureGenMana figures below are only a SNAPSHOT at the
+      // was carried by support generators or by sealed ground, and the per-round
+      // supportMana / encGenMana figures below are only a SNAPSHOT at the
       // moment the round closed - they read zero for a whole round whose walls
       // happened to be open at the end, however much it earned earlier.
-      from: { path: 0, enc: 0, king: 0, crate: 0 },
+      from: { support: 0, enc: 0, king: 0, crate: 0 },
       spentPlace: 0, // new tiles from the palette
       spentFloor: 0, // levelling something already standing
       blocksLost: 0, // blocks creeps knocked off
@@ -71,23 +71,23 @@ export class EconLog {
     r.enclosedCells = c.enclosure?.enclosedCells
       ? c.enclosure.enclosedCells.reduce((n, v) => n + v, 0) : 0
     r.incomePerSec = +(c.energy?.incomePerSec() || 0).toFixed(2)
-    r.pathGenMana = +(c.energy?.pathGenMana || 0).toFixed(1)
-    r.enclosureGenMana = +(c.energy?.enclosureGenMana || 0).toFixed(1)
+    r.supportMana = +(c.energy?.supportMana || 0).toFixed(1)
+    r.encGenMana = +(c.energy?.encGenMana || 0).toFixed(1)
     r.endEnergy = Math.round(this.demo.mana.current)
     r.spent = r.spentPlace + r.spentFloor
     // What was standing when the round ended, so income can be read against the
     // build that produced it rather than guessed at.
-    let path = 0, enc = 0, turret = 0, barracks = 0, shield = 0, wallBlocks = 0
+    let support = 0, enc = 0, turret = 0, barracks = 0, shield = 0, wallBlocks = 0
     for (const t of c.towers) {
       if (!t.visible || t.numFloors < 1) continue
-      if (t.typeTop === TopType.PATH_GENERATOR) path++
-      else if (t.typeTop === TopType.ENCLOSURE_GENERATOR) enc++
+      if (t.typeTop === TopType.SUPPORT) support++
+      else if (t.typeTop === TopType.ENC_GEN) enc++
       else if (isTurret(t)) turret++
       else if (isBarracks(t)) barracks++
       else if (isShield(t)) shield++
-      else if (isGrey(t)) wallBlocks += t.numFloors
+      else if (isWall(t)) wallBlocks += t.numFloors
     }
-    r.pathGens = path
+    r.supportGens = support
     r.encGens = enc
     r.turrets = turret
     r.barracks = barracks
@@ -109,10 +109,10 @@ export class EconLog {
       + ` | energy ${r.startEnergy}->${r.endEnergy} (low ${r.minEnergy})`
       + ` | spent ${r.spent} (${r.spentPlace} place / ${r.spentFloor} floors)`
       + ` | blocks +${r.blocksPlaced} -${r.blocksLost}`
-      + ` | income ${r.incomePerSec}/s (path ${r.pathGenMana} enc ${r.enclosureGenMana})`
-      + ` | banked: ${Math.round(r.from.path)} path, ${Math.round(r.from.enc)} enc,`
+      + ` | income ${r.incomePerSec}/s (support ${r.supportMana} enc ${r.encGenMana})`
+      + ` | banked: ${Math.round(r.from.support)} support, ${Math.round(r.from.enc)} enc,`
       + ` ${Math.round(r.from.king)} king, ${Math.round(r.from.crate)} crate`
-      + ` | built: ${path} path, ${enc} enc, ${turret} turret, ${barracks} brk,`
+      + ` | built: ${support} support, ${enc} enc, ${turret} turret, ${barracks} brk,`
       + ` ${shield} shld, ${wallBlocks} wall blocks, ${r.enclosedCells} cells sealed`
       + (why === 'died' ? ' | DIED HERE' : '')
     )

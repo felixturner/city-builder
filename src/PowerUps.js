@@ -1,7 +1,7 @@
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
-import { TopType, KING_MAX_FLOORS, maxFloorsFor, isGrey } from './blockTypes.js'
+import { TopType, KING_MAX_FLOORS, maxFloorsFor, isWall } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
 import { simRand, simShuffle } from './lib/rng.js'
 
@@ -41,14 +41,14 @@ export const CARDS = [
     desc: 'Adds a floor to 20 random walls.',
     // Nothing to raise if every wall is already at its cap, and a card that
     // does nothing reads as a bug.
-    available: (g) => g.countGrowable(isGrey) > 0,
-    apply: (g) => g.growRandom(isGrey, 20),
+    available: (g) => g.countGrowable(isWall) > 0,
+    apply: (g) => g.growRandom(isWall, 20),
   },
   {
     id: 'tower-builder', title: 'Master Builder', color: YELLOW,
     desc: 'Adds a floor to 10 random buildings.',
-    available: (g) => g.countGrowable((t) => !isGrey(t)) > 0,
-    apply: (g) => g.growRandom((t) => !isGrey(t), 10),
+    available: (g) => g.countGrowable((t) => !isWall(t)) > 0,
+    apply: (g) => g.growRandom((t) => !isWall(t), 10),
   },
   {
     id: 'king-heal', title: 'Restore the King', color: YELLOW,

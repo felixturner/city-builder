@@ -11,6 +11,7 @@ import {
   MeshStandardNodeMaterial,
 } from 'three/webgpu'
 import { RGBELoader } from 'three/examples/jsm/Addons.js'
+import { WORLD } from './palette.js'
 
 export class Lighting {
   constructor(scene, renderer, params) {
@@ -60,12 +61,12 @@ export class Lighting {
     // creeps walk in across, then everything beyond. The middle one used to sit
     // close enough to the board that the boundary read as a line drawn on one
     // surface rather than as the edge of the thing you are defending.
-    this.beyondGround = plane(0x2b2b31, -0.04, 420)
-    this.outerField = plane(0x4a4a4e, -0.02)
+    this.beyondGround = plane(WORLD.beyond, -0.04, 420)
+    this.outerField = plane(WORLD.field, -0.02)
     // The board grey the soldiers and boulders also wear. A level-1 wall used to
     // sit at almost exactly this value and vanish into it; the walls moved down
     // a tenth instead (Tower.COLORS), so the floor keeps its original tone.
-    this.boundsGround = plane(0x999999, 0)
+    this.boundsGround = plane(WORLD.ground, 0)
 
     // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)
     // Wide enough for a 10-lot board (100x100, so -50..50) plus the creep
@@ -76,7 +77,7 @@ export class Lighting {
     )
 
     // Directional light for key shadows/highlights (values set by applyParams)
-    this.dirLight = new DirectionalLight(0xffffff, 1)
+    this.dirLight = new DirectionalLight(WORLD.sun, 1)
     this.dirLightOffset = new Vector3(50, 100, 50)
     this.dirLight.position.copy(this.dirLightOffset)
     this.dirLight.castShadow = true
@@ -94,7 +95,7 @@ export class Lighting {
     scene.add(this.dirLightHelper)
 
     // Hemisphere light for soft sky/ground fill (values set by applyParams)
-    this.hemiLight = new HemisphereLight(0xffffff, 0x444444, 1)
+    this.hemiLight = new HemisphereLight(WORLD.skyFill, WORLD.groundFill, 1)
     scene.add(this.hemiLight)
   }
 

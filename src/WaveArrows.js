@@ -1,6 +1,7 @@
 import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color, Vector2 } from 'three/webgpu'
 import gsap from 'gsap'
 import { fxMaterial, glow, stutter } from './fx.js'
+import { WARN } from './palette.js'
 
 /**
  * Arrows on the ground pointing IN from the sides the next wave arrives from.
@@ -184,7 +185,7 @@ export class WaveArrows {
     }
 
     const boss = clock.isBossWave(wave)
-    this._colour.set(boss ? 0xff2a4a : 0xcc5500)
+    this._colour.set(boss ? WARN.arrowBoss : WARN.arrow)
     const edges = clock.waveEdges(wave)
     const cu = this.city.cellUnit
     const r = this._radius()

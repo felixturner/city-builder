@@ -1,4 +1,4 @@
-import { isTurret, isGenerator, isBarracks, isShield, isGrey } from '../blockTypes.js'
+import { isTurret, isGenerator, isBarracks, isShield, isWall } from '../blockTypes.js'
 import { Sounds } from '../lib/Sounds.js'
 
 /**
@@ -57,7 +57,7 @@ const UPKEEP_PER_FLOOR = {
 const RELIGHT_AT = 0.25
 
 export function upkeepOf(tower) {
-  if (!tower.visible || tower.king || isGrey(tower)) return 0
+  if (!tower.visible || tower.king || isWall(tower)) return 0
   const floors = Math.max(1, tower.numFloors)
   if (isTurret(tower)) return floors * UPKEEP_PER_FLOOR.turret
   if (isGenerator(tower)) return floors * UPKEEP_PER_FLOOR.generator

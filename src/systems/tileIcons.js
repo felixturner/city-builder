@@ -92,14 +92,14 @@ function drawRectTile(ctx, tile, accents) {
     ctx.rotate(Math.PI / 4) // same quarter-turn stance the soldier mesh keeps
     ctx.fillRect(-s, -s, s * 2, s * 2)
     ctx.restore()
-  } else if (tile.typeTop === TopType.PATH_GENERATOR) {
+  } else if (tile.typeTop === TopType.SUPPORT) {
     const pe = m * 0.28, pt = m * 0.1
     ctx.fillStyle = recess
     ctx.fillRect(cx - pe, cy - pt, pe * 2, pt * 2)
     ctx.fillRect(cx - pt, cy - pe, pt * 2, pe * 2)
-  } else if (tile.typeTop === TopType.PEG_TURRET || tile.typeTop === TopType.DIVOT_TURRET || tile.typeTop === TopType.MORTAR_TURRET) {
+  } else if (tile.typeTop === TopType.RIFLE || tile.typeTop === TopType.LASER || tile.typeTop === TopType.MORTAR) {
     const r = m * 0.26
-    ctx.fillStyle = tile.typeTop === TopType.PEG_TURRET ? raised : recess
+    ctx.fillStyle = tile.typeTop === TopType.RIFLE ? raised : recess
     ctx.beginPath()
     ctx.moveTo(cx, cy - r)
     ctx.lineTo(cx + r * 0.87, cy + r * 0.5)
@@ -107,11 +107,11 @@ function drawRectTile(ctx, tile, accents) {
     ctx.closePath()
     ctx.fill()
     // Mortar: a lobbed shell dot above the barrel.
-    if (tile.typeTop === TopType.MORTAR_TURRET) {
+    if (tile.typeTop === TopType.MORTAR) {
       ctx.fillStyle = recess
       ctx.beginPath(); ctx.arc(cx, cy - r * 0.9, m * 0.1, 0, Math.PI * 2); ctx.fill()
     }
-  } else if (tile.typeTop === TopType.ENCLOSURE_GENERATOR) {
+  } else if (tile.typeTop === TopType.ENC_GEN) {
     // Peg disc reads purely via its drop shadow (same colour as the tile).
     ctx.save()
     ctx.shadowColor = 'rgba(0,0,0,0.8)'
@@ -122,7 +122,7 @@ function drawRectTile(ctx, tile, accents) {
     ctx.restore()
   }
 
-  if ((tile.w > 1 || tile.h > 1) && tile.typeTop !== TopType.PATH_GENERATOR) {
+  if ((tile.w > 1 || tile.h > 1) && tile.typeTop !== TopType.SUPPORT) {
     ctx.strokeStyle = 'rgba(0,0,0,0.28)'
     ctx.lineWidth = 1
     for (let i = 1; i < tile.w; i++) {

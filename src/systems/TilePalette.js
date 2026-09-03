@@ -3,7 +3,7 @@ import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
 import { Buffs } from '../buffs.js'
-import { ENERGY_COLOR, PINK, SHIELD_LINE } from '../palette.js'
+import { ENERGY_COLOR, PINK, SHIELD_LINE, CITY, WHITE } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
 import { priceOfTile, rerollCost } from './tileCost.js'
@@ -32,7 +32,7 @@ export class TilePalette {
     this.ground = new Plane(new Vector3(0, 1, 0), 0) // y = 0
     this._ndc = new Vector2()
     this._hit = new Vector3()
-    this._white = new Color(0xffffff)
+    this._white = new Color(WHITE)
 
     this.pending = null // press in progress
     this.drag = null // active drag
@@ -71,8 +71,8 @@ export class TilePalette {
       tiles.push({ wall: true, shapeName, topColorIndex: i % Tower.COLORS.length, rot: 0 })
     })
     const singles = [
-      TopType.PATH_GENERATOR, TopType.ENCLOSURE_GENERATOR,
-      TopType.PEG_TURRET, TopType.DIVOT_TURRET, TopType.MORTAR_TURRET,
+      TopType.SUPPORT, TopType.ENC_GEN,
+      TopType.RIFLE, TopType.LASER, TopType.MORTAR,
       TopType.BARRACKS, TopType.SHIELD,
     ]
     for (const typeTop of singles) {
@@ -121,7 +121,7 @@ export class TilePalette {
     } else if (isGenerator(tile)) {
       out.copy(this.city.accentColors[tile.colorIndex])
     } else if (isTurret(tile) || isBarracks(tile)) {
-      out.set(0x9aa0aa)
+      out.set(CITY.ghostBlocked)
     } else {
       out.copy(Tower.COLORS[tile.topColorIndex])
     }
@@ -690,7 +690,7 @@ export class TilePalette {
     // One enclosure generator per enclosure: block placing into an already-claimed area.
     // One claimant per enclosure - and the king counts, so you can't drop a hole
     // block into the region the king is already earning from.
-    if (valid && tile.typeTop === TopType.ENCLOSURE_GENERATOR && city.enclosure.cellClaim) {
+    if (valid && tile.typeTop === TopType.ENC_GEN && city.enclosure.cellClaim) {
       for (const [dx, dy] of cells) {
         if (city.enclosure.cellClaim[(gy + dy) * city.gridCellsX + (gx + dx)] >= 0) { valid = false; break }
       }

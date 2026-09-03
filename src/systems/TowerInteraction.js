@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
-import { TopType, isGrey, claimsEnclosure, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
+import { TopType, isWall, claimsEnclosure, towerArea, towerTopY, maxFloorsFor } from '../blockTypes.js'
 import { fxMaterial, glow } from '../fx.js'
 import { priceOfTower, refundOfTower } from './tileCost.js'
 
@@ -142,7 +142,7 @@ export class TowerInteraction {
    *
    * Its output is enclosed cells x floors, and nothing on screen says so in the
    * moment you pay for it, so the caption names the multiplier against a
-   * one-storey tile. Path generators get no caption - height there is reach, and
+   * one-storey tile. Support generators get no caption - height there is reach, and
    * the ring on the ground already shows you the reach.
    */
   announceGenHeight(tower) {
@@ -159,7 +159,7 @@ export class TowerInteraction {
   }
 
   /**
-   * Whether a build click should proceed (and charge mana). Path generators and
+   * Whether a build click should proceed (and charge mana). Support generators and
    * turrets cost 2 per floor, else 1, scaled by footprint area.
    */
   canBuild(tower) {

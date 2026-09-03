@@ -8,6 +8,7 @@ import { Buffs } from './buffs.js'
 import { ExtraGeometry } from './lib/ExtraGeometry.js'
 import { BlockGeometry } from './lib/BlockGeometry.js'
 import { advanceHop, snapToCell, towerWorldCenter } from './lib/gridUnit.js'
+import { CITY } from './palette.js'
 
 /**
  * Soldiers - the little friendly cubes a barracks puts out.
@@ -57,7 +58,7 @@ const IDLE_STAND = [0.8, 2.4] // seconds it stands still when it doesn't
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]]
 // Shared with the ground and the boulders (Lighting.boundsGround, Rocks).
-const SOLDIER_GREY = 0x999999
+const SOLDIER_GREY = CITY.soldier
 
 export class Soldiers {
   constructor(scene, city, creeps) {

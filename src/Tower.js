@@ -4,6 +4,7 @@ import { BlockGeometry } from './lib/BlockGeometry.js'
 import { TetrominoGeometry } from './lib/TetrominoGeometry.js'
 import { roofGeomIndex, maxFloorsFor } from './blockTypes.js'
 import { Sounds } from './lib/Sounds.js'
+import { CITY, BLACK } from './palette.js'
 
 /**
  * Tower class - represents a building/stack of blocks
@@ -28,7 +29,7 @@ export class Tower {
     // Dropped a tenth from 0xbcbcbc: a level-1 wall used to sit at almost
     // exactly the board's value (0x999999) and vanished into the floor it stood
     // on.
-    new Color(0xa3a3a3),
+    new Color(CITY.wall),
   ]
 
   /**
@@ -52,7 +53,7 @@ export class Tower {
     return out.copy(base).lerp(Tower.BLACK, t)
   }
 
-  static BLACK = new Color(0x000000)
+  static BLACK = new Color(BLACK)
 
   /**
    * Roofs get slightly darker vertex colour than the block they cap: a roof's
@@ -75,7 +76,7 @@ export class Tower {
   }
 
   static ID = 0
-  static BASE_COLOR = new Color(0xa3a3a3) // matches COLORS[0] so rects and tetro walls read alike
+  static BASE_COLOR = new Color(CITY.wall) // matches COLORS[0] so rects and tetro walls read alike
 
   constructor() {
     this.id = Tower.ID++

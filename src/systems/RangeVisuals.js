@@ -1,8 +1,8 @@
 import gsap from 'gsap'
 import { Mesh, RingGeometry, MeshBasicNodeMaterial, Vector2, Color } from 'three/webgpu'
-import { isTurret, isPathGenerator, isShield, shieldRadiusCells, shieldCharges, turretRangeCells } from '../blockTypes.js'
+import { isTurret, isSupport, isShield, shieldRadiusCells, shieldCharges, turretRangeCells } from '../blockTypes.js'
 import { Buffs } from '../buffs.js'
-import { SHIELD_LINE } from '../palette.js'
+import { SHIELD_LINE, WHITE } from '../palette.js'
 import { fxMaterial, glow, stutter } from '../fx.js'
 
 // Resting opacity of a shield ring, and where a flicker returns to.
@@ -72,7 +72,7 @@ class RingLayer {
 }
 
 /**
- * RangeVisuals - ground rings showing zones of control (path generators) and
+ * RangeVisuals - ground rings showing zones of control (support generators) and
  * turret firing range, plus the turret-circle data for the coverage glow.
  */
 export class RangeVisuals {
@@ -84,7 +84,7 @@ export class RangeVisuals {
     this.zoc = new RingLayer(
       city.scene,
       () => fxMaterial(new MeshBasicNodeMaterial({ opacity: 0.6 })),
-      // Link reach, in world units. Two path generators connect when the gap
+      // Link reach, in world units. Two support generators connect when the gap
       // between their centres is less than (a.numFloors + b.numFloors) * 2
       // CELLS - two cells per floor - so a generator's own half of that is
       // numFloors * 2 cells. Drawn at exactly that, so two rings touching is
@@ -105,7 +105,7 @@ export class RangeVisuals {
     )
     this.range = new RingLayer(
       city.scene,
-      () => fxMaterial(new MeshBasicNodeMaterial({ color: 0xffffff, opacity: 0.4 })),
+      () => fxMaterial(new MeshBasicNodeMaterial({ color: WHITE, opacity: 0.4 })),
       (n) => turretRangeCells(n) * city.cellUnit,
       { thickness: 0.12, y: 0.07 }
     )
@@ -158,12 +158,12 @@ export class RangeVisuals {
     stutter(gsap, m.material, { prop: 'opacity', on: SHIELD_OPACITY, off: 0 })
   }
 
-  /** One accent disc per path generator, sized to its zone of control. */
+  /** One accent disc per support generator, sized to its zone of control. */
   updateZocCircles() {
     const city = this.city
     const seen = new Set()
     for (const t of city.towers) {
-      if (!t.visible || !isPathGenerator(t) || t.numFloors < 1) continue
+      if (!t.visible || !isSupport(t) || t.numFloors < 1) continue
       seen.add(t)
       t.box.getCenter(this._zc)
       const m = this.zoc.place(t, this._zc.x + city.gridOffsetX, this._zc.y + city.gridOffsetZ)

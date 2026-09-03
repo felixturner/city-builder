@@ -13,13 +13,13 @@ export const TopType = {
   SQUARE: 0,
   QUART: 1,
   HOLE: 2, // Hole_Top - unused gameplay slot, kept for geometry index alignment
-  PEG_TURRET: 3, // bullet turret
-  DIVOT_TURRET: 4, // laser turret
-  PATH_GENERATOR: 5, // Cross_Top "plus" block - connects to others via trails
-  ENCLOSURE_GENERATOR: 6, // generates mana when sealed inside an enclosure
-  MORTAR_TURRET: 7, // lobs an AoE mortar; heavy damage, slow fire
-  BARRACKS: 8, // spawns soldiers that patrol nearby and fight creeps
-  SHIELD: 9, // projects a radius in which everything takes double punishment
+  RIFLE: 3,     // turret: a travelling pellet, fine-grained damage
+  LASER: 4,     // turret: hitscan, twice the damage at half the rate
+  MORTAR: 7,    // turret: an arcing shell with an AoE blast
+  ENC_GEN: 6,   // enclosure generator: earns from the ground it seals
+  SUPPORT: 5,   // support generator: trails to buildings and improves them
+  BARRACKS: 8,  // spawns soldiers that patrol nearby and fight creeps
+  SHIELD: 9,    // a barrier ring that burns what crosses inward
 }
 
 // Role -> top geometry index (decoupled). All three turrets render the divot top;
@@ -33,8 +33,8 @@ export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 // Each generator type has ONE fixed accent colour (index into City.accentColors:
 // 0 pink, 1 yellow, 2 blue). Path = blue, enclosure = yellow.
 const GEN_COLOR = {
-  [TopType.PATH_GENERATOR]: 2,    // blue
-  [TopType.ENCLOSURE_GENERATOR]: 1, // yellow - pink belongs to the king now
+  [TopType.SUPPORT]: 2,    // blue
+  [TopType.ENC_GEN]: 1, // yellow - pink belongs to the king now
 }
 /** Fixed accent index for a generator type, or undefined for non-generators. */
 export const genColorIndex = (typeTop) => GEN_COLOR[typeTop]
@@ -88,31 +88,44 @@ export const shieldCharges = (t) =>
 
 export const isBarracks = (t) => t.typeTop === TopType.BARRACKS
 export const isShield = (t) => t.typeTop === TopType.SHIELD
-export const isPathGenerator = (t) => t.typeTop === TopType.PATH_GENERATOR
-export const isEnclosureGenerator = (t) => t.typeTop === TopType.ENCLOSURE_GENERATOR
+/** The two kinds of generator. Both earn; an ENC_GEN earns from the area it
+ *  seals, which is the primary income, while a SUPPORT earns a retainer for its
+ *  longest link and exists for the trails it throws. */
+export const isEncGen = (t) => t.typeTop === TopType.ENC_GEN
+export const isSupport = (t) => t.typeTop === TopType.SUPPORT
 /**
- * Anything that behaves as an enclosure generator: the hole block, and the king.
- * The king earns from the area it seals on exactly the same terms and claims its
- * enclosure the same way, so only one of the two can occupy any given region.
+ * Anything that earns from sealed ground: a generator, and the king.
  *
- * Deliberately separate from isEnclosureGenerator rather than folding the king
- * into it - that predicate also feeds isGenerator, which would hand the king a
- * lifespan, a countdown pie and a slot in the MAX_GENS cap.
+ * The king earns from the area it seals on exactly the same terms and claims its
+ * region the same way, so only one of the two can be paid for any given region.
+ *
+ * Deliberately NOT folded into isEncGen, because that feeds isGenerator -
+ * which would put the king in the placement cap and give it an upkeep bill.
  */
-export const claimsEnclosure = (t) => isEnclosureGenerator(t) || !!t.king
+export const claimsEnclosure = (t) => isEncGen(t) || !!t.king
 export const isTurret = (t) =>
-  t.typeTop === TopType.PEG_TURRET || t.typeTop === TopType.DIVOT_TURRET || t.typeTop === TopType.MORTAR_TURRET
-export const isPegTurret = (t) => t.typeTop === TopType.PEG_TURRET
-export const isDivotTurret = (t) => t.typeTop === TopType.DIVOT_TURRET
+  t.typeTop === TopType.RIFLE || t.typeTop === TopType.LASER || t.typeTop === TopType.MORTAR
+export const isRifle = (t) => t.typeTop === TopType.RIFLE
+export const isLaser = (t) => t.typeTop === TopType.LASER
 
-/** Any accent-coloured generator (path / enclosure). */
-export const isGenerator = (t) =>
-  t.typeTop === TopType.PATH_GENERATOR ||
-  t.typeTop === TopType.ENCLOSURE_GENERATOR
+/**
+ * Any generator, of either kind.
+ *
+ * They differ in almost everything they DO and share what makes them
+ * generators: a fixed accent of their own, a slot in the placement cap, an
+ * upkeep bill, and energy arriving from them rather than from you.
+ */
+export const isGenerator = (t) => isEncGen(t) || isSupport(t)
 
-/** A plain "grey" tower: not a generator, turret, barracks, or the king.
- *  Grey towers are walls - they block creep pathing rather than attracting it. */
-export const isGrey = (t) => !isGenerator(t) && !isTurret(t) && !isBarracks(t) && !isShield(t) && !t.king
+/**
+ * A wall: the grey tetromino tiles that make up most of a city.
+ *
+ * Defined by exclusion, which is a known weakness - a new tile type is a wall
+ * until someone remembers to add it here. It stays this way because walls are
+ * the DEFAULT: every tile that is not something in particular is one, and
+ * listing the six shapes instead would be the same statement upside down.
+ */
+export const isWall = (t) => !isGenerator(t) && !isTurret(t) && !isBarracks(t) && !isShield(t) && !t.king
 
 
 /**

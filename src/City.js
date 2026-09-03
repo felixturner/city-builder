@@ -41,9 +41,9 @@ import { RangeVisuals } from './systems/RangeVisuals.js'
 import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { ACCENT_COLORS, PINK } from './palette.js'
+import { ACCENT_COLORS, PINK, CITY, WHITE } from './palette.js'
 import { Buffs } from './buffs.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_MAX_FLOORS, KING_WARN_FLOORS, KING_WARN_CELLS } from './blockTypes.js'
+import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEncGen, isWall, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_MAX_FLOORS, KING_WARN_FLOORS, KING_WARN_CELLS } from './blockTypes.js'
 import { fxMaterial, glow, stutter, NO_AO_MRT } from './fx.js'
 
 // Energy pulses a generator fires per floor before that floor crumbles away.
@@ -70,7 +70,7 @@ const CELL_GRID_OPACITY = 0.5
 const LOT_GRID_OPACITY = 0.85
 // The board outline: white, over ground that steps down in value outside it
 // (see Lighting's three ground planes).
-const OUTLINE_COLOR = 0xffffff
+const OUTLINE_COLOR = CITY.outline
 const OUTLINE_OPACITY = 0.55
 const START_VISIBLE_LOTS = 5
 const MAX_VISIBLE_LOTS = 11
@@ -103,7 +103,7 @@ const KING_MARK_WIDTH = 0.16
 // this is the one thing held back, so the board arrives before it fills.
 const BUILD_DELAY = 1
 const TOWER_HIT_FLASH = 0.22
-const WHITE = new Color(0xffffff)
+const WHITE_C = new Color(WHITE)
 
 // Rotate a vec3 around Y axis by angle (in radians)
 const rotateY = (v, angle) => {
@@ -1333,7 +1333,7 @@ export class City {
     this.updateTowerMatrices(tower)
     // The roof takes the shade of the floor it sits on, so the stack gradient
     // has to be redrawn whenever the height changes.
-    if (isGrey(tower)) this.renderer.shadeStack(tower)
+    if (isWall(tower)) this.renderer.shadeStack(tower)
     this.lotGrowth.trySpawnLots()
     this.updateTowerVisuals()
     this.flowDirty = true // creep pathing depends on walls/goals
@@ -1657,7 +1657,7 @@ export class City {
   genIsProducing(t) {
     if (t.numFloors < 1) return false
     const e = this.energy
-    return e.connectedTowers.has(t) || e.enclosureGens.includes(t)
+    return e.connectedTowers.has(t) || e.encGens.includes(t)
   }
 
   /**
@@ -1841,7 +1841,7 @@ export class City {
     // carrying on past it says the ground out there is real, which is where you
     // watch a wave form up.
     const gridSpan = span + this.cellSize * 2
-    const cellGrid = new GridHelper(gridSpan, gridSpan / this.cellUnit, 0x888888, 0x888888)
+    const cellGrid = new GridHelper(gridSpan, gridSpan / this.cellUnit, CITY.grid, CITY.grid)
     cellGrid.material.transparent = true
     cellGrid.material.opacity = CELL_GRID_OPACITY
     cellGrid.position.set(0, 0.01, 0)
@@ -1883,7 +1883,7 @@ export class City {
 
     // Coarse lot grid - centered at origin, lines at lot spacing intervals.
     // Held just under full alpha so the expand flash has somewhere to go.
-    const lotGrid = new GridHelper(span, this.visibleLots, 0x888888, 0x888888)
+    const lotGrid = new GridHelper(span, this.visibleLots, CITY.grid, CITY.grid)
     lotGrid.material.transparent = true
     lotGrid.material.opacity = LOT_GRID_OPACITY
     lotGrid.position.set(0, 0.02, 0)

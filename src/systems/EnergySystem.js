@@ -3,7 +3,7 @@ import { Sounds } from '../lib/Sounds.js'
 import { ENERGY_COLOR, PINK, BLUE } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import {
-  isPathGenerator, claimsEnclosure, isGrey, isShield, isTurret, isBarracks, towerArea, towerTopY,
+  isSupport, claimsEnclosure, isWall, isShield, isTurret, isBarracks, towerArea, towerTopY,
   shieldRadiusCells, shieldCharges,
 } from '../blockTypes.js'
 import { simRand } from '../lib/rng.js'
@@ -29,7 +29,7 @@ const FLOOR_PULSE_DECAY = 0.22
 // generator earns is this, times its cells, times its floors - and then only
 // the support and card multipliers, which are bonuses rather than scale.
 const ENCLOSURE_RATE = 0.00928
-// Energy per (footprint cell x longest link) for the blue path generators.
+// Energy per (footprint cell x longest link) for the blue support generators.
 //
 // Deliberately well below what a sealed enclosure earns, because a blue tile is
 // a SUPPORT tower that happens to pay a little, not a generator. What it is for
@@ -86,7 +86,7 @@ const SHIELD_COVER_HP = 1
 const LABEL_ATTACK = PINK
 const LABEL_ENERGY = ENERGY_COLOR
 const LABEL_HP = BLUE
-// Path generators are blue; the connect burst reads as coming from them.
+// Support generators are blue; the connect burst reads as coming from them.
 const SUPPORT_ACCENT = 2
 
 const MIN_SPAWN_GAP = 0.07 // seconds between units at full tilt
@@ -95,7 +95,7 @@ const MAX_SPAWNS_PER_TICK = 40 // hard backstop on captions per tower per tick
 /**
  * EnergySystem - all energy generation and the visual/audio feedback for it.
  *
- *  - Path generators (plus blocks) connect to same-colour neighbours within
+ *  - Support generators (plus blocks) connect to same-colour neighbours within
  *    combined-height reach, drawing trails and generating height*area mana.
  *  - Adjacency generators (hole blocks) form orthogonal clusters; each cluster
  *    is one unit that generates 1 mana per built member and glows together.
@@ -109,17 +109,17 @@ export class EnergySystem {
   constructor(city) {
     this.city = city
 
-    // Path generators (trail-connected plus blocks)
-    this.pathGenMana = 0
-    this.pathGenContribution = new Map() // tower -> its share of the tick
+    // Support generators (trail-connected plus blocks)
+    this.supportMana = 0
+    this.supportContribution = new Map() // tower -> its share of the tick
     this.connectedTowers = new Set()
     this.activeConnectorCount = 0
     this._connectorSig = null
     this._connectorKeys = null
 
     // Enclosure generators (sealed inside a coloured enclosure)
-    this.enclosureGenMana = 0
-    this.enclosureGens = [] // built enclosure generators producing mana
+    this.encGenMana = 0
+    this.encGens = [] // built enclosure generators producing mana
 
     // Scheduled flashes: {members, t, amt, sound, color, cx, cy, cz}
     this.pulseEvents = []
@@ -256,7 +256,7 @@ export class EnergySystem {
         // the board and there are dozens of them under one ring; hardening the
         // BUILDINGS is what makes a shield worth the tile, and it keeps the
         // bonus to things you placed one at a time and care about individually.
-        if (isGrey(t)) continue
+        if (isWall(t)) continue
         t.box.getCenter(this._cb)
         if (this._ca.distanceTo(this._cb) < r) cover.set(t, (cover.get(t) || 0) + 1)
       }
@@ -286,19 +286,19 @@ export class EnergySystem {
    *  Uses tower.enclosureRegionCells set by City.updateEnclosure. */
   updateEnclosureGenerators() {
     let mana = 0
-    this.enclosureGens = []
+    this.encGens = []
     for (const t of this.city.towers) {
       if (!t.visible || !claimsEnclosure(t)) continue
       const cells = t.enclosureRegionCells || 0
-      if (cells <= 0 || t.numFloors < 1 || this.city.upkeep.isDark(t)) { t.enclosureMana = 0; continue }
-      t.enclosureMana = Math.max(1, Math.round(
+      if (cells <= 0 || t.numFloors < 1 || this.city.upkeep.isDark(t)) { t.encMana = 0; continue }
+      t.encMana = Math.max(1, Math.round(
         cells * t.numFloors * ENCLOSURE_RATE * Buffs.genRate
         * this.genRateFactor(t)
       ))
-      mana += t.enclosureMana
-      this.enclosureGens.push(t)
+      mana += t.encMana
+      this.encGens.push(t)
     }
-    this.enclosureGenMana = mana
+    this.encGenMana = mana
   }
 
   /**
@@ -328,7 +328,7 @@ export class EnergySystem {
   }
 
   /**
-   * Re-evaluate connectors between path generators. Two same-colour plus blocks
+   * Re-evaluate connectors between support generators. Two same-colour plus blocks
    * connect when the centre distance (in cells) is less than the sum of their
    * heights. Mana per tick = sum over connectors of both towers' height*area
    * scaled by the trail length, so generators further apart generate more.
@@ -337,7 +337,7 @@ export class EnergySystem {
     const city = this.city
     if (!city.trails) return
 
-    const plus = city.towers.filter(t => t.visible && isPathGenerator(t))
+    const plus = city.towers.filter(t => t.visible && isSupport(t))
     const cell = city.cellUnit
     const pairs = []
     for (let i = 0; i < plus.length; i++) {
@@ -383,8 +383,8 @@ export class EnergySystem {
       mana += p
       contrib.set(t, p)
     }
-    this.pathGenMana = mana
-    this.pathGenContribution = contrib
+    this.supportMana = mana
+    this.supportContribution = contrib
 
     // Support trails: on top of the energy-bearing links above, every path
     // generator also runs a line to any non-wall building inside its OWN reach
@@ -402,9 +402,9 @@ export class EnergySystem {
       for (const b of city.towers) {
         if (b === a || !b.visible || b.numFloors < 1) continue
         if (city.upkeep.isDark(b)) continue // a dark building can't be supported
-        if (isGrey(b)) continue // walls are the thing trails route AROUND
+        if (isWall(b)) continue // walls are the thing trails route AROUND
         // Same-colour gen pairs are already linked above; don't double-draw.
-        if (isPathGenerator(b) && b.colorIndex === a.colorIndex) continue
+        if (isSupport(b) && b.colorIndex === a.colorIndex) continue
         b.box.getCenter(this._cb)
         const dist = this._ca.distanceTo(this._cb) / cell
         if (dist < reach) {
@@ -482,7 +482,7 @@ export class EnergySystem {
    * The generator's lifespan is charged ONCE here, not per arrival - the pulses
    * used to be one-per-tick, so this is where a per-tick charge would go.
    */
-  scheduleIncome(tower, amt, span = GEN_INTERVAL, src = 'path') {
+  scheduleIncome(tower, amt, span = GEN_INTERVAL, src = 'support') {
     const city = this.city
     // One unit per slot, until the slots would be closer together than
     // MIN_SPAWN_GAP; past that each slot carries more than 1.
@@ -538,7 +538,7 @@ export class EnergySystem {
     }
 
     // Generator mana tick: schedule each unit's flash at a random offset.
-    const genMana = this.pathGenMana + this.enclosureGenMana
+    const genMana = this.supportMana + this.encGenMana
     // Cache live income/sec for price scaling. Both generator types count now
     // that they both pay energy - path output used to be ammo, which had no
     // business inflating prices paid in the other currency.
@@ -552,17 +552,17 @@ export class EnergySystem {
         // until it adds up to a whole unit. Rounding each tick would either
         // round a small network down to nothing forever, or round it up to a
         // unit a tick - which is the flood this replaced.
-        for (const [tower, amt] of this.pathGenContribution) {
+        for (const [tower, amt] of this.supportContribution) {
           if (!(amt > 0) || !tower.visible) continue
           tower.manaCarry = (tower.manaCarry || 0) + amt
           const whole = Math.floor(tower.manaCarry)
           if (whole >= 1) {
             tower.manaCarry -= whole
-            this.scheduleIncome(tower, whole, GEN_INTERVAL, 'path')
+            this.scheduleIncome(tower, whole, GEN_INTERVAL, 'support')
           }
         }
-        for (const t of this.enclosureGens) {
-          if (t.visible && t.enclosureMana) this.scheduleIncome(t, t.enclosureMana, GEN_INTERVAL, 'enc')
+        for (const t of this.encGens) {
+          if (t.visible && t.encMana) this.scheduleIncome(t, t.encMana, GEN_INTERVAL, 'enc')
         }
       }
     }
@@ -614,10 +614,10 @@ export class EnergySystem {
 
     // Brightness pulse, driven by each tower's own decaying flash envelope.
     for (const tower of this.connectedTowers) this._pulseTower(tower, dt)
-    for (const tower of this.enclosureGens) this._pulseTower(tower, dt)
+    for (const tower of this.encGens) this._pulseTower(tower, dt)
 
     // Pulse the enclosure floor with its claimant's flash (strongest wins). The
-    // king is in enclosureGens now, so its enclosure lights up on every unit it
+    // king is in encGens now, so its enclosure lights up on every unit it
     // earns too. Swings much wider than before - each +1 arrival should visibly
     // flash the sealed area, not just nudge it.
     this.floorPulse = Math.max(0, this.floorPulse - dt / FLOOR_PULSE_DECAY)

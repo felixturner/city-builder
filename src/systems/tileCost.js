@@ -1,5 +1,5 @@
 import { Buffs } from '../buffs.js'
-import { isGrey } from '../blockTypes.js'
+import { isWall } from '../blockTypes.js'
 
 /**
  * What anything costs to build - ONE function, used by both the palette and the
@@ -74,7 +74,7 @@ export function priceOfTile(city, tile) {
 
 /** Half price, for raising one floor on a tower already on the board. */
 export function priceOfTower(city, tower) {
-  const full = priceOf(city, { isWall: isGrey(tower), typeTop: tower.typeTop })
+  const full = priceOf(city, { isWall: isWall(tower), typeTop: tower.typeTop })
   return Math.max(1, Math.round(full * FLOOR_DISCOUNT))
 }
 

@@ -3,11 +3,12 @@ import {
   MeshBasicNodeMaterial,
 } from 'three/webgpu'
 import { fxMaterial } from '../fx.js'
+import { WARN } from '../palette.js'
 // Dark orange - reads as a hazard marker without competing with the three city
 // accents, which every other coloured thing on the board already uses. One flat
 // colour for every arrow: the field is a direction read, and shading it by
 // destination or by distance made brightness a second thing to decode.
-const FLOW_COLOR = new Color(0xcc5500)
+const FLOW_COLOR = new Color(WARN.arrow)
 
 /**
  * The creep flow field, drawn on the ground as a field of little arrows.
