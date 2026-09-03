@@ -1203,14 +1203,25 @@ export class City {
    * The visible tower whose footprint covers a grid cell, or null.
    *
    * Used by run playback to name a tower without depending on object identity,
-   * which cannot survive being written to a file. A cell pair does.
+   * which cannot survive being written to a file. A cell pair does - but only
+   * if a cell names ONE tower. Testing the bounding box alone did not: a
+   * tetromino fills four of its box's six cells, so its two empty ones also
+   * matched, and a cell could answer with either its real tower or the
+   * L-piece leaning over it, whichever came first in the pool. Playback picked
+   * the wrong tile and the run diverged. Cells, not the box.
    */
   towerAtCell(gx, gy) {
     const cu = this.cellUnit
     const x = gx * cu + cu / 2, y = gy * cu + cu / 2
     for (const t of this.towers) {
       if (!t.visible) continue
-      if (x >= t.box.min.x && x <= t.box.max.x && y >= t.box.min.y && y <= t.box.max.y) return t
+      // The box still rejects nearly everything for two comparisons.
+      if (x < t.box.min.x || x > t.box.max.x || y < t.box.min.y || y > t.box.max.y) continue
+      // Pre-built lot towers carry no cell list; their box IS their footprint.
+      if (!t.cells) return t
+      for (const [dx, dy] of t.cells) {
+        if (t.cellX + dx === gx && t.cellY + dy === gy) return t
+      }
     }
     return null
   }

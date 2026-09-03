@@ -25,6 +25,8 @@ export class TowerInteraction {
     this.dragThreshold = 5 // pixels
     this._pickBox = new Box3()
     this._pickHit = new Vector3()
+    this._cellBox = new Box3()
+    this._cellHit = new Vector3()
 
     // Reroll build-wheel timers: {tower, ring, mat, t, step}
     this.rerollTimers = []
@@ -36,11 +38,20 @@ export class TowerInteraction {
   }
 
   /**
-   * Pick the nearest tower by its bounding box (ignores actual geometry so the
-   * hole in plus blocks stays clickable). Returns {batchId} or null.
+   * Pick the nearest tower by its FOOTPRINT CELLS. Cells, not geometry, so the
+   * hole in plus blocks stays clickable - but not the bounding box either,
+   * because a tetromino fills only four of its box's six cells and the other
+   * two would shadow their neighbours for the tower's full height. A one-floor
+   * tile in a five-floor L-piece's notch was unclickable. Returns {batchId} or
+   * null.
+   *
+   * Two phases, because hover runs this on every pointer move against the whole
+   * pool: the bounding box rejects almost every tower for one intersect each,
+   * and only a survivor pays for its handful of cells.
    */
   pickTowerBox(ray) {
     const city = this.city
+    const cu = city.cellUnit
     let nearest = null
     let nearestDist = Infinity
     for (const tower of city.towers) {
@@ -53,10 +64,27 @@ export class TowerInteraction {
       this._pickBox.max.set(
         tower.box.max.x + city.gridOffsetX, top, tower.box.max.y + city.gridOffsetZ
       )
-      const hit = ray.intersectBox(this._pickBox, this._pickHit)
-      if (!hit) continue
-      const d = ray.origin.distanceToSquared(hit)
-      if (d < nearestDist) { nearestDist = d; nearest = tower }
+      if (!ray.intersectBox(this._pickBox, this._pickHit)) continue
+      // The box entry is a lower bound on any cell hit inside it, so a tower
+      // that enters behind the best hit so far cannot beat it. Skip the cells.
+      let d = ray.origin.distanceToSquared(this._pickHit)
+      if (d >= nearestDist) continue
+
+      // Pre-built lot towers carry no cell list; their box is their footprint.
+      if (tower.cells) {
+        d = Infinity
+        for (const [dx, dy] of tower.cells) {
+          const x0 = (tower.cellX + dx) * cu + city.gridOffsetX
+          const z0 = (tower.cellY + dy) * cu + city.gridOffsetZ
+          this._cellBox.min.set(x0, 0, z0)
+          this._cellBox.max.set(x0 + cu, top, z0 + cu)
+          if (!ray.intersectBox(this._cellBox, this._cellHit)) continue
+          d = Math.min(d, ray.origin.distanceToSquared(this._cellHit))
+        }
+        if (d >= nearestDist) continue
+      }
+      nearestDist = d
+      nearest = tower
     }
     return nearest ? { batchId: nearest.roofInstance } : null
   }
