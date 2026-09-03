@@ -24,16 +24,17 @@ export const TopType = {
 
 // Role -> top geometry index (decoupled). All three turrets render the divot top;
 // the enclosure generator renders the (freed) peg top; the barracks wears the
-// same divot top as the turrets (its rooftop soldier tells it apart) and the
-// shield wears the hole top, same as the king.
-const ROOF_GEOM = [0, 1, 2, 4, 4, 5, 3, 4, 4, 2]
+// same divot top as the turrets (its rooftop soldier tells it apart); the
+// shield wears the hole top; and the king (TopType.HOLE slot) wears the divot
+// top too - its pink accent, beam and marker are what set it apart.
+const ROOF_GEOM = [0, 1, 4, 4, 4, 5, 3, 4, 4, 2]
 export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 
 // Each generator type has ONE fixed accent colour (index into City.accentColors:
 // 0 pink, 1 yellow, 2 blue). Path = blue, enclosure = yellow.
 const GEN_COLOR = {
   [TopType.PATH_GENERATOR]: 2,    // blue
-  [TopType.ENCLOSURE_GENERATOR]: 0, // pink
+  [TopType.ENCLOSURE_GENERATOR]: 1, // yellow - pink belongs to the king now
 }
 /** Fixed accent index for a generator type, or undefined for non-generators. */
 export const genColorIndex = (typeTop) => GEN_COLOR[typeTop]

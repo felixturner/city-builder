@@ -1725,13 +1725,19 @@ export class Creeps {
     // blocks pulse toward a bright glow. Driven off battle && open directly -
     // the siren below additionally yields to the low-health siren, but the
     // colour should keep warning either way.
+    this.exposedActive = battle && open // WaveArrows keys its alarm flicker off this
     if (battle && open) {
       this._exposedPulseT = (this._exposedPulseT || 0) + dt
-      city.pulseKingColor(0.5 + 0.5 * Math.sin(this._exposedPulseT * Math.PI * 2 * 1.5))
+      // One shared beat for everything warning about the open king: the king's
+      // own glow and the wave arrows (WaveArrows reads exposedPulse) throb in
+      // phase with the siren.
+      this.exposedPulse = 0.5 + 0.5 * Math.sin(this._exposedPulseT * Math.PI * 2 * 1.5)
+      city.pulseKingColor(this.exposedPulse)
       this._kingPulsing = true
     } else if (this._kingPulsing) {
       this._kingPulsing = false
       this._exposedPulseT = 0
+      this.exposedPulse = 0
       if (city.king) city.renderer.applyTypeVisuals(city.king) // restore true colours
     }
 

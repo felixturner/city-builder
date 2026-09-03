@@ -1,6 +1,7 @@
 import { Tower } from '../Tower.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { TopType, isGenerator, isTurret, isBarracks, isShield } from '../blockTypes.js'
+import { SHIELD_LINE } from '../palette.js'
 
 // Icon geometry, shared with the tray DOM that hosts these canvases.
 export const ICON = 72 // palette icon canvas size (px)
@@ -27,7 +28,8 @@ export function cellBounds(cells) {
 /** CSS colour for a tile's icon. */
 export function tileColor(tile, accents) {
   if (tile.wall) return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
-  if (isGenerator(tile) || isShield(tile)) return `#${accents[tile.colorIndex].getHexString()}`
+  if (isShield(tile)) return SHIELD_LINE
+  if (isGenerator(tile)) return `#${accents[tile.colorIndex].getHexString()}`
   if (isTurret(tile) || isBarracks(tile)) return '#9aa0aa'
   return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
 }

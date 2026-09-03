@@ -1,43 +1,40 @@
 import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color, Vector2 } from 'three/webgpu'
+import gsap from 'gsap'
 import { fxMaterial, glow } from './fx.js'
 
 /**
  * Arrows on the ground pointing IN from the sides the next wave arrives from.
  *
  * Each warned edge shows the original BIG arrow (head overlapping the board,
- * tail out in the field, exactly where it always sat) plus a trail of SMALLER
- * arrows running the whole way in to the king - innermost tip one cell from
- * it - so the warning reads as the path the swarm will take.
+ * tail out in the field) plus a trail of SMALLER arrows running the whole way
+ * in to the king - innermost tip one cell from it - so the warning reads as
+ * the path the swarm will take.
  *
- * House fx material throughout: additive blending (a floor overlay that can
- * never darken the ground) with depthTest on / depthWrite off, so towers can
- * still occlude the inner arrows at low camera angles.
+ * Opacity is driven by gsap, one clear behaviour at a time:
+ *   - the arrows FADE IN over FADE_IN seconds when their countdown starts
+ *   - an incoming swarm FLICKERS them to zero INCOMING_FLICKS times just
+ *     before it pours (0.3s per down-up cycle)
+ *   - an open king OVERRIDES everything with a steady alarm flicker, one
+ *     quick blink per bleep
+ * Between tweens the opacity rests at a steady base level set per frame.
+ *
+ * House fx material throughout: additive blending with depthTest on /
+ * depthWrite off, so towers can occlude the inner arrows at low angles.
  */
-// Length and width are equal on purpose: the arrow sits in a square, so it
-// looks the same size whichever side a wave is coming from.
 const LENGTH_CELLS = 3.2 // the big edge arrow, tip to tail
 const SMALL_CELLS = 2 // the trail arrows
 const TRAIL_GAP_CELLS = 1 // daylight between consecutive trail arrows
 const KING_CLEARANCE_CELLS = 1 // innermost tip stops this far from the king
 const Y = 0.12 // on the floor, above the grid and the flow field
-// How far INSIDE the bounds the big arrow sits, in cells. Its tip used to touch
-// the outline from outside; overlapping the board a little ties it to the
-// ground it is warning about rather than floating off the edge of it.
+// How far INSIDE the bounds the big arrow sits, in cells.
 const OVERLAP_CELLS = 2
-// A swarm pouring out of an edge sets that edge's arrows blinking -
-// FLASH_PULSES beats over FLASH_TIME, decaying as it goes. Opacity only,
-// never scale.
-const FLASH_TIME = 1.2
-const FLASH_PULSES = 4
-const FLASH_ALPHA = 1.0
-// ...and BEFORE a swarm arrives, the edge blinks ARRIVAL_FLASHES times across
-// FLASH_WINDOW seconds - both the pre-wave countdown and each mid-wave swarm
-// (Creeps.nextSwarmIn) get the same warning.
-const ARRIVAL_FLASHES = 5
-const FLASH_WINDOW = 2.5
+const FADE_IN = 0.5 // seconds to fade up when the warning first appears
+const FLICK = 0.15 // seconds per leg of a flicker (0.3s down-and-up)
+const INCOMING_FLICKS = 5 // full cycles before a swarm lands
+const INCOMING_LEAD = INCOMING_FLICKS * FLICK * 2 // start so the last flick ends on arrival
+const BLEEP_PERIOD = 0.7 // seconds between exposed-alarm blinks (matches the siren)
 const ALPHA_STEADY = 0.7 // "they are over there", not "brace"
-const ALPHA_COUNTDOWN = 0.45 // early countdown, before the flashing starts
-const ALPHA_LOW = 0.25 // the off half of a flash
+const ALPHA_COUNTDOWN = 0.45 // during the pre-wave countdown
 
 // A plain triangle pointing toward +Z, wound face-up so it isn't back-face
 // culled by a camera looking down at the board.
@@ -64,56 +61,74 @@ export class WaveArrows {
     this.bigGeo = triangle(LENGTH_CELLS)
     this.smallGeo = triangle(SMALL_CELLS)
 
-    this.flashes = [0, 0, 0, 0] // per-edge flash envelope, 1 -> 0
     this.edges = []
     for (let i = 0; i < 4; i++) {
-      // One material per edge: the big arrow and its whole trail brighten and
-      // blink as one thing. Trail meshes are grown lazily - how many fit
-      // depends on how far the board has opened.
+      // One material per edge: the big arrow and its whole trail act as one.
       const mat = fxMaterial(new MeshBasicNodeMaterial({ opacity: 0 }))
       const big = glow(new Mesh(this.bigGeo, mat))
       big.visible = false
       big.renderOrder = 4
       big.scale.setScalar(this.city.cellUnit)
       demo.scene.add(big)
-      this.edges.push({ big, trail: [], mat })
+      this.edges.push({
+        big, trail: [], mat,
+        shown: false, // fade-in played for the current appearance
+        flicker: null, // active incoming-flicker timeline
+        alarm: null, // active exposed-alarm timeline
+        armed: false, // incoming flicker already played for the current swarm
+      })
     }
   }
 
-  /**
-   * Distance from the centre to the big arrow's MIDDLE. Half a length past the
-   * bounds would put its tip exactly on the outline; OVERLAP_CELLS pulls it
-   * back in so the head lies over the board and the tail hangs out in the
-   * field the creeps walk in from.
-   */
   _radius() {
     return this.city.visibleHalf + (LENGTH_CELLS / 2 - OVERLAP_CELLS) * this.city.cellUnit
   }
 
-  /** Start an edge's arrows blinking - a swarm is pouring out of it. */
+  /** A swarm is pouring NOW (Creeps calls this). If its incoming flicker
+   *  somehow hasn't played (e.g. a squeezed schedule), play it late. */
   flash(edge) {
-    if (edge >= 0 && edge < this.flashes.length) this.flashes[edge] = 1
+    const e = this.edges[edge]
+    if (e && e.shown && !e.flicker && !e.alarm) this._startFlicker(e)
   }
 
-  /**
-   * Brightness of an edge's blink right now, 0..1.
-   *
-   * A decaying pulse train rather than a single fade: `env` is how much of the
-   * warning is left, `pulse` is where it is within the current beat. Multiplied,
-   * the arrows blink FLASH_PULSES times and each beat is weaker than the last,
-   * so it reads as a countdown running out rather than one thing that happened.
-   */
-  _flashLevel(edge) {
-    const env = this.flashes[edge]
-    if (env <= 0) return 0
-    const elapsed = (1 - env) * FLASH_TIME
-    const pulse = Math.abs(Math.sin((elapsed / FLASH_TIME) * Math.PI * FLASH_PULSES))
-    return env * pulse
+  /** 5 quick down-to-zero-and-back cycles; ends back at the steady level. */
+  _startFlicker(e) {
+    e.flicker?.kill()
+    e.flicker = gsap.to(e.mat, {
+      opacity: 0, duration: FLICK, ease: 'none',
+      yoyo: true, repeat: INCOMING_FLICKS * 2 - 1,
+      onComplete: () => { e.flicker = null },
+    })
+  }
+
+  /** The open-king alarm: one quick blink per bleep, forever until sealed. */
+  _startAlarm(e) {
+    e.flicker?.kill(); e.flicker = null
+    e.alarm = gsap.timeline({ repeat: -1, repeatDelay: BLEEP_PERIOD - FLICK * 2 })
+      .to(e.mat, { opacity: 0, duration: FLICK, ease: 'none' })
+      .to(e.mat, { opacity: 1, duration: FLICK, ease: 'none' })
+  }
+
+  _stopAlarm(e) {
+    e.alarm?.kill()
+    e.alarm = null
+  }
+
+  /** Hide an edge and reset its animation state. */
+  _hideEdge(e) {
+    if (!e.shown && !e.big.visible) return
+    e.flicker?.kill(); e.flicker = null
+    this._stopAlarm(e)
+    gsap.killTweensOf(e.mat)
+    e.mat.opacity = 0
+    e.shown = false
+    e.armed = false
+    e.big.visible = false
+    for (const m of e.trail) m.visible = false
   }
 
   /** The trail pool for an edge, grown to `n` meshes on demand. */
-  _trailMeshes(edge, n) {
-    const e = this.edges[edge]
+  _trailMeshes(e, n) {
     while (e.trail.length < n) {
       const mesh = glow(new Mesh(this.smallGeo, e.mat))
       mesh.visible = false
@@ -125,10 +140,7 @@ export class WaveArrows {
     return e.trail
   }
 
-  update(dt = 0) {
-    for (let i = 0; i < this.flashes.length; i++) {
-      if (this.flashes[i] > 0) this.flashes[i] = Math.max(0, this.flashes[i] - dt / FLASH_TIME)
-    }
+  update() {
     const creeps = this.creeps
     if (!creeps || !creeps.started) return this._hideAll()
 
@@ -138,15 +150,11 @@ export class WaveArrows {
     const spawning = clock.isSpawning
     // Creeps still alive after their spawn window closes carry on into the NEXT
     // cycle's build phase, by which point clock.waveNumber has already ticked
-    // over. Pointing at that wave's edges while the survivors of the last one are
-    // still walking in from somewhere else is exactly the mismatch you'd see:
-    // the arrows are honest about a wave that has not spawned yet.
+    // over - the arrows stay honest about a wave that has not spawned yet.
     const stragglers = !spawning && creeps.creeps.length > 0
 
     let wave, countdown = false
     if (away <= lead && away >= 0) {
-      // A countdown outranks stragglers - what is about to arrive matters more
-      // than where the last few came from.
       wave = clock.waveNumber
       countdown = true
     } else if (spawning) {
@@ -162,9 +170,9 @@ export class WaveArrows {
     const edges = clock.waveEdges(wave)
     const cu = this.city.cellUnit
     const r = this._radius()
+    const exposed = !!creeps.exposedActive
 
-    // The trail aims at the KING, not the board centre - same anchor the old
-    // king-side arrow used.
+    // The trail aims at the KING, not the board centre.
     const king = this.city.king
     const kingOk = king && king.visible && this.city.kingAlive
     const kc = kingOk ? king.box.getCenter(this._kingC) : null
@@ -173,30 +181,39 @@ export class WaveArrows {
 
     for (let edge = 0; edge < 4; edge++) {
       const e = this.edges[edge]
-      if (!edges.includes(edge)) {
-        e.big.visible = false
-        for (const m of e.trail) m.visible = false
-        continue
-      }
+      if (!edges.includes(edge)) { this._hideEdge(e); continue }
       e.mat.color.copy(this._colour)
 
-      // How long until something pours out of THIS edge: the wave countdown
-      // covers its opening swarms; mid-wave, each edge's next planned swarm.
-      const swarmIn = countdown ? away : creeps.nextSwarmIn(edge)
-      let alpha
-      if (swarmIn <= FLASH_WINDOW) {
-        // ARRIVAL_FLASHES square-wave blinks across the window before it lands.
-        const on = ((FLASH_WINDOW - swarmIn) / FLASH_WINDOW) * ARRIVAL_FLASHES % 1 < 0.5
-        alpha = on ? FLASH_ALPHA : ALPHA_LOW
-      } else {
-        alpha = countdown ? ALPHA_COUNTDOWN : ALPHA_STEADY
-      }
-      // The pouring flash rides OVER whatever the arrows are already doing.
-      const f = this._flashLevel(edge)
-      e.mat.opacity = f > 0 ? Math.max(alpha, FLASH_ALPHA * f) : alpha
+      const base = countdown ? ALPHA_COUNTDOWN : ALPHA_STEADY
 
-      // Edges 0/1 are the two X sides, 2/3 the two Z sides. Every arrow points
-      // the way the creeps will travel.
+      // First frame of this appearance: fade in from nothing.
+      if (!e.shown) {
+        e.shown = true
+        e.armed = false
+        gsap.killTweensOf(e.mat)
+        gsap.fromTo(e.mat, { opacity: 0 }, { opacity: base, duration: FADE_IN, ease: 'power1.out' })
+      }
+
+      // The open-king alarm overrides every other flicker while it lasts.
+      if (exposed && !e.alarm) this._startAlarm(e)
+      else if (!exposed && e.alarm) { this._stopAlarm(e); e.mat.opacity = base }
+
+      if (!exposed) {
+        // A swarm is close: flicker down to zero INCOMING_FLICKS times, timed
+        // to finish as it lands. One run per swarm - re-armed when the next
+        // one is still far away.
+        const swarmIn = countdown ? away : creeps.nextSwarmIn(edge)
+        if (swarmIn > INCOMING_LEAD + 0.25) e.armed = false
+        if (!e.armed && swarmIn <= INCOMING_LEAD && swarmIn > 0) {
+          e.armed = true
+          this._startFlicker(e)
+        }
+        // Steady level between animations.
+        if (!e.flicker && !gsap.isTweening(e.mat)) e.mat.opacity = base
+      }
+
+      // Placement. Edges 0/1 are the two X sides, 2/3 the two Z sides; every
+      // arrow points the way the creeps will travel.
       let x = 0, z = 0, yaw = 0
       if (edge === 0) { x = -r; yaw = Math.PI / 2 } // from -X, pointing +X
       else if (edge === 1) { x = r; yaw = -Math.PI / 2 }
@@ -206,17 +223,15 @@ export class WaveArrows {
       e.big.rotation.set(0, yaw, 0)
       e.big.visible = true
 
-      // The trail: small arrows from just short of the big arrow all the way in
-      // to the king, TRAIL_GAP_CELLS of daylight apart, innermost tip
+      // The trail: small arrows from just short of the big arrow all the way
+      // in to the king, TRAIL_GAP_CELLS apart, innermost tip
       // KING_CLEARANCE_CELLS from the king.
       if (!kingOk) { for (const m of e.trail) m.visible = false; continue }
       const period = (SMALL_CELLS + TRAIL_GAP_CELLS) * cu
-      // Distance (along the approach axis) from the king to the first trail
-      // arrow's CENTRE, then step outward until we'd run into the big arrow.
       const first = (KING_CLEARANCE_CELLS + SMALL_CELLS / 2) * cu
       const max = r - (LENGTH_CELLS / 2 + TRAIL_GAP_CELLS) * cu
       const n = Math.max(0, Math.floor((max - first) / period) + 1)
-      const trail = this._trailMeshes(edge, n)
+      const trail = this._trailMeshes(e, n)
       for (let k = 0; k < trail.length; k++) {
         const mesh = trail[k]
         if (k >= n) { mesh.visible = false; continue }
@@ -234,9 +249,6 @@ export class WaveArrows {
   }
 
   _hideAll() {
-    for (const e of this.edges) {
-      e.big.visible = false
-      for (const m of e.trail) m.visible = false
-    }
+    for (const e of this.edges) this._hideEdge(e)
   }
 }

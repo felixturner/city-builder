@@ -1,7 +1,7 @@
 import { MathUtils, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
 import { Tower } from '../Tower.js'
-import { ACCENT_COLORS } from '../palette.js'
+import { ACCENT_COLORS, SHIELD_LINE } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TopType, isTurret, isGenerator, isBarracks, isShield, isGrey, roofGeomIndex, genColorIndex, maxFloorsFor, KING_HEALTH, SHIELD_COLOR } from '../blockTypes.js'
@@ -201,7 +201,9 @@ export class TowerRenderer {
     }
 
     if (isShield(tower)) {
-      const accent = city.accentColors[SHIELD_COLOR]
+      // Shields wear the dedicated shield red, same as their barrier ring -
+      // a hazard colour, deliberately outside the three building accents.
+      const accent = new Color(SHIELD_LINE)
       tower.isLit = false
       tower.litColor = null
       tower.laserColor = null

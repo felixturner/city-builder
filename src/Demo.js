@@ -846,7 +846,7 @@ export class Demo {
     const title = document.createElement('div')
     title.textContent = 'GAME OVER'
     Object.assign(title.style, {
-      color: ENERGY_COLOR, font: '500 72px Inter, system-ui, sans-serif',
+      color: ENERGY_COLOR, font: '600 72px Inter, system-ui, sans-serif',
       letterSpacing: '2px', textShadow: TEXT_SHADOW,
     })
 
@@ -877,12 +877,7 @@ export class Demo {
 
     const btn = document.createElement('button')
     btn.textContent = 'Restart'
-    Object.assign(btn.style, {
-      padding: '12px 36px', font: '600 18px Inter, system-ui, sans-serif', color: '#fff',
-      background: 'rgba(0,0,0,0.35)', border: '2px solid #fff', borderRadius: '24px',
-      cursor: 'pointer', textShadow: TEXT_SHADOW,
-      pointerEvents: 'auto', // the panel itself is click-through; the button isn't
-    })
+    btn.className = 'menu-btn' // the one shared menu-button style (index.html)
     btn.addEventListener('click', () => location.reload())
     el.appendChild(title)
     el.appendChild(stats)
@@ -927,7 +922,7 @@ export class Demo {
     const title = document.createElement('div')
     title.textContent = 'PAUSED'
     Object.assign(title.style, {
-      color: ENERGY_COLOR, font: '500 72px Inter, system-ui, sans-serif',
+      color: ENERGY_COLOR, font: '600 72px Inter, system-ui, sans-serif',
       letterSpacing: '2px', textShadow: TEXT_SHADOW,
     })
 
@@ -953,20 +948,16 @@ export class Demo {
     stats.appendChild(bestEl)
 
     const buttons = document.createElement('div')
-    Object.assign(buttons.style, { display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '16px' })
-    const buttonStyle = {
-      padding: '12px 36px', font: '600 18px Inter, system-ui, sans-serif', color: '#fff',
-      background: 'rgba(0,0,0,0.35)', border: '2px solid #fff', borderRadius: '24px',
-      cursor: 'pointer', textShadow: TEXT_SHADOW,
-      pointerEvents: 'auto', // the panel itself is click-through; the buttons aren't
-    }
+    Object.assign(buttons.style, { display: 'flex', flexDirection: 'column', gap: '16px' })
+    // All four wear the one shared .menu-btn style (index.html), same as every
+    // other menu screen.
     const resume = document.createElement('button')
     resume.textContent = 'Resume game'
-    Object.assign(resume.style, buttonStyle)
+    resume.className = 'menu-btn'
     resume.addEventListener('click', () => this._hideMenu())
     const restart = document.createElement('button')
     restart.textContent = 'New game'
-    Object.assign(restart.style, buttonStyle)
+    restart.className = 'menu-btn'
     // ?play skips the start menu after the reload, straight into the new run.
     restart.addEventListener('click', () => {
       const url = new URL(location.href)
@@ -975,13 +966,13 @@ export class Demo {
     })
     const tute = document.createElement('button')
     tute.textContent = 'Tutorial'
-    Object.assign(tute.style, buttonStyle)
+    tute.className = 'menu-btn'
     // The slideshow opens over this menu (higher z-index); its last click just
     // closes it again and lands back here, still paused.
     tute.addEventListener('click', () => this.tutorial?.show(() => {}))
     const board = document.createElement('button')
     board.textContent = 'View leaderboard'
-    Object.assign(board.style, buttonStyle)
+    board.className = 'menu-btn'
     board.addEventListener('click', () => new HighScores().showBoard())
     buttons.appendChild(resume)
     buttons.appendChild(restart)

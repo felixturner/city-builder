@@ -107,7 +107,7 @@ export class HighScores {
     const title = document.createElement('div')
     title.textContent = 'LEADERBOARD'
     Object.assign(title.style, {
-      color: ENERGY_COLOR, font: '500 48px Inter, system-ui, sans-serif',
+      color: ENERGY_COLOR, font: '600 48px Inter, system-ui, sans-serif',
       letterSpacing: '2px', textShadow: SHADOW,
     })
     const list = document.createElement('div')
@@ -126,11 +126,7 @@ export class HighScores {
     }
     const close = document.createElement('button')
     close.textContent = 'Close'
-    Object.assign(close.style, {
-      padding: '12px 36px', font: '600 18px Inter, system-ui, sans-serif', color: '#fff',
-      background: 'rgba(0,0,0,0.35)', border: '2px solid #fff', borderRadius: '24px',
-      cursor: 'pointer', textShadow: SHADOW,
-    })
+    close.className = 'menu-btn' // the one shared menu-button style (index.html)
     close.addEventListener('click', () => document.body.removeChild(el))
     el.appendChild(title)
     el.appendChild(list)

@@ -41,7 +41,7 @@ import { RangeVisuals } from './systems/RangeVisuals.js'
 import { LotGrowth } from './systems/LotGrowth.js'
 import { TowerInteraction } from './systems/TowerInteraction.js'
 import { TowerRenderer } from './systems/TowerRenderer.js'
-import { ACCENT_COLORS, SHIELD_LINE } from './palette.js'
+import { ACCENT_COLORS, PINK } from './palette.js'
 import { Buffs } from './buffs.js'
 import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEnclosureGenerator, isGrey, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_MAX_FLOORS, KING_WARN_FLOORS, KING_WARN_CELLS } from './blockTypes.js'
 import { fxMaterial, glow, NO_AO_MRT } from './fx.js'
@@ -77,7 +77,7 @@ const MAX_VISIBLE_LOTS = 11
 const LOTS_PER_BOSS = 2 // rings opened per boss round cleared
 
 // Accent index the king always wears: 1 is the yellow of the three city accents.
-const KING_COLOR = 1
+const KING_COLOR = 0 // pink - the king's own accent
 const KING_MARKER_SIZE = 1.04 // world units across, before the corner-up tilt
 const KING_MARKER_HOVER = 1.4 // rest height above the king's roof
 // Seconds for a damage flash to fade back to the tower's own colour. The king
@@ -775,7 +775,7 @@ export class City {
     // different yellow and twice the thickness apart.
     const geo = new CylinderGeometry(KING_MARK_WIDTH / 2, KING_MARK_WIDTH / 2, H, 12, 1, true)
     const mat = fxMaterial(new MeshBasicNodeMaterial({
-      color: new Color(SHIELD_LINE),
+      color: new Color(PINK),
       side: DoubleSide, // an open tube shows its inside wall from most angles
     }))
     // Solid where it leaves the roof, gone by the top - a hard cut in the sky
@@ -864,7 +864,7 @@ export class City {
     const r = KING_WARN_CELLS * this.cellUnit
     const geo = new RingGeometry(r - KING_MARK_WIDTH / 2, r + KING_MARK_WIDTH / 2, 96)
     const mat = fxMaterial(new MeshBasicNodeMaterial({
-      color: new Color(SHIELD_LINE), opacity: 0.75,
+      color: new Color(PINK), opacity: 0.75,
     }))
     const mesh = glow(new Mesh(geo, mat))
     mesh.rotation.x = -Math.PI / 2 // RingGeometry lives in XY; lie it flat

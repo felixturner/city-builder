@@ -3,7 +3,7 @@ import { BlockGeometry } from '../lib/BlockGeometry.js'
 import { TetrominoGeometry } from '../lib/TetrominoGeometry.js'
 import { Sounds } from '../lib/Sounds.js'
 import { Buffs } from '../buffs.js'
-import { ENERGY_COLOR, PINK } from '../palette.js'
+import { ENERGY_COLOR, PINK, SHIELD_LINE } from '../palette.js'
 import { Tower } from '../Tower.js'
 import { ICON, CELL, drawTile, drawRing, tileColor, cellBounds } from './tileIcons.js'
 import { priceOfTile, rerollCost } from './tileCost.js'
@@ -115,7 +115,9 @@ export class TilePalette {
   /** The tile's block colour as a THREE.Color (matches its palette icon). */
   _tileColor3(tile, out) {
     if (tile.wall) { out.copy(Tower.COLORS[tile.topColorIndex]); return out }
-    if (isGenerator(tile) || isShield(tile)) {
+    if (isShield(tile)) {
+      out.set(SHIELD_LINE)
+    } else if (isGenerator(tile)) {
       out.copy(this.city.accentColors[tile.colorIndex])
     } else if (isTurret(tile) || isBarracks(tile)) {
       out.set(0x9aa0aa)
