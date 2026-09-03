@@ -1,9 +1,9 @@
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
-import { TopType, KING_MAX_FLOORS } from './blockTypes.js'
+import { TopType, KING_MAX_FLOORS, maxFloorsFor, isGrey } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
-import { simRand } from './lib/rng.js'
+import { simRand, simShuffle } from './lib/rng.js'
 
 export { Buffs, resetBuffs }
 
@@ -35,6 +35,20 @@ export const CARDS = [
     id: 'walls', title: 'Reinforced Walls', color: BLUE,
     desc: 'Every wall block soaks one extra hit.',
     apply: () => { Buffs.wallHits += 1 },
+  },
+  {
+    id: 'wall-builder', title: 'Work Crew', color: BLUE,
+    desc: 'Adds a floor to 20 random walls.',
+    // Nothing to raise if every wall is already at its cap, and a card that
+    // does nothing reads as a bug.
+    available: (g) => g.countGrowable(isGrey) > 0,
+    apply: (g) => g.growRandom(isGrey, 20),
+  },
+  {
+    id: 'tower-builder', title: 'Master Builder', color: YELLOW,
+    desc: 'Adds a floor to 10 random buildings.',
+    available: (g) => g.countGrowable((t) => !isGrey(t)) > 0,
+    apply: (g) => g.growRandom((t) => !isGrey(t), 10),
   },
   {
     id: 'king-heal', title: 'Restore the King', color: YELLOW,
@@ -166,6 +180,37 @@ export class PowerUpScreen {
       city.onTowerChanged(city.king)
     }
   }
+
+  /** Standing tiles `pick` accepts that are not already at their height cap -
+   *  one list, so the card's availability and its effect can never disagree. */
+  _growable(pick) {
+    return this.demo.city.towers.filter((t) => (
+      t.visible && t.numFloors >= 1 && !t.king
+      && t.numFloors < maxFloorsFor(t) && pick(t)
+    ))
+  }
+
+  countGrowable(pick) { return this._growable(pick).length }
+
+  /**
+   * Add a floor to up to `n` of them, chosen at random.
+   *
+   * Free - no energy, no click. That is what the card buys: ACTIONS, which is
+   * the resource the late game actually runs out of, when you cannot place
+   * walls fast enough to hold the line however much energy is banked.
+   *
+   * Off the seeded stream (simShuffle), because which tiles grow changes the
+   * board and therefore the run.
+   */
+  growRandom(pick, n) {
+    const city = this.demo.city
+    for (const t of simShuffle(this._growable(pick)).slice(0, n)) {
+      t.numFloors += 1
+      city.onTowerChanged(t)
+    }
+    city.updateTowerVisuals()
+  }
+
   addPaletteSlot() {
     Buffs.paletteSlots += 1
     this.demo.tilePalette?.addSlot()

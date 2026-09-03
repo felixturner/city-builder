@@ -52,9 +52,10 @@ export class TilePalette {
     })
 
     this._buildDOM()
-    // TEMP: ?clean deals a huge hand - one of every tile type - for shooting
-    // tutorial screenshots, instead of the usual 4 random slots.
-    if (new URLSearchParams(location.search).has('clean')) {
+    // One slot per tile TYPE instead of the usual random hand. ?clean starts in
+    // it for screenshots; the dev GUI toggles it mid-game.
+    this.fullHand = new URLSearchParams(location.search).has('clean')
+    if (this.fullHand) {
       const tiles = this._oneOfEach()
       while (this.slots.length < tiles.length) this._buildSlot()
       tiles.forEach((t, i) => this._setTile(i, t))
@@ -157,8 +158,8 @@ export class TilePalette {
     const reroll = this.rerollBtn = document.createElement('button')
     reroll.title = 'Reroll all tiles'
     Object.assign(reroll.style, {
-      position: 'absolute', top: '-18px', right: '-18px',
-      width: '44px', height: '44px', borderRadius: '50%', padding: '0',
+      position: 'absolute', top: '-12px', right: '-12px',
+      width: '31px', height: '31px', borderRadius: '50%', padding: '0',
       background: 'rgba(40,40,52,0.95)', color: '#fff', border: '1px solid rgba(255,255,255,0.45)',
       cursor: 'pointer', zIndex: '1',
     })
@@ -169,8 +170,8 @@ export class TilePalette {
     for (const deg of [45, -45]) {
       const bar = document.createElement('div')
       Object.assign(bar.style, {
-        position: 'absolute', top: '50%', left: '50%', width: '17px', height: '2px',
-        background: '#fff', borderRadius: '1px',
+        position: 'absolute', top: '50%', left: '50%', width: '13px', height: '3px',
+        background: '#fff', borderRadius: '1.5px',
         transform: `translate(-50%, -50%) rotate(${deg}deg)`,
       })
       reroll.appendChild(bar)
@@ -185,7 +186,7 @@ export class TilePalette {
     cost.textContent = `${rerollCost(this.city)}`
     this.rerollCostEl = cost // the price climbs with the level - see update()
     Object.assign(cost.style, {
-      position: 'absolute', top: '26px', right: '-18px', width: '44px',
+      position: 'absolute', top: '20px', right: '-12px', width: '31px',
       textAlign: 'center', pointerEvents: 'none',
       font: '700 12px Inter, system-ui, sans-serif', color: '#fff',
       textShadow: '0 1px 3px rgba(0,0,0,0.9)',
@@ -381,6 +382,28 @@ export class TilePalette {
     return this.slots.length - 1
   }
 
+  /**
+   * Show one slot per tile TYPE instead of a random hand - the same deal `?clean`
+   * makes, but switchable while the game is running.
+   *
+   * For laying out a shot, or for testing a tile you would otherwise have to
+   * wait on the bag for. Turning it back off restores the normal hand: the
+   * base slots plus any the palette-slot card has added.
+   */
+  setFullHand(on) {
+    this.fullHand = on
+    if (on) {
+      const tiles = this._oneOfEach()
+      while (this.slots.length < tiles.length) this._buildSlot()
+      tiles.forEach((t, i) => this._setTile(i, t))
+      return
+    }
+    const keep = SLOTS + Buffs.paletteSlots
+    for (const slot of this.slots.slice(keep)) slot.el.remove()
+    this.slots.length = Math.min(this.slots.length, keep)
+    for (let i = 0; i < this.slots.length; i++) this._setTile(i, this.randomTile())
+  }
+
   /** Add a slot at runtime (power-up), pre-filled with a tile. */
   addSlot() {
     const i = this._buildSlot()
@@ -403,7 +426,7 @@ export class TilePalette {
       slot.refill -= dt
       // Always show the refilled tile; if it's unaffordable its cost reads red and
       // it can't be dragged (no more holding slots empty until affordable).
-      if (slot.refill <= 0) this._setTile(i, (this._clean && slot.lastTile) || this.randomTile())
+      if (slot.refill <= 0) this._setTile(i, (this.fullHand && slot.lastTile) || this.randomTile())
       else drawRing(slot, 1 - slot.refill / (REFILL_TIME * Buffs.refillRate))
     }
   }
@@ -415,10 +438,9 @@ export class TilePalette {
 
   _consume(i) {
     const slot = this.slots[i]
-    // TEMP (?clean): the one-of-each hand replaces itself, so the tray always
-    // holds every tile type.
-    if (this._clean === undefined) this._clean = new URLSearchParams(location.search).has('clean')
-    if (this._clean) slot.lastTile = slot.tile
+    // The one-of-each hand replaces itself, so the tray always holds every tile
+    // type - the point of the mode is that any tile is always to hand.
+    if (this.fullHand) slot.lastTile = slot.tile
     slot.tile = null
     slot.pending = null
     slot.refill = REFILL_TIME * Buffs.refillRate

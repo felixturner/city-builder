@@ -26,19 +26,20 @@
 
 ## FIXES
 - fix balancing
-- allow board bigger?
 - make droppable vs blocked ghosts easier to see at small sizes
 - fix timing on attacks / knocks + sounds
 - improve high score table
 - check swarm arrow flashing
 - new encluosre sound sounds like power down?
-- keep attacks swarms in one dir until boss level
-- add dec or indicator when at top height
-- remove 3rd party blender file. start new clean repo?
 - make trails + floors glow less - gets too bright later
 - wierd sound when a star is enclosed
+- fix kings and shields look the same
+
+
+- allow board bigger?
+- add dec or indicator when at top height
+- remove 3rd party blender file. start new clean repo?
 - optimize sounds
-- do kings scale same as enc gens?
 - readd add double swarm dir for later on?
 - mark gaps? (too easy?)
 - readd big gens?
@@ -66,7 +67,7 @@
 
 ## ART
 - do a sound mix with all volume sliders
-- get low poly artist to build models
+- get low poly artist to build models <-
 - make creeps low poly spider mecha (bugs)
 - add screen shake, barrel blur etc
 
