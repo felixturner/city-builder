@@ -26,16 +26,12 @@
 
 ## FIXES
 - fix balancing
-- make droppable vs blocked ghosts easier to see at small sizes
-- fix timing on attacks / knocks + sounds
 - improve high score table
-- check swarm arrow flashing
-- new encluosre sound sounds like power down?
 - make trails + floors glow less - gets too bright later
-- wierd sound when a star is enclosed
-- fix kings and shields look the same
 
 
+- check timing on attacks / knocks + sounds
+- fix kings and shields look the same - add a new color?
 - allow board bigger?
 - add dec or indicator when at top height
 - remove 3rd party blender file. start new clean repo?
