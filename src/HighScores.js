@@ -92,9 +92,55 @@ export class HighScores {
     container.appendChild(wrap)
   }
 
-  _renderList(list, scores, ownName = null, ownScore = null) {
+  /**
+   * Fullscreen leaderboard overlay for the menus: title, top 20, Close.
+   * Sits above every menu (they stay put underneath and are back on close).
+   */
+  async showBoard() {
+    const scores = await this.fetchTop()
+    const el = document.createElement('div')
+    Object.assign(el.style, {
+      position: 'fixed', inset: '0', zIndex: '2700',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: '24px', background: 'rgba(0,0,0,0.55)',
+    })
+    const title = document.createElement('div')
+    title.textContent = 'LEADERBOARD'
+    Object.assign(title.style, {
+      color: ENERGY_COLOR, font: '500 48px Inter, system-ui, sans-serif',
+      letterSpacing: '2px', textShadow: SHADOW,
+    })
+    const list = document.createElement('div')
+    Object.assign(list.style, {
+      display: 'flex', flexDirection: 'column', gap: '3px', minWidth: '280px',
+    })
+    if (scores && scores.length) this._renderList(list, scores, null, null, scores.length)
+    else {
+      const empty = document.createElement('div')
+      empty.textContent = scores ? 'no scores yet' : 'leaderboard unavailable'
+      Object.assign(empty.style, {
+        color: '#dfdfdf', font: '500 16px Inter, system-ui, sans-serif',
+        textAlign: 'center', textShadow: SHADOW,
+      })
+      list.appendChild(empty)
+    }
+    const close = document.createElement('button')
+    close.textContent = 'Close'
+    Object.assign(close.style, {
+      padding: '12px 36px', font: '600 18px Inter, system-ui, sans-serif', color: '#fff',
+      background: 'rgba(0,0,0,0.35)', border: '2px solid #fff', borderRadius: '24px',
+      cursor: 'pointer', textShadow: SHADOW,
+    })
+    close.addEventListener('click', () => document.body.removeChild(el))
+    el.appendChild(title)
+    el.appendChild(list)
+    el.appendChild(close)
+    document.body.appendChild(el)
+  }
+
+  _renderList(list, scores, ownName = null, ownScore = null, show = SHOW) {
     list.innerHTML = ''
-    scores.slice(0, SHOW).forEach((s, i) => {
+    scores.slice(0, show).forEach((s, i) => {
       const row = document.createElement('div')
       // Highlight the entry the player just posted (first matching row).
       const mine = ownName !== null && s.name === ownName && s.score === ownScore

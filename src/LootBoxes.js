@@ -4,7 +4,6 @@ import { Sounds } from './lib/Sounds.js'
 import { ACCENT_COLORS } from './palette.js'
 import { ENERGY_COLOR } from './Mana.js'
 import { glow, NO_AO_MRT } from './fx.js'
-import { ExtraGeometry } from './lib/ExtraGeometry.js'
 
 /**
  * LootBoxes - crates scattered over the board that pay out energy when
@@ -20,20 +19,17 @@ import { ExtraGeometry } from './lib/ExtraGeometry.js'
  */
 
 const COUNT = 8 // one per angular slice, so they can't all cluster on one side
-const SIZE = 0.735 // world units across, for the fallback cube
-// Corner-up tilt for the FALLBACK cube only: 45deg about Z stands it on an edge,
-// then atan(1/sqrt2) about X tips that edge onto a point. The star model needs
-// none of this - it sits flat on the floor and spins, which never goes edge-on
-// to a camera looking down at the board.
+const SIZE = 1.0 // world units across - half a cell, same read as the king marker
+// Corner-up tilt, same pose as the king's marker: 45deg about Z stands the cube
+// on an edge, then atan(1/sqrt2) about X tips that edge onto a point.
 const CORNER_TILT_Z = Math.PI / 4
 const CORNER_TILT_X = -Math.atan(1 / Math.SQRT2) // ~-35.26deg
 const MIN_R = 0.30 // placement band, as a fraction of the grid half-extent...
 const MAX_R = 0.90 // ...keeping crates off the king and inside the buildable area
-const BOB_HEIGHT = 0.35 // fallback cube only - the star stays on the floor
+const BOB_HEIGHT = 0.35
 const BOB_SPEED = 1.6 // radians/sec
 const SPIN_SPEED = -0.9 // radians/sec about Y; negative = clockwise seen from above
-const HOVER_Y = 1.6 // fallback cube resting height above the ground
-const REST_Y = 0.05 // star resting height - a hair up so it can't z-fight the floor
+const HOVER_Y = 1.6 // resting height above the ground
 // Accent index every star wears: 1 is the yellow, the same one the king takes.
 const STAR_COLOR = 1
 const SHAKE_TIME = 0.75 // seconds of rattling before it bursts
@@ -47,10 +43,9 @@ export class LootBoxes {
     this.city = city
     this.demo = demo
     this.boxes = []
-    // The star from game-extra.glb, or the old cube if it didn't load. Its
-    // authored grey is ignored - the crate takes a city accent, as before.
-    this.geo = ExtraGeometry.star || new BoxGeometry(SIZE, SIZE, SIZE)
-    this.usingStar = !!ExtraGeometry.star
+    // A glowing corner-up cube, same family as the king's marker - the star
+    // model read as clutter next to it.
+    this.geo = new BoxGeometry(SIZE, SIZE, SIZE)
     this.elapsed = 0
   }
 
@@ -123,9 +118,8 @@ export class LootBoxes {
     const mesh = glow(new Mesh(this.geo, mat))
     mesh.rotation.order = 'YXZ' // spin about world up, not the tilted axis
     const spin = Math.random() * Math.PI * 2 // so they don't turn in lockstep
-    if (this.usingStar) mesh.rotation.set(0, spin, 0)
-    else mesh.rotation.set(CORNER_TILT_X, spin, CORNER_TILT_Z)
-    mesh.position.set(x, this.usingStar ? REST_Y : HOVER_Y, z)
+    mesh.rotation.set(CORNER_TILT_X, spin, CORNER_TILT_Z)
+    mesh.position.set(x, HOVER_Y, z)
     mesh.castShadow = true
     this.scene.add(mesh)
     this.boxes.push({
@@ -179,11 +173,7 @@ export class LootBoxes {
 
       if (!b.active) continue // its ring hasn't opened yet
 
-      // The star sits flat on the floor and only spins; the fallback cube
-      // hovers and bobs like the old pickup.
-      if (!this.usingStar) {
-        b.mesh.position.y = HOVER_Y + Math.sin(this.elapsed * BOB_SPEED + b.phase) * BOB_HEIGHT
-      }
+      b.mesh.position.y = HOVER_Y + Math.sin(this.elapsed * BOB_SPEED + b.phase) * BOB_HEIGHT
       b.mesh.rotation.y += SPIN_SPEED * dt
 
       if (this.isEnclosed(b)) this.open(b, i)

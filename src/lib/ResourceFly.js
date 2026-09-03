@@ -1,73 +1,58 @@
-import { Vector3 } from 'three/webgpu'
+import { Mesh, BoxGeometry, MeshBasicNodeMaterial, Color } from 'three/webgpu'
 import gsap from 'gsap'
 import { ENERGY_COLOR } from '../palette.js'
+import { fxMaterial, glow } from '../fx.js'
 
 /**
- * ResourceFly - little coloured boxes that pop out of a generator, rise, and
+ * ResourceFly - little glowing boxes that pop out of a generator, rise, and
  * burst, so income reads as something being produced rather than a number
  * quietly changing in the corner.
  *
- * They used to fly all the way to the HUD meter. At a developed economy that is
- * several boxes a second all converging on the same corner of the screen, which
- * drew the eye away from the board and turned the top-left into a stream of
- * traffic. Popping in place says the same thing where you are already looking.
- *
- * The world anchor is projected to the screen ONCE at spawn and the rest is a
- * 2D tween. The generator that produced it may be demolished mid-animation
- * (they expire constantly), and a box chasing a dead tower's position looks
- * wrong - once it's launched it belongs to the screen, not the scene.
+ * These are WORLD-SPACE meshes now, not DOM elements. The old version
+ * projected the spawn point once and animated a fixed-size div, so the boxes
+ * appeared to change size against the city as the camera zoomed. A real box in
+ * the scene scales with everything else - and it picks up the same additive
+ * fx material and bloom layer as the rest of the effects for free.
  */
-// Screen pixels the box rises before it bursts.
-const RISE = 51
+// World units the box rises before it bursts (the old version rose 51px).
+const RISE = 4
+// Box edge in world units - about a quarter of a cell.
+const SIZE = 0.55
 
 export class ResourceFly {
-  constructor() {
-    this._v = new Vector3()
-    const c = document.createElement('div')
-    Object.assign(c.style, {
-      position: 'fixed', left: '0', top: '0', width: '100%', height: '100%',
-      pointerEvents: 'none', overflow: 'hidden', zIndex: '490',
-    })
-    document.body.appendChild(c)
-    this.container = c
+  constructor(scene) {
+    this.scene = scene
+    this.geo = new BoxGeometry(1, 1, 1)
   }
 
   /**
    * Pop a box out of a world position.
-   * @param {Camera} camera - to project the start point
-   * @param {string} color - CSS colour
-   * @param {number} [size] - box edge in px
+   * @param {string} color - CSS colour (the DOM heritage; converted here)
+   * @param {number} [size] - box edge in world units
    * @param {number} [delay] - seconds to wait before launching
    */
-  spawn(x, y, z, camera, color = ENERGY_COLOR, size = 13.5, delay = 0) {
-    if (!camera) return
-    this._v.set(x, y, z).project(camera)
-    if (this._v.z > 1) return // behind the camera; nothing to see
-    const sx = (this._v.x * 0.5 + 0.5) * window.innerWidth
-    const sy = (-this._v.y * 0.5 + 0.5) * window.innerHeight
+  spawn(x, y, z, color = ENERGY_COLOR, size = SIZE, delay = 0) {
+    if (!this.scene) return
+    // Per-box material: the burst animates opacity, which lives on the material.
+    const mat = fxMaterial(new MeshBasicNodeMaterial({ color: new Color(color) }))
+    const mesh = glow(new Mesh(this.geo, mat))
+    mesh.position.set(x, y, z)
+    mesh.rotation.y = Math.PI / 4 // corner toward the iso camera, like the units
+    mesh.scale.setScalar(0.001)
+    this.scene.add(mesh)
 
-    const el = document.createElement('div')
-    Object.assign(el.style, {
-      position: 'absolute',
-      left: `${sx}px`, top: `${sy}px`,
-      width: `${size}px`, height: `${size}px`,
-      background: color,
-      boxShadow: `0 0 8px ${color}`,
-      borderRadius: '2px',
-      transform: 'translate(-50%, -50%) scale(0)',
-      willChange: 'left, top, transform, opacity',
-    })
-    this.container.appendChild(el)
-
-    const done = () => { if (el.parentNode) this.container.removeChild(el) }
+    const done = () => {
+      this.scene.remove(mesh)
+      mat.dispose()
+    }
     // Pop up, then burst. Three beats: it appears, it leaves the building, it
-    // goes off. The rise is straight up in SCREEN space, so it reads the same
-    // whichever way the board is turned.
+    // goes off. The rise is straight up in world space.
     const tl = gsap.timeline({ delay, onComplete: done })
-    tl.to(el, { scale: 1, duration: 0.14, ease: 'back.out(2.5)' })
-      .to(el, { top: `${sy - RISE}px`, duration: 0.3, ease: 'power2.out' }, 0)
+    tl.to(mesh.scale, { x: size, y: size, z: size, duration: 0.14, ease: 'back.out(2.5)' })
+      .to(mesh.position, { y: y + RISE, duration: 0.3, ease: 'power2.out' }, 0)
       // The burst overshoots well past full size as it goes transparent, so the
       // eye reads a flash rather than a box shrinking away.
-      .to(el, { scale: 2.6, opacity: 0, duration: 0.22, ease: 'power2.out' }, 0.3)
+      .to(mesh.scale, { x: size * 1.8, y: size * 1.8, z: size * 1.8, duration: 0.22, ease: 'power2.out' }, 0.3)
+      .to(mat, { opacity: 0, duration: 0.22, ease: 'power2.out' }, 0.3)
   }
 }

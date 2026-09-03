@@ -791,7 +791,35 @@ export class City {
     // being ticked once the game-over panel takes over, so it would ring on
     // over the score screen.
     Sounds.fadeOut('alert2', 0.25)
+    this.kingDeathPulse()
     this.onGameOver?.()
+  }
+
+  /** A big yellow shockwave washing out across the floor from the dead king -
+   *  the whole board learns the moment it dies, not just that corner of it. */
+  kingDeathPulse() {
+    const king = this.king
+    if (!king) return
+    const c = king.box.getCenter(this.towerCenter)
+    const mat = fxMaterial(new MeshBasicNodeMaterial({
+      color: this.accentColors[KING_COLOR].clone(),
+      opacity: 0.45,
+    }))
+    const disc = glow(new Mesh(new CircleGeometry(1, 64), mat))
+    disc.rotation.x = -Math.PI / 2
+    disc.position.set(c.x + this.gridOffsetX, 0.15, c.y + this.gridOffsetZ)
+    disc.renderOrder = 6
+    this.scene.add(disc)
+    const r = this.visibleHalf // fully transparent right at the current map edge
+    gsap.to(disc.scale, { x: r, y: r, duration: 1.0, ease: 'expo.out' })
+    gsap.to(mat, {
+      opacity: 0, duration: 1.0, ease: 'power2.out',
+      onComplete: () => {
+        this.scene.remove(disc)
+        disc.geometry.dispose()
+        mat.dispose()
+      },
+    })
   }
 
   async initTowers() {
@@ -1286,6 +1314,20 @@ export class City {
 
   /** Kick the king's (longer) damage flash to full. */
   flashKing() { this.flashTower(this.king, KING_HIT_FLASH) }
+
+  /**
+   * The visual half of the exposed-king warning: pulse the king's blocks toward
+   * a bright glow. `p` is 0..1 (Creeps drives it with a sine); colours >1 push
+   * past the palette so the peak genuinely glows. Creeps restores the true
+   * colours (renderer.applyTypeVisuals) when the warning ends.
+   */
+  pulseKingColor(p) {
+    const king = this.king
+    if (!king || !king.visible) return
+    if (!this._pulseColor) this._pulseColor = new Color()
+    this._pulseColor.copy(king.baseColor).lerp(WHITE, 0.6 * p).multiplyScalar(1 + p * 0.9)
+    this.setTowerColor(king, this._pulseColor)
+  }
 
   /**
    * The king's low-health siren: KING_ALARM_PLAYS times, then quiet.

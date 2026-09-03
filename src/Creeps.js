@@ -1388,6 +1388,17 @@ export class Creeps {
     this._bomberIndex = 0
   }
 
+  /** Seconds until the next planned swarm on `edge` this wave, or Infinity.
+   *  WaveArrows reads this to flash an edge's arrows BEFORE its swarm pours. */
+  nextSwarmIn(edge) {
+    if (!this.clock.isSpawning || !this._plan) return Infinity
+    const phase = this.clock.cyclePhase - this.clock.buildTime
+    for (let i = this._planIndex; i < this._plan.length; i++) {
+      if (this._plan[i].edge === edge) return this._plan[i].at - phase
+    }
+    return Infinity
+  }
+
   /** Start a planned clump pouring, sound its horn, and flash its arrow. */
   _release(clump) {
     this._active.push({ ...clump, left: clump.size, timer: SWARM_GAP })
@@ -1633,7 +1644,7 @@ export class Creeps {
       c.mesh.rotation.z = (Math.random() * 2 - 1) * a
     }
 
-    this.updateExposedAlarm()
+    this.updateExposedAlarm(dt)
 
     // Re-arm / fire the king-proximity siren on a cooldown. Held while the
     // exposed-king alarm is running: same sound, and two of it at once is a
@@ -1661,11 +1672,26 @@ export class Creeps {
    * Off the moment the seal closes or the round ends, so sealing mid-fight is
    * audible as the alarm stopping.
    */
-  updateExposedAlarm() {
+  updateExposedAlarm(dt = 0) {
     const city = this.city
     const battle = this.started && (this.clock.isSpawning || this.creeps.length > 0)
     const open = !!city.king && city.king.visible && city.kingAlive
       && city.enclosure.kingEnclosed === false
+
+    // The visual half of the warning: while the king is open in a fight, its
+    // blocks pulse toward a bright glow. Driven off battle && open directly -
+    // the siren below additionally yields to the low-health siren, but the
+    // colour should keep warning either way.
+    if (battle && open) {
+      this._exposedPulseT = (this._exposedPulseT || 0) + dt
+      city.pulseKingColor(0.5 + 0.5 * Math.sin(this._exposedPulseT * Math.PI * 2 * 1.5))
+      this._kingPulsing = true
+    } else if (this._kingPulsing) {
+      this._kingPulsing = false
+      this._exposedPulseT = 0
+      if (city.king) city.renderer.applyTypeVisuals(city.king) // restore true colours
+    }
+
     // Never over the king's own low-health siren. Both are "the king is in
     // trouble" and they are different sounds, so together they read as two
     // unrelated alarms going off rather than one situation.

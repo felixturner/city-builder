@@ -551,8 +551,8 @@ export class EnergySystem {
         // already say it, and at full income the board was carpeted in them.
         // The sound the caption used to carry fires on its own.
         if (e.sound) Sounds.play(e.sound, undefined, undefined, INCOME_BLIP_VOLUME)
-        // ...and a little yellow box flies from the generator up to the meter.
-        city.resourceFly?.spawn(e.cx, e.cy, e.cz, city.camera, e.color)
+        // ...and a little yellow box pops up out of the generator.
+        city.resourceFly?.spawn(e.cx, e.cy, e.cz, e.color)
         this.pulseEvents.splice(i, 1)
       }
     }

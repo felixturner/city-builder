@@ -179,9 +179,9 @@ export class Demo {
     // TEMP (?clean): infinite energy so screenshots aren't gated on the economy.
     if (CLEAN_MODE) { this.mana.infinite = true; this.mana.current = 99999 }
     this.city.mana = this.mana
-    // Income boxes flying from generators to the HUD meters. City needs the live
-    // camera to project their launch point.
-    this.resourceFly = new ResourceFly()
+    // Income boxes popping out of generators - world-space meshes now, so they
+    // scale with the city as the camera zooms.
+    this.resourceFly = new ResourceFly(this.scene)
     this.city.resourceFly = this.resourceFly
     this.city.camera = this.camera
 
@@ -665,7 +665,7 @@ export class Demo {
     const title = document.createElement('div')
     title.textContent = 'GAME OVER'
     Object.assign(title.style, {
-      color: ENERGY_COLOR, font: '800 72px Inter, system-ui, sans-serif',
+      color: ENERGY_COLOR, font: '500 72px Inter, system-ui, sans-serif',
       letterSpacing: '2px', textShadow: TEXT_SHADOW,
     })
 
@@ -746,7 +746,7 @@ export class Demo {
     const title = document.createElement('div')
     title.textContent = 'PAUSED'
     Object.assign(title.style, {
-      color: ENERGY_COLOR, font: '800 72px Inter, system-ui, sans-serif',
+      color: ENERGY_COLOR, font: '500 72px Inter, system-ui, sans-serif',
       letterSpacing: '2px', textShadow: TEXT_SHADOW,
     })
 
@@ -798,9 +798,14 @@ export class Demo {
     // The slideshow opens over this menu (higher z-index); its last click just
     // closes it again and lands back here, still paused.
     tute.addEventListener('click', () => this.tutorial?.show(() => {}))
+    const board = document.createElement('button')
+    board.textContent = 'View leaderboard'
+    Object.assign(board.style, buttonStyle)
+    board.addEventListener('click', () => new HighScores().showBoard())
     buttons.appendChild(resume)
     buttons.appendChild(restart)
     buttons.appendChild(tute)
+    buttons.appendChild(board)
 
     el.appendChild(title)
     el.appendChild(stats)

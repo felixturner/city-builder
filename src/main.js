@@ -3,6 +3,7 @@ import WebGPU from 'three/examples/jsm/capabilities/WebGPU.js'
 import { Sounds } from './lib/Sounds.js'
 import { Tutorial } from './Tutorial.js'
 import { ENERGY_COLOR } from './palette.js'
+import { HighScores } from './HighScores.js'
 
 const loadingEl = document.getElementById('loading')
 const loaderGif = document.getElementById('loader-gif')
@@ -84,6 +85,7 @@ function start() {
 // Main menu. Both paths run inside a click, so the AudioContext unlock in
 // start() keeps working; the tutorial's final Play click starts the game.
 document.getElementById('menu-new').addEventListener('click', start)
+document.getElementById('menu-board').addEventListener('click', () => new HighScores().showBoard())
 document.getElementById('menu-tutorial').addEventListener('click', async () => {
   // Hide the menu only once the slideshow is actually up - dropping it first
   // exposed the canvas behind for a frame while the md/image fetched. Done on
