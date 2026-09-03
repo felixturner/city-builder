@@ -1,10 +1,12 @@
 import {
   Mesh, BoxGeometry, CylinderGeometry, RingGeometry, CircleGeometry, Color, DoubleSide,
+  MeshBasicNodeMaterial, MeshStandardNodeMaterial,
 } from 'three/webgpu'
 import { positionLocal, smoothstep } from 'three/tsl'
 import gsap from 'gsap'
 import { Sounds } from '../lib/Sounds.js'
 import { BlockGeometry } from '../lib/BlockGeometry.js'
+import { Tower } from '../Tower.js'
 import { fxMaterial, glow, stutter, NO_AO_MRT } from '../fx.js'
 import { PINK, WHITE } from '../palette.js'
 import { towerTopY, roofGeomIndex, KING_WARN_CELLS, KING_WARN_FLOORS } from '../blockTypes.js'
@@ -60,8 +62,9 @@ export class KingVisuals {
   /** World Y of the middle of the hovering cube - where the king's energy
    *  leaves from. Falls back to the roof before the marker exists. */
   get markerY() {
-    return this.kingMarker ? this.kingMarker.position.y
-      : towerTopY(this.city.king, this.city.floorHeight) + 0.5
+    if (this.kingMarker) return this.kingMarker.position.y
+    const king = this.city.king
+    return king ? towerTopY(king, this.city.floorHeight) + 0.5 : 0
   }
 
   /**

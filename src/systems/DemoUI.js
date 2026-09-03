@@ -2,6 +2,9 @@ import { Sounds } from '../lib/Sounds.js'
 import { HighScores } from '../HighScores.js'
 import { ENERGY_COLOR } from '../palette.js'
 
+/** Shared drop shadow: these panels sit over the board, which is bright. */
+const TEXT_SHADOW = '0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.9)'
+
 /**
  * Every screen and button the player touches outside the board: the pause and
  * fast-forward chips, the game-over panel, and the menu behind it.

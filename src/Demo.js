@@ -27,7 +27,6 @@ import { DemoUI } from './systems/DemoUI.js'
 
 // Heavy shadow so game-over text stays legible over the live city now that
 // there's no scrim behind it.
-const TEXT_SHADOW = '0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.9)'
 import { Creeps } from './Creeps.js'
 import { Soldiers } from './Soldiers.js'
 import { PowerUpScreen, resetBuffs } from './PowerUps.js'
