@@ -604,10 +604,7 @@ export class EnergySystem {
       // updateEnclosureGenerators); this is a slow bonus trickle ON TOP, so an
       // unsealed king still brings in enough to rebuild from. Emitted one unit
       // at a time over its own 5s tick rather than as a silent lump.
-      // `kingEarning` is set a second after the beam strikes in (KingVisuals), so
-      // opening trickle follows the king lighting up instead of landing on the
-      // same frame as it.
-      if (city.king && city.king.visible && city.kingEarning) {
+      if (city.king && city.king.visible) {
         this.scheduleIncome(city.king, KING_BONUS, GREY_INTERVAL, 'king')
       }
     }

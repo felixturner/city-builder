@@ -15,9 +15,6 @@ import { towerTopY, roofGeomIndex, KING_WARN_CELLS, KING_WARN_FLOORS } from '../
 export const KING_COLOR = 0
 const KING_MARKER_SIZE = 1.04 // world units across, before the corner-up tilt
 const KING_MARKER_HOVER = 1.4 // rest height above the king's roof
-// Sim seconds between the beam striking in and the king's first energy. Long
-// enough to read as cause and effect rather than coincidence.
-const KING_EARN_DELAY = 1.0
 // Seconds for a damage flash to fade back. The king holds its flash longer than
 // an ordinary tower - its hits are the ones you have to notice from the far side
 // of the board.
@@ -41,8 +38,8 @@ const KING_MARK_WIDTH = 0.16
  * carrying inline among grid maths and tower pooling, and it was the largest
  * thing in that file that nothing else touched.
  *
- * The king's STATE stays on City (`king`, `kingAlive`, `kingMaxFloors`,
- * `kingEarning`), because half the game reads it. This owns only the picture.
+ * The king's STATE stays on City (`king`, `kingAlive`, `kingMaxFloors`),
+ * because half the game reads it. This owns only the picture.
  */
 export class KingVisuals {
   constructor(city) {
@@ -56,7 +53,6 @@ export class KingVisuals {
     this._kingAlarmFired = false // the low-health siren has played this time
     this._markerT = 0            // marker bob phase, advanced on sim time
     this._markerFloors = -1      // height the marker's colour was last matched to
-    this._earnT = 0              // seconds since the beam struck in
     this._pulseColor = new Color()
   }
 
@@ -119,8 +115,6 @@ export class KingVisuals {
       beam.visible = false
       if (this.kingRing) this.kingRing.visible = false
       this._kingShown = false
-      this._earnT = 0
-      this.city.kingEarning = false
       return
     }
     // First frame it is allowed to show: kick it in rather than having it appear
@@ -128,14 +122,6 @@ export class KingVisuals {
     if (!this._kingShown) {
       this._kingShown = true
       this.flickerKingBeam()
-      // The king starts earning a beat AFTER it lights up, so the first energy
-      // reads as a consequence of the king coming on rather than as something
-      // that happened to arrive at the same moment. Counted in update() off the
-      // sim step, NOT scheduled with Demo.after: a callback that never fires
-      // leaves the gate shut forever and the king simply stops earning, with
-      // nothing on screen to say why. A counter that is behind just opens late.
-      this._earnT = 0
-      this.city.kingEarning = false
     }
     // While the flicker is running it owns visibility - this would otherwise
     // switch the beam back on between the timeline's own frames.
@@ -379,10 +365,5 @@ export class KingVisuals {
     this.updateKingAlarm()
     this.updateKingMarker(dt)
     this.updateKingBeam()
-    // Open the earnings gate KING_EARN_DELAY after the beam struck in.
-    if (this._kingShown && !this.city.kingEarning) {
-      this._earnT += dt
-      if (this._earnT >= KING_EARN_DELAY) this.city.kingEarning = true
-    }
   }
 }

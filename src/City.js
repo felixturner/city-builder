@@ -630,9 +630,6 @@ export class City {
     this.updateTowerMatrices(t)
     this.king = t
     this.kingAlive = true
-    // Armed by KingVisuals a beat after the beam strikes in. EnergySystem gates
-    // the king's trickle on it, so its first energy follows it lighting up.
-    this.kingEarning = false
     this.kingVisuals.create()
   }
 
@@ -671,7 +668,6 @@ export class City {
   triggerGameOver() {
     if (!this.kingAlive) return
     this.kingAlive = false
-    this.kingEarning = false
     // Kill the last-two-floors alarm if it's still ringing: it warns about a
     // king that is about to die, and once it has, it is playing over the
     // game-over sting and saying something that stopped being true.
