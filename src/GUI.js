@@ -138,7 +138,10 @@ export class GUIManager {
       }
     })
     viewFolder.add(allParams.fx, 'dots').name('Dots').onChange((v) => {
-      if (demo.dotMesh) demo.dotMesh.visible = v
+      // Lives on the board grid, not on Demo - this read `demo.dotMesh`,
+      // which is undefined, so the toggle did nothing.
+      const dots = demo.city?.grid?.dotMesh
+      if (dots) dots.visible = v
     })
     viewFolder.add(allParams.fx, 'debris').name('Debris').onChange((v) => {
       if (demo.city.debris) demo.city.debris.enabled = v

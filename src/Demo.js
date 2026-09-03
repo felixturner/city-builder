@@ -255,7 +255,7 @@ export class Demo {
     )
 
     // Create grid helpers (cell grid, dots, lot grid)
-    this.city.createGrids()
+    this.city.grid.createGrids()
 
     // Origin helper (hidden by default, toggled via GUI)
     this.axesHelper = new AxesHelper(5)
