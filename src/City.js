@@ -916,7 +916,7 @@ export class City {
     // The king-is-open siren too: the systems that would switch it off stop
     // being ticked once the game-over panel takes over, so it would ring on
     // over the score screen.
-    Sounds.fadeOut('alert2', 0.25)
+    Sounds.fadeOut('alert-king', 0.25)
     this.kingDeathPulse()
     this.onGameOver?.()
   }

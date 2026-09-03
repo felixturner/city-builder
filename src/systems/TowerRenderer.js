@@ -285,7 +285,7 @@ export class TowerRenderer {
         // goes so the last one sounds frantic. This replaces the generic break
         // thunk, which is suppressed for the king above.
         const hurt = 1 - tower.numFloors / KING_HEALTH // 0 fresh .. 1 dead
-        Sounds.play('king-danger', 0.92 + hurt * 0.5, 0.03, 0.6 + hurt * 0.3)
+        Sounds.play('king-block-lost', 0.92 + hurt * 0.5, 0.03, 0.6 + hurt * 0.3)
         // The low-health siren is a STATE, not an event: City.updateKingAlarm
         // keeps it looping for as long as the king is down here, so there is
         // nothing to fire on the crossing.

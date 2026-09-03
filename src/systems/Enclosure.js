@@ -163,7 +163,7 @@ export class Enclosure {
         // blip about one building, and this is the ring around the king being
         // broken open.
         if (this._kingEnclosed && !enclosed) Sounds.play('king-enc-lost')
-        else if (!this._kingEnclosed && enclosed) Sounds.play('success') // king newly sealed
+        else if (!this._kingEnclosed && enclosed) Sounds.play('king-sealed') // king newly sealed
       }
       this._kingEnclosed = enclosed
       // Read by Creeps for the king-is-open siren. Undefined until the first

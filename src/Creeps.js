@@ -496,7 +496,7 @@ export class Creeps {
       // A giant crossing onto the board gets the viking call - it is the one
       // arrival worth stopping to look at, and a short blip undersold it. Bigs
       // keep the blip, normal creeps the quiet warn.
-      entrySound: giant ? 'horn3' : (big ? 'creep-alert-2' : 'creep-alert'),
+      entrySound: giant ? 'horn3' : (big ? 'alert-creep-big' : 'alert-creep'),
       entryRate: giant ? 0.85 : (big ? 0.7 : 1.0),
       entryVol: giant ? 0.8 : (big ? 0.31 : 0.22),
       shootTimer: 0,
@@ -614,7 +614,7 @@ export class Creeps {
       // Laser creeps used to double up with alert2 here; that sound is the
       // king-in-danger siren and nothing else now, so it can't be diluted by a
       // routine arrival.
-      if (c.bomber) Sounds.play('flyer-warn', 1.0, 0.03, 0.22)
+      if (c.bomber) Sounds.play('alert-flyer', 1.0, 0.03, 0.22)
     }
   }
 
@@ -749,7 +749,7 @@ export class Creeps {
       shooter: false,
       bomber: true,
       entered: false,
-      entrySound: 'creep-alert',
+      entrySound: 'alert-creep',
       entryRate: 0.8,
       entryVol: 0.3,
       vx, vz,
@@ -1147,13 +1147,13 @@ export class Creeps {
       this.explode(creep)
       this.scene.remove(creep.mesh)
       this.creeps.splice(i, 1)
-      Sounds.play('hit', 1.0, 0.2, 0.24)
+      Sounds.play('creep-killed', 1.0, 0.2, 0.24)
       // Killing a giant is the biggest thing that happens in a run and until now
       // it sounded exactly like swatting a marcher. Give it a payoff sting, and
       // duck the boss horn if that swell is still running - the fight is over.
       if (creep.giant) {
         Sounds.fadeOut('horn-boss', 0.6)
-        Sounds.play('sting', 0.85, 0.04, 0.7)
+        Sounds.play('giant-killed', 0.85, 0.04, 0.7)
       }
     }
     return true
@@ -1328,7 +1328,7 @@ export class Creeps {
       // and played at release instead they arrived a second and a half apart,
       // which reads as two unrelated events. The horn stays on the release: it
       // is the swarm arriving, not the warning about it.
-      Sounds.play('swarm-alert', 1.0, 0.06, SWARM_ALERT_VOLUME)
+      Sounds.play('alert-swarm', 1.0, 0.06, SWARM_ALERT_VOLUME)
     }
 
     while (this._plan && this._planIndex < this._plan.length
@@ -1695,7 +1695,7 @@ export class Creeps {
     if (creepNearKing && !this._exposedAlarm) {
       // alert2 rather than a pitched-down 'spawn': this is a threat blip, and it
       // was borrowing a sound whose job is announcing arrivals.
-      if (this._kingWarnTimer <= 0) { Sounds.play('alert2', 1.0, 0.04, 0.7); this._kingWarnTimer = 1.5 }
+      if (this._kingWarnTimer <= 0) { Sounds.play('alert-king', 1.0, 0.04, 0.7); this._kingWarnTimer = 1.5 }
     } else {
       this._kingWarnTimer = 0 // ready to fire the instant a creep gets close again
     }
@@ -1746,7 +1746,7 @@ export class Creeps {
     const on = battle && open && !Sounds.isPlaying('king-warning')
     if (on === !!this._exposedAlarm) return // no change
     this._exposedAlarm = on
-    if (on) Sounds.loop('alert2', 0.25) // half volume: it runs for a whole round
-    else Sounds.fadeOut('alert2', 0.3)
+    if (on) Sounds.loop('alert-king', 0.25) // half volume: it runs for a whole round
+    else Sounds.fadeOut('alert-king', 0.3)
   }
 }
