@@ -13,24 +13,18 @@ import { CITY, BLACK } from './palette.js'
 export class Tower {
 
   /**
-   * One grey for every wall. Walls used to draw a random shade from a list of
-   * four, which meant colour carried no information - a short pale wall and a
-   * tall dark one looked unrelated. With a single base colour the per-floor
-   * gradient (see shadeForFloor) is the ONLY thing varying, so shade reads
-   * purely as height.
+   * The colour of a freshly placed wall block.
    *
-   * Light on purpose: this is the colour of a freshly placed, zero-level tile,
-   * and shadeForFloor only ever darkens from here - so the lighter the base, the
-   * more range the height gradient has to work with.
+   * There used to be a COLORS array and a `topColorIndex` into it, from when a
+   * tile drew one of several colours. It has held exactly one entry for a long
+   * time, so the index could only ever be 0 - and two seeded RNG draws were
+   * still being spent picking it.
    *
-   * Everything picks an index via COLORS.length, so a one-entry list is safe.
+   * One colour for both the roof and the blocks under it, so a tetromino wall
+   * and a rectangular one read alike. Light on purpose: shadeForFloor only ever
+   * darkens from here, so the lighter the base, the more range a tall stack has.
    */
-  static COLORS = [
-    // Dropped a tenth from 0xbcbcbc: a level-1 wall used to sit at almost
-    // exactly the board's value (0x999999) and vanished into the floor it stood
-    // on.
-    new Color(CITY.wall),
-  ]
+  static WALL_COLOR = new Color(CITY.wall)
 
   /**
    * How far the top floor of a full-height stack is pushed toward black. Each
@@ -76,7 +70,6 @@ export class Tower {
   }
 
   static ID = 0
-  static BASE_COLOR = new Color(CITY.wall) // matches COLORS[0] so rects and tetro walls read alike
 
   constructor() {
     this.id = Tower.ID++
@@ -85,9 +78,8 @@ export class Tower {
     this.box = new Box2()
     this.numFloors = 0  // Height in floors. A LIVE tile is always >= 1; 0 only ever means a pooled/hidden slot.
     this.rotation = 0
-    this.topColorIndex = 0
-    this.topColor = Tower.COLORS[this.topColorIndex]
-    this.baseColor = Tower.BASE_COLOR
+    this.topColor = Tower.WALL_COLOR
+    this.baseColor = Tower.WALL_COLOR
     this.skipFactor = 0 // For realtime visibility toggle
     this.colorIndex = 0 // Hover color index
     this.visible = true
@@ -108,11 +100,6 @@ export class Tower {
     this.roofDummy = new Object3D()
     // Flag to prevent external matrix updates from overwriting animated roof
     this.roofAnimating = false
-  }
-
-  setTopColorIndex(index) {
-    this.topColorIndex = index
-    this.topColor = Tower.COLORS[this.topColorIndex]
   }
 
   /**

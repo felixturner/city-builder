@@ -65,7 +65,7 @@ export class Lighting {
     this.outerField = plane(WORLD.field, -0.02)
     // The board grey the soldiers and boulders also wear. A level-1 wall used to
     // sit at almost exactly this value and vanish into it; the walls moved down
-    // a tenth instead (Tower.COLORS), so the floor keeps its original tone.
+    // a tenth instead (Tower.WALL_COLOR), so the floor keeps its original tone.
     this.boundsGround = plane(WORLD.ground, 0)
 
     // Scene bounds for shadow calculation (7x7 lots, centered on middle lot, ~98x98, buildings up to ~50 height)

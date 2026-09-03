@@ -100,7 +100,6 @@ export class TowerRenderer {
     if (isTurret(tower) && (!(w === 1 && h === 1) || this.countLotTurrets(tower) >= 2)) {
       tower.typeTop = TopType.SQUARE
     }
-    tower.setTopColorIndex(simInt(0, Tower.COLORS.length - 1))
     this.applyTypeVisuals(tower)
   }
 
@@ -119,7 +118,7 @@ export class TowerRenderer {
     tower.isLit = false
     tower.litColor = null
     tower.laserColor = null
-    tower.topColor = Tower.COLORS[tower.topColorIndex]
+    tower.topColor = Tower.WALL_COLOR
     tower.baseColor = tower.topColor // under-blocks match the top
     this.shadeStack(tower)
   }
@@ -229,8 +228,8 @@ export class TowerRenderer {
         this.colorTurretTower(tower)
       } else {
         tower.laserColor = null
-        tower.baseColor = Tower.BASE_COLOR
-        tower.topColor = Tower.COLORS[tower.topColorIndex]
+        tower.baseColor = Tower.WALL_COLOR
+        tower.topColor = Tower.WALL_COLOR
       }
       this.shadeStack(tower)
     }

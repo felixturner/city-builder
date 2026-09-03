@@ -27,11 +27,11 @@ export function cellBounds(cells) {
 
 /** CSS colour for a tile's icon. */
 export function tileColor(tile, accents) {
-  if (tile.wall) return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
+  if (tile.wall) return `#${Tower.WALL_COLOR.getHexString()}`
   if (isShield(tile)) return SHIELD_LINE
   if (isGenerator(tile)) return `#${accents[tile.colorIndex].getHexString()}`
   if (isTurret(tile) || isBarracks(tile)) return '#9aa0aa'
-  return `#${Tower.COLORS[tile.topColorIndex].getHexString()}`
+  return `#${Tower.WALL_COLOR.getHexString()}`
 }
 
 export function drawTile(slot, accents) {

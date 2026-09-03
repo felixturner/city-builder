@@ -12,7 +12,9 @@ import { Buffs } from './buffs.js'
 export const TopType = {
   SQUARE: 0,
   QUART: 1,
-  HOLE: 2, // Hole_Top - unused gameplay slot, kept for geometry index alignment
+  KING: 2,      // the king. Named HOLE for the geometry it once wore; it
+                //  renders the divot top now, and its pink, beam and marker
+                //  are what set it apart
   RIFLE: 3,     // turret: a travelling pellet, fine-grained damage
   LASER: 4,     // turret: hitscan, twice the damage at half the rate
   MORTAR: 7,    // turret: an arcing shell with an AoE blast
@@ -22,12 +24,27 @@ export const TopType = {
   SHIELD: 9,    // a barrier ring that burns what crosses inward
 }
 
-// Role -> top geometry index (decoupled). All three turrets render the divot top;
-// the enclosure generator renders the (freed) peg top; the barracks wears the
-// same divot top as the turrets (its rooftop soldier tells it apart); the
-// shield wears the hole top; and the king (TopType.HOLE slot) wears the divot
-// top too - its pink accent, beam and marker are what set it apart.
-const ROOF_GEOM = [0, 1, 4, 4, 4, 5, 3, 4, 4, 2]
+/**
+ * What each role WEARS, kept apart from what it IS.
+ *
+ * Several roles share a mesh - all three turrets and the barracks wear the
+ * divot top, and the king does too, with its pink, its beam and its marker
+ * doing the telling apart. Indexed by TopType, into BlockGeometry's load order:
+ *
+ *   0 Square_Top  1 Quart_Top  2 Hole_Top  3 Peg_Top  4 Divot_Top  5 Cross_Top
+ */
+const ROOF_GEOM = {
+  [TopType.SQUARE]: 0,
+  [TopType.QUART]: 1,
+  [TopType.KING]: 4,     // divot
+  [TopType.RIFLE]: 4,
+  [TopType.LASER]: 4,
+  [TopType.SUPPORT]: 5,  // the "plus" cross top
+  [TopType.ENC_GEN]: 3,  // peg
+  [TopType.MORTAR]: 4,
+  [TopType.BARRACKS]: 4,
+  [TopType.SHIELD]: 2,   // hole
+}
 export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 
 // Each generator type has ONE fixed accent colour (index into City.accentColors:

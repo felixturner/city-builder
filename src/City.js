@@ -396,7 +396,7 @@ export class City {
   /**
    * Place a palette tile freely into empty cells. `cells` is the footprint
    * (offsets from gx,gy); `opts` carries render info: { tetro?: {name,rot},
-   * typeTop, colorIndex, topColorIndex }. Grabs a pooled tower and builds it at
+   * typeTop, colorIndex }. Grabs a pooled tower and builds it at
    * level 1 - a tile is a block with a roof on it or it is nothing at all, so
    * there is no roof-only state to place into. Returns the tower or null if the
    * pool is exhausted.
@@ -435,7 +435,6 @@ export class City {
     t.skipFactor = 2 // always passes visibility
     t.colorIndex = opts.colorIndex
     t.typeTop = opts.typeTop
-    t.setTopColorIndex(opts.topColorIndex)
 
     for (const [dx, dy] of cells) this.occupied[gy + dy][gx + dx] = true
     lot.towers.push(t)
@@ -616,10 +615,10 @@ export class City {
     // and a different one each game, so it never became recognisable. Fixed now,
     // and the beam takes it too (see createKingBeam).
     const kingColor = KING_COLOR
-    // HOLE is an otherwise-unused top type, so the king gets a distinct roof
-    // without being picked up by isGenerator/isTurret anywhere.
+    // Its own top type, so no predicate that switches on typeTop can mistake
+    // the king for a generator or a turret.
     const t = this.placeTileFree(ccx, ccy, [[0, 0]], {
-      typeTop: TopType.HOLE, colorIndex: kingColor, topColorIndex: kingColor, king: true,
+      typeTop: TopType.KING, colorIndex: kingColor, king: true,
     }, true)
     if (!t) return
     // The king can outgrow the pool's per-tower allocation (Crown the King adds

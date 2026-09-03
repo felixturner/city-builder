@@ -68,7 +68,7 @@ export class TilePalette {
   _oneOfEach() {
     const tiles = []
     TetrominoGeometry.names.forEach((shapeName, i) => {
-      tiles.push({ wall: true, shapeName, topColorIndex: i % Tower.COLORS.length, rot: 0 })
+      tiles.push({ wall: true, shapeName, rot: 0 })
     })
     const singles = [
       TopType.SUPPORT, TopType.ENC_GEN,
@@ -76,7 +76,7 @@ export class TilePalette {
       TopType.BARRACKS, TopType.SHIELD,
     ]
     for (const typeTop of singles) {
-      tiles.push({ w: 1, h: 1, typeTop, colorIndex: tileColorIndex(typeTop), topColorIndex: 0 })
+      tiles.push({ w: 1, h: 1, typeTop, colorIndex: tileColorIndex(typeTop) })
     }
     return tiles
   }
@@ -87,17 +87,16 @@ export class TilePalette {
    *  used by the start cluster) so variety is enforced - no long runs. */
   randomTile() {
     const spec = this.city.drawTileSpec()
-    const topColorIndex = simInt(0, Tower.COLORS.length - 1)
     if (spec.wall) {
       // Random orientation per tile, so the hand isn't four copies of the same
       // shape. The offset that made this look broken was the board's grid
       // centring, not rotation - see City.initGrid.
       const states = TetrominoGeometry.states[spec.shapeName].length
-      return { wall: true, shapeName: spec.shapeName, topColorIndex, rot: simInt(0, states - 1) }
+      return { wall: true, shapeName: spec.shapeName, rot: simInt(0, states - 1) }
     }
     // Generators use their fixed type colour; turrets keep a random accent.
     const colorIndex = tileColorIndex(spec.typeTop)
-    return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex, topColorIndex }
+    return { w: spec.s, h: spec.s, typeTop: spec.typeTop, colorIndex }
   }
 
   /** Cell offsets for a tile at a given rotation (tetromino state / transposed rect). */
@@ -115,7 +114,7 @@ export class TilePalette {
 
   /** The tile's block colour as a THREE.Color (matches its palette icon). */
   _tileColor3(tile, out) {
-    if (tile.wall) { out.copy(Tower.COLORS[tile.topColorIndex]); return out }
+    if (tile.wall) { out.copy(Tower.WALL_COLOR); return out }
     if (isShield(tile)) {
       out.set(SHIELD_LINE)
     } else if (isGenerator(tile)) {
@@ -123,7 +122,7 @@ export class TilePalette {
     } else if (isTurret(tile) || isBarracks(tile)) {
       out.set(CITY.ghostBlocked)
     } else {
-      out.copy(Tower.COLORS[tile.topColorIndex])
+      out.copy(Tower.WALL_COLOR)
     }
     return out
   }
@@ -305,10 +304,10 @@ export class TilePalette {
     const opts = tile.wall
       ? {
         tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
-        typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex: tile.topColorIndex,
+        typeTop: TopType.SQUARE, colorIndex: 0,
       }
       : {
-        typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex,
+        typeTop: tile.typeTop, colorIndex: tile.colorIndex,
         rotation: this._roofRotation(tile, rot),
       }
     const placed = city.placeTileFree(e.gx, e.gy, cells, opts)
@@ -821,10 +820,10 @@ export class TilePalette {
       const opts = tile.wall
         ? {
           tetro: { name: tile.shapeName, rot: rot % TetrominoGeometry.states[tile.shapeName].length },
-          typeTop: TopType.SQUARE, colorIndex: 0, topColorIndex: tile.topColorIndex,
+          typeTop: TopType.SQUARE, colorIndex: 0,
         }
         : {
-          typeTop: tile.typeTop, colorIndex: tile.colorIndex, topColorIndex: tile.topColorIndex,
+          typeTop: tile.typeTop, colorIndex: tile.colorIndex,
           rotation: this._roofRotation(tile, rot),
         }
       const placed = city.placeTileFree(target.gx, target.gy, target.cells, opts)
