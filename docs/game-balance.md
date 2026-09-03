@@ -86,7 +86,9 @@ Removed: it punished you for building well, and pushed a level-5 wall to 42.
 ### Income — `src/systems/EnergySystem.js`
 
 Two generator types, both ticking every `GEN_INTERVAL = 2` seconds, both scaled
-by `PROD_FACTOR = 0.32` (was 0.39) and `Buffs.genRate`.
+by `Buffs.genRate`. There were once two more scalars in front of every formula,
+`PROD_FACTOR` and `BASE_FACTOR`; both have been folded into the rates below, so
+each constant now means its own value.
 
 **Enclosure generators (pink)** — pay for sealed ground:
 
@@ -95,10 +97,15 @@ cells × floors × ENCLOSURE_RATE × genRate × supportFactor
 ENCLOSURE_RATE = 0.00928
 ```
 
-Was 0.056. A board sits at ~70% enclosed for most of a run, and at that rate the
-whole cap refilled in ~30 seconds of a 70-second round at *every* board size —
-the cap scales with cells and so does enclosed area, so the two move together and
-one flat rate fixes all of them. At 0.030 it takes 50-60s.
+Rounded, and floored at 1: a generator claiming any sealed ground at all earns
+something, however small the region.
+
+Was 0.056, then 0.030 (under the old scalars, an effective 0.0048). A board sits
+at ~70% enclosed for most of a run, and at 0.056 the whole cap refilled in ~30
+seconds of a 70-second round at *every* board size — the cap scales with cells
+and so does enclosed area, so the two move together and one flat rate fixes all
+of them. The current rate is a little under twice the old effective one, which is
+what puts enclosures ahead of paths.
 
 `cells` is the sealed region the generator claims. **One claimant earns per
 region** — previously every generator in a region was handed the region's full
@@ -122,7 +129,12 @@ generators earned 19.7/s where two earned 0.7/s, and a logged run had seventeen
 of them producing 94% of everything it earned. An intermediate version paid the
 longest link plus 15% per extra link, which was still super-linear.
 
-Plus `KING_BONUS = 4` every `GREY_INTERVAL = 5` seconds. Walls generate nothing.
+Then cut a further 30%, on top of the rescale, to settle the split: these are
+support towers, and enclosures are meant to be the primary income — over 42% of
+it through the mid game.
+
+Plus `KING_BONUS = 5` every `GREY_INTERVAL = 5` seconds, paid only while the king
+is visible. Walls generate nothing.
 
 ### Support bonuses — `src/systems/EnergySystem.js`
 
@@ -142,9 +154,10 @@ tower was enormous and the second was worth nothing.
 That change cut income further than it looks, and quietly. Under the flag, one
 trail DOUBLED a generator (0.5 → 1.0). Under the count it took more than three
 to get there, and the leftover 0.5 lived on as a `BASE_FACTOR` in front of both
-formulas - so every rate in EnergySystem.js meant half what it said. It has been
-folded into the base rates (`ENCLOSURE_RATE` 0.030 → 0.015, `fireCooldown` 0.35
-→ 0.7), which changed no behaviour and makes the constants mean their own value.
+formulas - so every rate in EnergySystem.js meant half what it said. Both it and
+`PROD_FACTOR` have since been folded into the rates they scaled (and the same was
+done to `fireCooldown`, 0.35 → 0.7), which changed no behaviour and makes each
+constant mean its own value.
 
 ---
 
@@ -305,12 +318,18 @@ exactly where the hands run out. Not built.
 Three cuts, all keeping the formulas single expressions - no ceilings, no
 piecewise regimes, nothing that changes shape partway through a run:
 
+Comparing effective per-unit rates, with `PROD_FACTOR` and `BASE_FACTOR` folded
+in on both sides so the two columns mean the same thing:
+
 | Change | From | To |
 |---|---|---|
-| `ENCLOSURE_RATE` | 0.056 | 0.030 (now written 0.015, see above) |
+| Enclosure, effective | 0.0048 | 0.00928 (`ENCLOSURE_RATE`) |
+| Path, effective | 0.048 | 0.0582 (`PATH_LINK_RATE`), after a 30% cut |
 | Path generator links paid | all of them, +15% each | longest one only |
-| `PROD_FACTOR` | 0.39 | 0.32 |
+| `KING_BONUS` | 4 | 5 |
 
 The path change is the structural one: it takes network income from `O(n²)` to
-`O(n)`. The other two are flat rate cuts. Needs another logged run to confirm the
-mid game now has decisions in it rather than a full bar.
+`O(n)`. The rest moves the split between the two sources, so enclosures lead.
+Needs another logged run to confirm the mid game now has decisions in it rather
+than a full bar — every log predating 2026-09-03 has been deleted, and the seeded
+draw stream has changed since, so old runs would not replay anyway.

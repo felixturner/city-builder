@@ -10,7 +10,7 @@ rather than what a different game did.
 ```
 ?dev                  play, recording to logs/run-<id>.json
 ?dev&replay           play back the newest RECORDED run (never a replay)
-?dev&replay=18-24-20  ...a specific one; any part of its filename will do
+?dev&replay=14-22-05  ...a specific one; any part of its filename will do
 ?dev&replay&speed=16  ...faster. 1-60; music goes quiet above 4
 ?dev&trace            record the heavy diagnostic set (see Finding the next one)
 ```

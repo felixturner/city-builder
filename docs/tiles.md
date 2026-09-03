@@ -32,36 +32,47 @@ likely.
 | tile | `TopType` | role |
 |---|---|---|
 | **Wall** | `SQUARE` | blocks and *reroutes* creeps; seals enclosures. Grey |
-| **Path generator** | `PATH_GENERATOR` | links to same-colour path gens within `(a.floors + b.floors) × 2` cells, earning from trail length. Its trail reaching a turret, enclosure gen or shield brings that building to full speed — unsupported ones run at half. Blue |
-| **Enclosure generator** | `ENCLOSURE_GENERATOR` | claims a sealed region, earns from its area. Pink |
-| **Peg turret** | `PEG_TURRET` | fast, 1 damage, 0.25 ammo |
-| **Divot turret** | `DIVOT_TURRET` | laser, 2 damage, 0.5 ammo |
-| **Mortar turret** | `MORTAR_TURRET` | 8 damage, AoE, arcs over walls, 1.0 ammo |
-| **Barracks** | `BARRACKS` | raises soldiers. A new floor raises one immediately. Yellow |
-| **Shield** | `SHIELD` | burns creeps crossing its ring, 5 charges per floor. Yellow |
+| **Enclosure generator** | `ENC_GEN` | claims a sealed region and earns from its area — the primary income. Yellow |
+| **Support generator** | `SUPPORT` | links to other supports within `(a.floors + b.floors) × 2` cells and earns a retainer for its LONGEST link only. Its real job is the trails: one reaching a turret, enclosure gen, barracks or shield makes that building better at what it does, and they stack. Blue |
+| **Rifle turret** | `RIFLE` | a travelling pellet, 1 damage |
+| **Laser turret** | `LASER` | hitscan, 2 damage at half the rate |
+| **Mortar turret** | `MORTAR` | 4 damage, AoE, arcs over walls |
+| **Barracks** | `BARRACKS` | raises soldiers. A new floor raises one immediately. Grey (its rooftop soldier identifies it) |
+| **Shield** | `SHIELD` | burns creeps crossing its ring inward, 5 charges per floor. Pink |
+| **King** | `KING` | the thing you are defending. Earns from sealed ground like an enclosure gen, plus a flat trickle. Pink |
 
-Turret range and shield radius are both `floors × 2 + 1` cells. Turrets need line
-of sight. `HOLE` is the king's roof — never dealt.
+Both generator kinds answer `isGenerator`; `isEncGen` and `isSupport` pick one.
+`isWall` is everything that is none of the above.
+
+Turret range is `floors × 1.5` cells and shield radius `floors + 1`. Turrets need
+line of sight, tested against floor counts rather than the rendered mesh — roof
+decoration never blocks a shot.
 
 ## Cost
 
 One function prices placing *and* growing (`systems/tileCost.js`):
 
 ```
-price = base × growth^(that type already placed) × (1 + income/sec × 0.02)
+price = base × (1 + max(0, level - 1) × rate)
 ```
 
 - **base** — wall **4**, everything else **8**. Flat, not per cell
-- **growth** — wall 1.01, everything else 1.2
-- **adding a floor costs half** that. Max 5 floors
-- generators bucket by type *and* colour; turrets by type
+- **rate** — wall 0.2 a level, everything else 0.4. Walls climb at half speed
+  because they are the bulk purchase, rebuilt after every wave
+- **adding a floor costs half** that; demolishing refunds half of what the
+  floors cost. Max 5 floors, 6 for turrets
 
 ## Colour
 
-- **colorIndex** — the tile's accent. Fixed per type for generators (blue paths,
-  pink enclosures), so colour identifies the tool. Path gens only chain to the
-  same colour.
-- **topColorIndex** — cosmetic roof shade on walls.
+Every colour in the game lives in `src/palette.js`. On a tower:
+
+- **accentIndex** — which of the three city accents it wears, as an index into
+  `City.accentColors`. Fixed per type, so colour identifies the tool. Supports
+  only chain to the same colour.
+- **blockColor** / **roofColor** — the floor blocks, and the roof on top of them
+  (usually the same hue a shade darker).
+- **pulseColor** / **pulses** — what a support brightens to while pulsing, and
+  whether it does at all. Null and false for everything else.
 
 ## Rotation
 
