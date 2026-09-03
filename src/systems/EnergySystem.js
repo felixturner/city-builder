@@ -157,6 +157,9 @@ export class EnergySystem {
   announceSupport(t, gained) {
     const label = this.supportLabel(t)
     if (label) this.announceBonus(t, gained, label.text, label.color)
+    // A shield's ring is sized by height, so a trail landing on one changed
+    // what it did without changing anything on screen. Pulse the ring.
+    if (isShield(t)) this.city.rangeVisuals?.flashShield(t)
   }
 
   /**
@@ -170,7 +173,13 @@ export class EnergySystem {
     const city = this.city
     const c = t.box.getCenter(this._c)
     const x = c.x + city.gridOffsetX, z = c.y + city.gridOffsetZ
-    if (gained) city.spawnSupportRing?.(x, z, city.accentColors[SUPPORT_ACCENT])
+    // The ring takes the TOWER's own colour, so the pulse reads as coming from
+    // that building rather than from a system. It used to be one fixed accent
+    // for every building, which made a shield lighting up and a generator
+    // lighting up look like the same event.
+    if (gained) {
+      city.spawnSupportRing?.(x, z, city.accentColors[t.colorIndex ?? SUPPORT_ACCENT])
+    }
     city.floatingText?.spawn(
       x, towerTopY(t, city.floorHeight) + 1.0, z,
       `${gained ? '+' : '-'}${text}`, color, 0,

@@ -54,8 +54,12 @@ export const SHIELD_COLOR = 1
 
 /** Shield radius in CELLS for a shield of `floors` storeys. Shared by the ring
  *  that draws it and the test that decides what crosses it, so the circle never
- *  lies. */
-export const shieldRadiusCells = (floors) => floors * 2 + 1 + Buffs.shieldRadius
+ *  lies.
+ *
+ *  Was `floors * 2 + 1`, i.e. 3 cells at one storey out to 11 at the cap - a
+ *  disc big enough that one tall shield covered most of what mattered. One cell
+ *  a storey makes height a slower, more expensive way to widen it. */
+export const shieldRadiusCells = (floors) => floors + 1 + Buffs.shieldRadius
 
 /**
  * Turret firing range in CELLS for a turret of `floors` storeys.

@@ -15,6 +15,7 @@ export class GUIManager {
       spawnCreeps: true,
       freeClicks: false,
       music: true,
+      fullHand: false,
     },
     camera: {
       perspective: true,
@@ -98,6 +99,11 @@ export class GUIManager {
     gameplayFolder.add({
       bossReward: () => demo.previewBossReward(),
     }, 'bossReward').name('▶ Boss Clear')
+    // One slot per tile type instead of a random hand - for screenshots, and for
+    // testing a tile without waiting on the bag to deal it.
+    gameplayFolder.add(allParams.gameplay, 'fullHand').name('All Tiles').onChange((v) => {
+      demo.tilePalette?.setFullHand(v)
+    })
     // Wipe every tile off the board - king included - for clean screenshots.
     gameplayFolder.add({
       clearBoard: () => demo.city.clearBoard(),
