@@ -1,18 +1,15 @@
 import {
   Mesh,
-  BoxGeometry,
   MathUtils,
   Raycaster,
-  SphereGeometry,
-  MeshStandardNodeMaterial,
-  MeshBasicNodeMaterial,
   Vector2,
   Vector3,
   Color,
 } from 'three/webgpu'
 import { Sounds } from './lib/Sounds.js'
 import { isShield, shieldCharges, shieldRadiusCells, KING_WARN_CELLS } from './blockTypes.js'
-import { SHIELD_LINE, CREEP, WARN } from './palette.js'
+import { SHIELD_LINE, CREEP } from './palette.js'
+import { createCreepAssets, createFlashMaterials } from './systems/creepAssets.js'
 
 // Flyers read as smaller than ground creeps - they are further from the camera
 // and not a thing you can wall against, so they should not loom.
@@ -88,7 +85,6 @@ const SHOT_DAMAGE = 2
 const BIG_HURT_SCALE = 0.5
 
 // Damage flash: hot orange, and how long it lingers.
-const HIT_FLASH_COLOR = CREEP.hitFlash
 const HIT_FLASH_TIME = 0.14
 // ...and the rattle that goes with it. A tilt rather than a positional nudge:
 // the march rewrites mesh.position outright every frame, so an offset would be
@@ -101,7 +97,7 @@ const HIT_SHAKE_ANGLE = 0.3 // radians of tilt at the start of the shake
 const SHIELD_FLASH_TIME = 0.28
 import { Buffs } from './buffs.js'
 import { simRand, simSpread, simPick } from './lib/rng.js'
-import { fxMaterial, glow, unglow, NO_AO_MRT } from './fx.js'
+import { fxMaterial, glow, unglow } from './fx.js'
 import { BeamPool } from './lib/BeamPool.js'
 import { advanceHop, towerWorldCenter } from './lib/gridUnit.js'
 import { WaveAudio } from './systems/WaveAudio.js'
@@ -120,79 +116,16 @@ export class Creeps {
     this.city = city
     this.creeps = []
 
-    this.geo = new BoxGeometry(2, 2, 2)
-    // Two kinds of creep, and the colour is the tell:
-    //   SMASHERS (near-black) bulldoze - a straight line at the king, attacking
-    //     whatever stands on it, so your walls are something they chew through.
-    //   SEEKERS (purple) read the flow field - they thread the gaps you left to
-    //     reach the king, and peel off to a generator if you have sealed it.
-    // Half a wave is each, and every giant is a smasher.
-    this.smasherMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.eye),
-      roughness: 0.55,
-      metalness: 0,
-    })
-    this.seekerMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.spawnMarker),
-      roughness: 0.55,
-      metalness: 0,
-    })
-    // F-mode type dot above each creep: red = smasher, green = seeker.
-    // depthTest off so it stays visible even when the creep is behind a tower.
-    this.dotGeo = new SphereGeometry(0.34, 12, 8)
-    this.dotSmasherMat = new MeshBasicNodeMaterial({ color: new Color(WARN.flowBlocked), depthTest: false })
-    this.dotSeekerMat = new MeshBasicNodeMaterial({ color: new Color(WARN.flowOk), depthTest: false })
+    // Meshes and materials, shared by creep TYPE (see systems/creepAssets).
+    // Assigned onto `this` rather than held behind a namespace, so the forty
+    // or so uses of `this.smasherMat` and friends read as they always have.
+    Object.assign(this, createCreepAssets())
 
-    // Laser creeps: stop at range and fire a turret-style beam at towers.
-    this.laserMat = new MeshStandardNodeMaterial({ color: new Color(CREEP.laser), roughness: 0.4, metalness: 0.15 })
-    this.creepLaserColor = new Color(CREEP.laserBeam)
     this.laserDamage = 2 // heavier than a bite: two of these take a block
     this.beamPool = new BeamPool(scene, { radius: 0.16, duration: 0.16 })
     this._beamFrom = new Vector3()
     this._beamTo = new Vector3()
-    // Shooter creeps read deep orange so they're distinguishable from marchers;
-    // seeker shooters are a lighter orange (matching the body lightness rule).
-    this.shooterSmasherMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.body),
-      roughness: 0.5,
-      metalness: 0,
-    })
-    this.shooterSeekerMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.bodyLight),
-      roughness: 0.5,
-      metalness: 0,
-    })
-    // Boss giants: a menacing dark red, much larger and tankier than any creep.
-    this.giantMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.dark),
-      roughness: 0.45,
-      metalness: 0.1,
-    })
-    // Little blocks shooters lob at towers.
-    this.shotGeo = new BoxGeometry(0.55, 0.55, 0.55)
-    this.shotMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.shot),
-      emissive: new Color(CREEP.shotGlow),
-      roughness: 0.4,
-      metalness: 0,
-    })
     this.shots = []
-
-    // Bomber creeps: fly across the map at altitude and drop bombs.
-    this.bomberMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.bomber),
-      emissive: new Color(CREEP.bomberGlow),
-      roughness: 0.5,
-      metalness: 0,
-    })
-    // Bombs they drop (fall straight down, damage the tower they land on).
-    this.bombGeo = new BoxGeometry(0.7, 0.7, 0.7)
-    this.bombMat = new MeshStandardNodeMaterial({
-      color: new Color(CREEP.bomb),
-      emissive: new Color(CREEP.bombGlow),
-      roughness: 0.4,
-      metalness: 0,
-    })
     this.bombs = []
 
     this.cell = city.cellUnit // grid step size (world units)
@@ -323,30 +256,8 @@ export class Creeps {
     // Never held across a call: read it and use it.
     this._tw = new Vector2()
     this._black = new Color(CREEP.black)
-    // One shared material for the burn flash. Creeps already share materials by
-    // TYPE, so tinting a creep's own material would light up every creep of that
-    // type at once; swapping the reference is per-creep and allocates nothing.
-    this.shieldFlashMat = new MeshStandardNodeMaterial({
-      color: new Color(SHIELD_LINE),
-      emissive: new Color(SHIELD_LINE).multiplyScalar(0.7),
-      roughness: 0.4,
-      metalness: 0,
-    })
-    // Both flash materials get drawn into the glow target, which has two colour
-    // attachments - a material with no mrtNode writes one, and a pipeline whose
-    // outputs don't cover the attachments takes the whole command buffer down.
-    this.shieldFlashMat.mrtNode = NO_AO_MRT()
-    // Ordinary damage flash: hot orange, bright enough to bloom. Creeps are near
-    // black, so a hit had no visual tell at all beyond the stone thunk - you
-    // could not see which of a dozen creeps your turrets were actually working
-    // on. Emissive over 1 puts it on the glow layer's side of the threshold.
-    this.hitFlashMat = new MeshStandardNodeMaterial({
-      color: new Color(HIT_FLASH_COLOR),
-      emissive: new Color(HIT_FLASH_COLOR).multiplyScalar(1.4),
-      roughness: 0.4,
-      metalness: 0,
-    })
-    this.hitFlashMat.mrtNode = NO_AO_MRT()
+    // The two damage-flash materials (see systems/creepAssets).
+    Object.assign(this, createFlashMaterials())
   }
 
   /**
