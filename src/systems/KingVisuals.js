@@ -56,6 +56,7 @@ export class KingVisuals {
     this._kingAlarmFired = false // the low-health siren has played this time
     this._markerT = 0            // marker bob phase, advanced on sim time
     this._markerFloors = -1      // height the marker's colour was last matched to
+    this._earnT = 0              // seconds since the beam struck in
     this._pulseColor = new Color()
   }
 
@@ -118,6 +119,7 @@ export class KingVisuals {
       beam.visible = false
       if (this.kingRing) this.kingRing.visible = false
       this._kingShown = false
+      this._earnT = 0
       this.city.kingEarning = false
       return
     }
@@ -127,10 +129,13 @@ export class KingVisuals {
       this._kingShown = true
       this.flickerKingBeam()
       // The king starts earning a beat AFTER it lights up, so the first energy
-      // is visibly a consequence of the king coming on rather than something
-      // that happened to arrive at the same moment.
+      // reads as a consequence of the king coming on rather than as something
+      // that happened to arrive at the same moment. Counted in update() off the
+      // sim step, NOT scheduled with Demo.after: a callback that never fires
+      // leaves the gate shut forever and the king simply stops earning, with
+      // nothing on screen to say why. A counter that is behind just opens late.
+      this._earnT = 0
       this.city.kingEarning = false
-      this.city.demo?.after(KING_EARN_DELAY, () => { this.city.kingEarning = true })
     }
     // While the flicker is running it owns visibility - this would otherwise
     // switch the beam back on between the timeline's own frames.
@@ -374,5 +379,10 @@ export class KingVisuals {
     this.updateKingAlarm()
     this.updateKingMarker(dt)
     this.updateKingBeam()
+    // Open the earnings gate KING_EARN_DELAY after the beam struck in.
+    if (this._kingShown && !this.city.kingEarning) {
+      this._earnT += dt
+      if (this._earnT >= KING_EARN_DELAY) this.city.kingEarning = true
+    }
   }
 }

@@ -1516,7 +1516,7 @@ export class Creeps {
           // while a creep visibly chewed on it.
           if (target.king) {
             Sounds.play('king-hit', 1.0, 0.06, 0.55)
-            this.city.flashKing() // visible tell for the one tower that matters
+            this.city.kingVisuals.flashKing() // visible tell for the one tower that matters
           } else Sounds.play('attack', 1.0, 0.2, 0.6)
           const before = target.numFloors
           const after = this.city.renderer.damageTower(target, BITE_DAMAGE)
@@ -1642,7 +1642,7 @@ export class Creeps {
       // own glow and the wave arrows (WaveArrows reads exposedPulse) throb in
       // phase with the siren.
       this.exposedPulse = 0.5 + 0.5 * Math.sin(this._exposedPulseT * Math.PI * 2 * 1.5)
-      city.pulseKingColor(this.exposedPulse)
+      city.kingVisuals.pulseKingColor(this.exposedPulse)
       this._kingPulsing = true
     } else if (this._kingPulsing) {
       this._kingPulsing = false
