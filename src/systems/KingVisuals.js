@@ -11,6 +11,9 @@ import { fxMaterial, glow, stutter, NO_AO_MRT } from '../fx.js'
 import { PINK, WHITE } from '../palette.js'
 import { towerTopY, roofGeomIndex, KING_WARN_CELLS, KING_WARN_FLOORS } from '../blockTypes.js'
 
+// A Color, not the hex the palette exports - lerp() needs .r/.g/.b.
+const WHITE_C = new Color(WHITE)
+
 /** Accent index the king always wears: 0 is pink, its own colour. */
 export const KING_COLOR = 0
 const KING_MARKER_SIZE = 1.04 // world units across, before the corner-up tilt
@@ -226,7 +229,7 @@ export class KingVisuals {
     const king = this.city.king
     if (!king || !king.visible) return
     if (!this._pulseColor) this._pulseColor = new Color()
-    this._pulseColor.copy(king.baseColor).lerp(WHITE, 0.6 * p).multiplyScalar(1 + p * 0.9)
+    this._pulseColor.copy(king.baseColor).lerp(WHITE_C, 0.6 * p).multiplyScalar(1 + p * 0.9)
     this.city.setTowerColor(king, this._pulseColor)
   }
 

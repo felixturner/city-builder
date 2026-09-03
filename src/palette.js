@@ -134,5 +134,10 @@ export const WORLD = {
   groundFill: 0x444444,
 }
 
+/**
+ * Hex, like everything else here - fine for `new Color(x)`, GridHelper and
+ * setClearColor, but NOT for anything that reads .r/.g/.b. `lerp(WHITE, t)`
+ * silently produces NaN and renders black; make a Color first.
+ */
 export const WHITE = 0xffffff
 export const BLACK = 0x000000

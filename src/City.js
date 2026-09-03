@@ -64,6 +64,8 @@ const LOT_COLOR = 2
 // this is the one thing held back, so the board arrives before it fills.
 const BUILD_DELAY = 1
 const TOWER_HIT_FLASH = 0.22
+// A Color, not the hex the palette exports: lerp() reads .r/.g/.b off its
+// argument, and a number has none - the result is NaN, which renders black.
 const WHITE_C = new Color(WHITE)
 
 // Rotate a vec3 around Y axis by angle (in radians)
@@ -1157,7 +1159,7 @@ export class City {
       // to them would tint an unrelated tile.
       if (!tower.visible) { this._hitFlashes.delete(tower); continue }
       f.t = Math.max(0, f.t - dt / f.dur)
-      this._flashColor.copy(tower.baseColor).lerp(WHITE, f.t * 0.85)
+      this._flashColor.copy(tower.baseColor).lerp(WHITE_C, f.t * 0.85)
       this.setTowerColor(tower, this._flashColor)
       // Back to its own shading once the flash is spent, so the stack gradient
       // returns rather than the whole tower being left one flat colour.
