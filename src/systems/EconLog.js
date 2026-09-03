@@ -34,6 +34,12 @@ export class EconLog {
       cap: this.demo.mana.max,
       earned: 0, // energy actually banked
       wasted: 0, // income that arrived at a full bar
+      // ...and where that came from. `earned` alone cannot say whether a run
+      // was carried by path generators or by sealed ground, and the per-round
+      // pathGenMana / enclosureGenMana figures below are only a SNAPSHOT at the
+      // moment the round closed - they read zero for a whole round whose walls
+      // happened to be open at the end, however much it earned earlier.
+      from: { path: 0, enc: 0, king: 0, crate: 0 },
       spentPlace: 0, // new tiles from the palette
       spentFloor: 0, // levelling something already standing
       blocksLost: 0, // blocks creeps knocked off
@@ -104,6 +110,8 @@ export class EconLog {
       + ` | spent ${r.spent} (${r.spentPlace} place / ${r.spentFloor} floors)`
       + ` | blocks +${r.blocksPlaced} -${r.blocksLost}`
       + ` | income ${r.incomePerSec}/s (path ${r.pathGenMana} enc ${r.enclosureGenMana})`
+      + ` | banked: ${Math.round(r.from.path)} path, ${Math.round(r.from.enc)} enc,`
+      + ` ${Math.round(r.from.king)} king, ${Math.round(r.from.crate)} crate`
       + ` | built: ${path} path, ${enc} enc, ${turret} turret, ${barracks} brk,`
       + ` ${shield} shld, ${wallBlocks} wall blocks, ${r.enclosedCells} cells sealed`
       + (why === 'died' ? ' | DIED HERE' : '')
@@ -127,6 +135,12 @@ export class EconLog {
     if (!this._round) return
     this._round.earned += amount
     this._round.wasted += wasted
+  }
+  /** Attribute energy that was actually banked to whatever produced it. */
+  earnFrom(src, gained) {
+    if (!this._round || !(gained > 0)) return
+    const f = this._round.from
+    if (src in f) f[src] += gained
   }
   spend(amount, isFloor) {
     if (!this._round) return

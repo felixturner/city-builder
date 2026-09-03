@@ -91,8 +91,8 @@ by `PROD_FACTOR = 0.32` (was 0.39) and `Buffs.genRate`.
 **Enclosure generators (pink)** — pay for sealed ground:
 
 ```
-cells × floors × ENCLOSURE_RATE × PROD_FACTOR × genRate × supportFactor
-ENCLOSURE_RATE = 0.030
+cells × floors × ENCLOSURE_RATE × genRate × supportFactor
+ENCLOSURE_RATE = 0.00928
 ```
 
 Was 0.056. A board sits at ~70% enclosed for most of a run, and at that rate the
@@ -108,8 +108,8 @@ arrange that was to seal three small rings and knock the inner walls down.
 **Path generators (blue)** — pay for a linked network, one link each:
 
 ```
-per generator: area × longestLinkGap × PATH_LINK_RATE × PROD_FACTOR × genRate
-PATH_LINK_RATE = 0.3
+per generator: area × longestLinkGap × PATH_LINK_RATE × genRate
+PATH_LINK_RATE = 0.0582
 ```
 
 Links form between every same-colour pair within combined reach
@@ -130,15 +130,21 @@ A path generator also trails to any non-wall building within `floors × 2` cells
 Those trails earn nothing; they make the building better, and they **stack**.
 
 ```
-BASE_FACTOR = 0.5   (what a building does on its own)
-turret fire rate      × BASE_FACTOR × (1 + 0.25 × trails)
-enclosure output      × BASE_FACTOR × (1 + 0.15 × trails)
+turret fire rate      × (1 + 0.25 × trails)
+enclosure output      × (1 + 0.15 × trails)
 shield burn damage    SHIELD_DAMAGE + 1 per trail
 barracks garrison     +1 soldier per trail
 ```
 
 **Previously** a single flag: supported or not, ×1 or ×0.5. The first support
 tower was enormous and the second was worth nothing.
+
+That change cut income further than it looks, and quietly. Under the flag, one
+trail DOUBLED a generator (0.5 → 1.0). Under the count it took more than three
+to get there, and the leftover 0.5 lived on as a `BASE_FACTOR` in front of both
+formulas - so every rate in EnergySystem.js meant half what it said. It has been
+folded into the base rates (`ENCLOSURE_RATE` 0.030 → 0.015, `fireCooldown` 0.35
+→ 0.7), which changed no behaviour and makes the constants mean their own value.
 
 ---
 
@@ -179,14 +185,16 @@ visibly chewed on it.
 | King ring | burn on inward crossing | 2 (`KING_RING_DAMAGE`), no charges |
 | Wall bite recoil | costs the creep | 2 HP (`WALL_BITE`) per floor broken |
 
-Turrets all fire at the **same 2.86 damage/second** by construction — the peg
-sets the rate and the others derive their cooldown from their damage:
+Each gun's damage and cooldown is written down on its own. They currently all
+land on **1.43 damage/second unsupported**, but nothing enforces that any more —
+the cooldowns used to be derived from the peg, which meant a gun could not be
+tuned without moving the other two:
 
 | Gun | DMG | Cooldown | Notes |
 |---|---|---|---|
-| Peg | 1 | 0.35s (`fireCooldown`) | travelling projectile |
-| Laser | 2 | 0.70s | hitscan |
-| Mortar | 4 | 1.40s | AoE, `mortarRadius` 4 cells |
+| Peg | 1 | 0.70s (`fireCooldown`) | travelling projectile |
+| Laser | 2 | 1.40s | hitscan |
+| Mortar | 4 | 2.80s | AoE, `mortarRadius` 4 cells |
 
 Mortar was 8 dmg / 2.8s — same DPS, but one shell every 2.8s meant it spent most
 of a fight doing nothing and lost a whole cycle to a creep that walked out of the
@@ -299,7 +307,7 @@ piecewise regimes, nothing that changes shape partway through a run:
 
 | Change | From | To |
 |---|---|---|
-| `ENCLOSURE_RATE` | 0.056 | 0.030 |
+| `ENCLOSURE_RATE` | 0.056 | 0.030 (now written 0.015, see above) |
 | Path generator links paid | all of them, +15% each | longest one only |
 | `PROD_FACTOR` | 0.39 | 0.32 |
 

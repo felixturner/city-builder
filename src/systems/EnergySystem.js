@@ -17,46 +17,40 @@ const PULSE_DECAY = 0.8 // seconds for a tower's flash to fade back to baseline
 // near baseline and the floor just sat bright. At 0.22s each arrival reads as a
 // distinct blink at ordinary rates, and only a very rich enclosure glows solid.
 const FLOOR_PULSE_DECAY = 0.22
-// Mana per (enclosed cell x generator floor) for the pink area generators.
-// Cut 20% from 0.2: their output scales with enclosed AREA, so it climbs much
-// faster than the blue path generators as a city grows.
-// 0.08 -> 0.056 (-30%, so a sealed ring plus a couple of support towers stopped
-// being enough to make energy a non-issue) -> 0.07 (+25%) -> 0.056 (-20%) once
-// PROD_FACTOR had been raised twice and area generators were out-earning again.
-// Cut from 0.056. A typical board is ~70% enclosed for most of a run, and at the
-// old rate that filled the whole energy cap in ~30 seconds of a 70-second round
-// at EVERY board size - the cap scales with cells and so does enclosed area, so
-// the two move together and one flat rate fixes all of them. At 0.030 it takes
-// 50-60s, which is most of a round.
-const ENCLOSURE_RATE = 0.030
-// Energy per (footprint cell x trail length) for the blue path generators.
+// Energy per (enclosed cell x generator floor) for the pink area generators.
 //
-// 0.075 -> 0.3 (4x) when ammo went away. That 0.075 was priced against a
-// magazine of 50 rounds a firing turret drained at 0.71/s, not against build
-// costs in the tens: paid into the energy bar it earned about a tenth of what
-// the same tile earns as a sealed enclosure, which made blue a strictly worse
-// pink again. At 0.3 a linked pair of 1x1s six cells apart pays ~0.7 a tick
-// each way, and a network still scales combinatorially with how many
-// same-colour generators are in reach - so four of them beat two by more than
-// double. The two colours are two ways to earn the one currency now: seal
-// ground, or link a network.
-const PATH_LINK_RATE = 0.3
+// Sealing ground is meant to be the PRIMARY way a city earns, and a measured
+// run had it at 32% of generator income against the blue network's 68%. This
+// carries that correction.
+//
+// The whole rate, not a share of one: there used to be a global PROD_FACTOR in
+// front of both generator types and a BASE_FACTOR of 0.5 behind them, so this
+// number meant about a sixth of what it said. Both are folded in now. What a
+// generator earns is this, times its cells, times its floors - and then only
+// the support and card multipliers, which are bonuses rather than scale.
+const ENCLOSURE_RATE = 0.00928
+// Energy per (footprint cell x longest link) for the blue path generators.
+//
+// Deliberately well below what a sealed enclosure earns, because a blue tile is
+// a SUPPORT tower that happens to pay a little, not a generator. What it is for
+// is the trails it throws to turrets, shields, barracks and area generators;
+// the energy is a retainer, and sealing ground is how a city actually earns.
+//
+// It also scales the wrong way to be the main income: link length grows with
+// the board and with tower height, while a sealed region is capped by how much
+// ground you can hold. Left near parity the network just wins the late game -
+// 68% path against 32% enclosure in a measured run at level 12.
+//
+// Same note as above: this is the whole rate, with PROD_FACTOR folded in.
+const PATH_LINK_RATE = 0.0582
 
 // Volume of the per-arrival income blip. It fires several times a second at a
 // developed economy, so it sits well under the one-off cues.
 const INCOME_BLIP_VOLUME = 0.54
-// Global generator-production scale, multiplying BOTH generator types. Raised
-// from 0.2 (+30%) when grey walls stopped generating - generators became the only
-// thing producing energy besides the king's trickle - then 0.26 -> 0.325 -> 0.39
-// (+25%, then +20%) to pay for levelling up towers, which went from 2 a floor to
-// the full tile price once the two were unified.
-// Cut from 0.39 alongside the two curve changes above: a logged run threw away
-// 49% of everything it produced, and 62% across levels 6-13.
-const PROD_FACTOR = 0.32
 // Slow bonus the king trickles every GREY_INTERVAL, separate from what it earns
 // by sealing an enclosure. Smaller than the old flat income now that the king
 // has a real earning mechanic - it's the floor you can recover from, not a wage.
-const KING_BONUS = 4
+const KING_BONUS = 5
 // Income arrives one unit at a time rather than as a lump, so a generator's
 // output is audible as a RATE: 2 energy a tick trickles, 12 rattles.
 //
@@ -69,15 +63,16 @@ const KING_BONUS = 4
 // generators are the supply network: they still produce energy themselves, and
 // now a trail reaching a turret, area generator or shield is what brings that
 // building up to full speed.
-// What a building does on its OWN, as a fraction of the reference constants.
-// This is the old unsupported rate kept as the baseline: a lone turret or area
-// generator has always run at half pace, and that is now simply what it is,
-// rather than a penalty waiting to be lifted.
-const BASE_FACTOR = 0.5
 // What one connected support tower adds, and they STACK - a building reached by
 // three trails gets three times the bonus. Percentages are of what the building
-// currently does, so +25% is a quarter faster than it was, not a quarter of the
-// reference rate.
+// does UNSUPPORTED, which is now simply its base rate: ENCLOSURE_RATE for an
+// area generator, fireCooldown for a turret.
+//
+// There used to be a BASE_FACTOR of 0.5 in front of both, left over from when
+// support was a flag rather than a count and one trail doubled a building's
+// output. Folded away here - the base rates below absorbed it exactly, so
+// nothing changed - because it made every rate in this file mean half of what
+// it said, and that is a bad thing for numbers that exist to be tuned.
 const SUPPORT_FIRE_RATE = 0.25 // +25% turret fire rate each
 const SUPPORT_SHIELD_DAMAGE = 1 // +1 shield burn damage each
 const SUPPORT_GEN_RATE = 0.15 // +15% enclosure generator output each
@@ -196,14 +191,14 @@ export class EnergySystem {
     return (this.supported && this.supported.get(tower)) || 0
   }
 
-  /** Turret fire-rate multiplier: BASE_FACTOR on its own, +25% per trail. */
+  /** Turret fire-rate multiplier: 1 on its own, +25% per trail. */
   fireRateFactor(tower) {
-    return BASE_FACTOR * (1 + SUPPORT_FIRE_RATE * this.supportCount(tower))
+    return 1 + SUPPORT_FIRE_RATE * this.supportCount(tower)
   }
 
   /** Enclosure-generator output multiplier: same shape, +15% per trail. */
   genRateFactor(tower) {
-    return BASE_FACTOR * (1 + SUPPORT_GEN_RATE * this.supportCount(tower))
+    return 1 + SUPPORT_GEN_RATE * this.supportCount(tower)
   }
 
   /** Extra burn damage a shield gets from support: +1 per trail. */
@@ -288,7 +283,7 @@ export class EnergySystem {
       const cells = t.enclosureRegionCells || 0
       if (cells <= 0 || t.numFloors < 1 || this.city.upkeep.isDark(t)) { t.enclosureMana = 0; continue }
       t.enclosureMana = Math.max(1, Math.round(
-        cells * t.numFloors * ENCLOSURE_RATE * PROD_FACTOR * Buffs.genRate
+        cells * t.numFloors * ENCLOSURE_RATE * Buffs.genRate
         * this.genRateFactor(t)
       ))
       mana += t.enclosureMana
@@ -375,7 +370,7 @@ export class EnergySystem {
     let mana = 0
     const contrib = new Map()
     for (const [t, gap] of best) {
-      const p = this.area(t) * gap * PATH_LINK_RATE * PROD_FACTOR * Buffs.genRate
+      const p = this.area(t) * gap * PATH_LINK_RATE * Buffs.genRate
       mana += p
       contrib.set(t, p)
     }
@@ -478,7 +473,7 @@ export class EnergySystem {
    * The generator's lifespan is charged ONCE here, not per arrival - the pulses
    * used to be one-per-tick, so this is where a per-tick charge would go.
    */
-  scheduleIncome(tower, amt, span = GEN_INTERVAL) {
+  scheduleIncome(tower, amt, span = GEN_INTERVAL, src = 'path') {
     const city = this.city
     // One unit per slot, until the slots would be closer together than
     // MIN_SPAWN_GAP; past that each slot carries more than 1.
@@ -505,7 +500,7 @@ export class EnergySystem {
       left -= give
       this.pulseEvents.push({
         members: [tower], t: phase + i * gap, amt: give, sound: 'dink',
-        color: ENERGY_COLOR, cx, cy, cz,
+        color: ENERGY_COLOR, cx, cy, cz, src,
       })
     }
   }
@@ -547,11 +542,11 @@ export class EnergySystem {
           const whole = Math.floor(tower.manaCarry)
           if (whole >= 1) {
             tower.manaCarry -= whole
-            this.scheduleIncome(tower, whole)
+            this.scheduleIncome(tower, whole, GEN_INTERVAL, 'path')
           }
         }
         for (const t of this.enclosureGens) {
-          if (t.visible && t.enclosureMana) this.scheduleIncome(t, t.enclosureMana)
+          if (t.visible && t.enclosureMana) this.scheduleIncome(t, t.enclosureMana, GEN_INTERVAL, 'enc')
         }
       }
     }
@@ -571,7 +566,7 @@ export class EnergySystem {
         }
         // The resource lands at the moment its caption pops, not up front, so
         // the bar climbs in step with the bleeps.
-        city.mana.add(e.amt)
+        city.mana.econ?.earnFrom(e.src, city.mana.add(e.amt))
         // No "+N" caption here any more: the flying box and the bar climbing
         // already say it, and at full income the board was carpeted in them.
         // The sound the caption used to carry fires on its own.
@@ -594,7 +589,7 @@ export class EnergySystem {
       // unsealed king still brings in enough to rebuild from. Emitted one unit
       // at a time over its own 5s tick rather than as a silent lump.
       if (city.king && city.king.visible) {
-        this.scheduleIncome(city.king, KING_BONUS, GREY_INTERVAL)
+        this.scheduleIncome(city.king, KING_BONUS, GREY_INTERVAL, 'king')
       }
     }
 

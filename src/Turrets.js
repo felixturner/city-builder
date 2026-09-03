@@ -57,29 +57,32 @@ export class Turrets {
     this.cooldowns = new Map() // tower -> seconds until next shot
 
     /**
-     * All three guns fire at the SAME damage per second. The peg turret sets it -
-     * 1 damage every 0.35s, so 2.86/s - and the other two take however long their
-     * bigger shot is worth: cooldown = damage x fireCooldown, because the peg's
-     * damage is 1. Laser 2 dmg -> 0.7s, mortar 8 dmg -> 2.8s.
+     * Damage and cooldown per gun, each written down on its own.
      *
-     * Derived rather than written down, so the three can't drift apart the way
-     * they had (0.9s and 4.0s were 2.22/s and 2.00/s, both quietly worse than the
-     * cheapest gun in the game). What separates them is the SHAPE of that damage,
-     * which is the interesting part and the part you choose between:
-     *   peg     fine-grained, but a travelling projectile and 4 shots to a kill
+     * The three USED to be derived from the peg (cooldown = damage x
+     * fireCooldown) so they could not drift from a shared damage-per-second.
+     * That guaranteed sameness, which is the opposite of what these numbers are
+     * for: a gun cannot be tuned without moving the other two, and "all three
+     * are equal" is not a balance goal, it is the absence of one.
+     *
+     * They start at the values that derivation produced, so nothing changes
+     * until something is deliberately changed. What separates them is the SHAPE
+     * of the damage, which is the part you choose between:
+     *   peg     fine-grained, but a travelling projectile and several shots to a kill
      *   laser   hitscan, no leading, but blind for twice as long after each shot
-     *   mortar  one-shots anything up to 8 HP, but overkills a small creep and
-     *           only earns its slot on a clump, where the AoE multiplies that
-     *           2.86/s by everything it catches
+     *   mortar  one-shots small creeps and only earns its slot on a clump, where
+     *           the AoE multiplies its rate by everything it catches
+     *
+     * All cooldowns are UNSUPPORTED; support trails divide them (fireRateFactor).
      */
-    this.fireCooldown = 0.35 // seconds between Peg shots - the reference rate
+    this.fireCooldown = 0.7 // peg: 1 dmg -> 1.43 dmg/s
     this.projectileSpeed = 100 // world units / sec
     this.hitRadius = 1.0 // sphere considered "on" the creep within this
     this.baseY = 0.8
 
     // Laser turret config + a small pool of reusable beam cylinders.
     this.laserDamage = 2
-    this.laserCooldown = this.laserDamage * this.fireCooldown // 0.7s
+    this.laserCooldown = 1.4 // 1.43 dmg/s
     this.beamPool = new BeamPool(scene, { radius: 0.28, duration: 0.16 })
 
     // Mortar turret: lobs an arcing shell that explodes in an AoE.
@@ -88,7 +91,7 @@ export class Turrets {
     // and a creep that walked out of the blast radius in between cost it the
     // whole cycle - which is a long time to be wrong for.
     this.mortarDamage = 4
-    this.mortarCooldown = 1.4 // seconds; keeps the shared 2.86 dmg/s
+    this.mortarCooldown = 2.8 // 1.43 dmg/s before the AoE catches anything
     this.mortarRadius = 4 // AoE radius
     this.mortarArc = 8 // peak lob height
     this.mortarDur = 0.6 // travel time (seconds) - shorter so it lands near moving creeps

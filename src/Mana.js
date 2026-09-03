@@ -176,7 +176,9 @@ export class Mana {
     return true
   }
 
-  /** Add energy, capped at max. */
+  /** Add energy, capped at max. Returns what was actually banked, which is less
+   *  than `amount` at the ceiling - callers splitting income by source need the
+   *  banked figure, not the offered one. */
   add(amount = 1) {
     const before = this.current
     const wasFull = CAP_ENABLED && before >= this.max
@@ -193,5 +195,6 @@ export class Mana {
       else Sounds.play('energy-up') // throttled in Sounds.js
     }
     this.render()
+    return gained
   }
 }
