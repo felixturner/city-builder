@@ -48,10 +48,10 @@ const ROOF_GEOM = {
 export const roofGeomIndex = (typeTop) => ROOF_GEOM[typeTop]
 
 // Each generator type has ONE fixed accent colour (index into City.accentColors:
-// 0 pink, 1 yellow, 2 blue). Path = blue, enclosure = yellow.
+// 0 pink, 1 yellow, 2 blue). Path = blue, enclosure = pink.
 const GEN_COLOR = {
   [TopType.SUPPORT]: 2,    // blue
-  [TopType.ENC_GEN]: 1, // yellow - pink belongs to the king now
+  [TopType.ENC_GEN]: 0, // pink - the colour energy itself is drawn in
 }
 /** Fixed accent index for a generator type, or undefined for non-generators. */
 export const genColorIndex = (typeTop) => GEN_COLOR[typeTop]
@@ -65,11 +65,10 @@ export const tileColorIndex = (typeTop) =>
 
 /** Accent index for the barracks (the one accent no generator uses). */
 export const BARRACKS_COLOR = 1
-/** Shields wear the king's pink - the two defensive centrepieces share a colour,
- *  and SHIELD_LINE draws the barrier ring in the same one. This was left on 1
- *  (yellow) when shields turned pink, so the tile, its ring and the support
- *  pulse over it were three different colours. */
-export const SHIELD_COLOR = 0
+/** Shields wear yellow, and SHIELD_LINE draws the barrier ring in the same one.
+ *  Keep the two in step: when they disagreed, the tile, its ring and the
+ *  support pulse over it were three different colours. */
+export const SHIELD_COLOR = 1
 
 /** Shield radius in CELLS for a shield of `floors` storeys. Shared by the ring
  *  that draws it and the test that decides what crosses it, so the circle never

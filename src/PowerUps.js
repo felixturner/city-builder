@@ -1,6 +1,6 @@
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
-import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
+import { ENERGY_COLOR, LIME, ACCENTS } from './palette.js'
 import { TopType, KING_MAX_FLOORS, maxFloorsFor, isWall, isTurret } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
 import { simRand, simShuffle } from './lib/rng.js'
@@ -25,8 +25,11 @@ const CARDS_OFFERED = 4
  *  owns can grow outwards - only up. See the late block in CARDS. */
 const LATE_LEVEL = 12
 
-const YELLOW = ENERGY_COLOR
-const PINK = PINK_ACCENT
+// Card colours follow the board's vocabulary, not the card's wording: pink is
+// income, yellow is violence, blue is staying up. Named for the JOB so the two
+// stay in step the next time an accent moves.
+const ECON = ENERGY_COLOR
+const COMBAT = LIME
 const BLUE = ACCENTS[2]
 
 /**
@@ -50,19 +53,19 @@ export const CARDS = [
     apply: (g) => g.growRandom(isWall, 20),
   },
   {
-    id: 'tower-builder', title: 'Master Builder', color: YELLOW,
+    id: 'tower-builder', title: 'Master Builder', color: ECON,
     desc: 'Adds a floor to 10 random buildings.',
     available: (g) => g.countGrowable((t) => !isWall(t)) > 0,
     apply: (g) => g.growRandom((t) => !isWall(t), 10),
   },
   {
-    id: 'king-heal', title: 'Restore the King', color: YELLOW,
+    id: 'king-heal', title: 'Restore the King', color: ECON,
     desc: 'Rebuild the king to full height.',
     available: (g) => g.city.king && g.city.king.numFloors < g.kingMaxFloors(),
     apply: (g) => g.healKing(),
   },
   {
-    id: 'king-big', title: 'Crown the King', color: YELLOW,
+    id: 'king-big', title: 'Crown the King', color: ECON,
     desc: 'The king gains 2 permanent floors of health.',
     // Gone once the king is as tall as it can get, rather than being offered as
     // a card that would do nothing.
@@ -70,12 +73,12 @@ export const CARDS = [
     apply: (g) => g.growKing(2),
   },
   {
-    id: 'weak-creeps', title: 'Brittle Swarm', color: PINK,
+    id: 'weak-creeps', title: 'Brittle Swarm', color: COMBAT,
     desc: 'Creeps arrive with 15% less health.',
     apply: () => { Buffs.creepHp *= 0.85 },
   },
   {
-    id: 'gen-rate', title: 'Overclocked Grid', color: YELLOW,
+    id: 'gen-rate', title: 'Overclocked Grid', color: ECON,
     desc: 'Generators produce 25% more energy.',
     apply: () => { Buffs.genRate *= 1.25 },
   },
@@ -96,27 +99,27 @@ export const CARDS = [
     apply: () => { Buffs.refillRate *= 0.75 },
   },
   {
-    id: 'peg', title: 'Heavy Rounds', color: PINK,
+    id: 'peg', title: 'Heavy Rounds', color: COMBAT,
     desc: 'Bullet turrets do +1 damage per shot.',
     apply: () => { Buffs.shotDamage.peg += 1 },
   },
   {
-    id: 'laser', title: 'Focused Beam', color: PINK,
+    id: 'laser', title: 'Focused Beam', color: COMBAT,
     desc: 'Laser turrets do +2 damage per shot.',
     apply: () => { Buffs.shotDamage.laser += 2 },
   },
   {
-    id: 'mortar', title: 'Heavier Shells', color: PINK,
+    id: 'mortar', title: 'Heavier Shells', color: COMBAT,
     desc: 'Mortars do +4 damage per blast.',
     apply: () => { Buffs.shotDamage.mortar += 4 },
   },
   {
-    id: 'firerate', title: 'Rapid Cycling', color: PINK,
+    id: 'firerate', title: 'Rapid Cycling', color: COMBAT,
     desc: 'All turrets reload 20% faster.',
     apply: () => { Buffs.fireRate *= 0.8 },
   },
   {
-    id: 'energy', title: 'Bigger Reserves', color: YELLOW,
+    id: 'energy', title: 'Bigger Reserves', color: ECON,
     desc: 'Energy capacity +50.',
     apply: () => { Buffs.energyMax += 50 },
   },
@@ -138,7 +141,7 @@ export const CARDS = [
     apply: () => { Buffs.soldierHp += 2 },
   },
   {
-    id: 'shield', title: 'Wider Aegis', color: YELLOW,
+    id: 'shield', title: 'Wider Aegis', color: COMBAT,
     desc: 'Shields cover 2 more cells of radius.',
     available: (g) => g.hasShield(),
     apply: () => { Buffs.shieldRadius += 2 },
@@ -169,7 +172,7 @@ export const CARDS = [
     apply: () => { Buffs.rebuildPerRound += 10 },
   },
   {
-    id: 'field-guns', title: 'Field Guns', color: PINK, late: true, repeat: false,
+    id: 'field-guns', title: 'Field Guns', color: COMBAT, late: true, repeat: false,
     desc: 'Every gun hits one harder - rifles, lasers and mortars.',
     // The three single-gun damage cards are a percent of one weapon each. This
     // is all of them at once, which is what a level-17 wave is priced against.

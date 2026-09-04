@@ -43,13 +43,13 @@ export const BLUE = ACCENTS[2]
  *  (tower.accentIndex, tile specs, the enclosure claim map). */
 export const ACCENT = { PINK: 0, LIME: 1, BLUE: 2 }
 
-/** Build currency: every energy figure, caption and pulse. */
-export const ENERGY_COLOR = LIME
+/** Build currency: every energy figure, caption and pulse. Pink, so income and
+ *  the generators that earn it read as one thing. */
+export const ENERGY_COLOR = PINK
 
-/** Shield pink - the tile, the barrier ring, and the flash a creep takes
- *  crossing it: the same pink the king wears, the two defensive centrepieces
- *  sharing one colour. */
-export const SHIELD_LINE = PINK
+/** Shield yellow - the tile, the barrier ring, and the flash a creep takes
+ *  crossing it, all one colour. */
+export const SHIELD_LINE = LIME
 
 /**
  * The player's side: neutral greys for walls and ground.
