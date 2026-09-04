@@ -213,7 +213,8 @@ export class DemoUI {
     const board = document.createElement('button')
     board.textContent = 'View leaderboard'
     board.className = 'menu-btn'
-    board.addEventListener('click', () => new HighScores().showBoard())
+    // Hands the menu over: the board takes its place and Close brings it back.
+    board.addEventListener('click', () => new HighScores().showBoard(el))
     buttons.appendChild(resume)
     buttons.appendChild(restart)
     buttons.appendChild(tute)
