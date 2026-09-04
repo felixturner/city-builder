@@ -17,6 +17,7 @@ Sheilds burn creeps and buff HP.
 # SLIDE
 support.png
 Support Towers buff other towers.
+Connected Supports generate energy.
 
 # SLIDE
 controls.png
