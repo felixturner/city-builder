@@ -8,7 +8,7 @@ import {
 } from 'three/webgpu'
 import { Sounds } from './lib/Sounds.js'
 import { isShield, shieldCharges, shieldRadiusCells, KING_WARN_CELLS } from './blockTypes.js'
-import { SHIELD_LINE, CREEP } from './palette.js'
+import { SHIELD_LINE, CREEP, CREEP_LABEL } from './palette.js'
 import { createCreepAssets, createFlashMaterials } from './systems/creepAssets.js'
 
 // Flyers read as smaller than ground creeps - they are further from the camera
@@ -382,6 +382,7 @@ export class Creeps {
     typeDot.visible = !!this.city.flow.debugEnabled
     mesh.add(typeDot)
 
+    this.city.mana?.econ?.creepSpawned()
     this.creeps.push({
       mesh,
       typeDot,
@@ -579,7 +580,7 @@ export class Creeps {
     const c = king.box.getCenter(this._shieldC || (this._shieldC = new Vector2()))
     this.burnRing(
       king, c.x + city.gridOffsetX, c.y + city.gridOffsetZ,
-      KING_WARN_CELLS * city.cellUnit, KING_RING_DAMAGE
+      KING_WARN_CELLS * city.cellUnit, KING_RING_DAMAGE, undefined, 'king'
     )
   }
 
@@ -594,7 +595,7 @@ export class Creeps {
    * `onBurn` runs after each burn; returning true stops the scan (a shield that
    * has just spent its last charge). Returns true if it stopped early.
    */
-  burnRing(owner, sx, sz, r, dmg, onBurn) {
+  burnRing(owner, sx, sz, r, dmg, onBurn, cause = 'shield') {
     // Backwards: hit() can kill and splice the creep out from under us.
     for (let i = this.creeps.length - 1; i >= 0; i--) {
       const cr = this.creeps[i]
@@ -614,7 +615,7 @@ export class Creeps {
       // The ring that did it flashes too - the barrier is the thing you should
       // be looking at, not just the creep it caught.
       this.city.flashBarrier(owner)
-      this.hit(cr, dmg)
+      this.hit(cr, dmg, cause)
       if (onBurn && onBurn()) return true
     }
     return false
@@ -647,6 +648,7 @@ export class Creeps {
     mesh.rotation.set(Math.PI / 4, Math.atan2(dx, dz), Math.PI / 4)
     this.scene.add(mesh)
 
+    this.city.mana?.econ?.creepSpawned()
     this.creeps.push({
       mesh,
       fromX: x, fromZ: z, toX: x, toZ: z,
@@ -1025,7 +1027,7 @@ export class Creeps {
   }
 
   /** Apply turret damage; explode + remove the creep once it reaches max HP. */
-  hit(creep, dmg = 1) {
+  hit(creep, dmg = 1, cause = 'other') {
     creep.hits += dmg
     this.hitFlash(creep)
     creep.shakeT = HIT_SHAKE_TIME
@@ -1048,7 +1050,7 @@ export class Creeps {
     const ft = this.city.floatingText
     if (ft) {
       const p = creep.mesh.position
-      ft.spawn(p.x, p.y + 1.5, p.z, `-${dmg}`, '#ff5a5a')
+      ft.spawn(p.x, p.y + 1.5, p.z, `-${dmg}`, CREEP_LABEL)
     }
     if (creep.hits < creep.maxHits) {
       return false
@@ -1059,6 +1061,7 @@ export class Creeps {
       this.scene.remove(creep.mesh)
       this.creeps.splice(i, 1)
       Sounds.play('creep-killed', 1.0, 0.2, 0.24)
+      this.city.mana?.econ?.creepKilled(cause)
       // Killing a giant is the biggest thing that happens in a run and until now
       // it sounded exactly like swatting a marcher. Give it a payoff sting, and
       // duck the boss horn if that swell is still running - the fight is over.
@@ -1383,6 +1386,12 @@ export class Creeps {
 
   update(dt) {
     if (!this.started) return
+    // Dev freeze: everything that is already on the board holds still - steps,
+    // attacks, shots, barrier burns, the wave clock. Distinct from the Creeps
+    // toggle next to it, which only stops NEW spawns and lets the ones already
+    // marching finish the job. Nothing here is sim state, so a recorded run
+    // that used it is not replayable; it is for looking at a frozen board.
+    if (this.frozen) return
     // Rebuild the creep flow field when the city changed (cheap, shared by all).
     if (!this.city.flow.ready || this.city.flowDirty) this.city.flow.compute()
     this.advanceSpawns(dt)
@@ -1537,7 +1546,7 @@ export class Creeps {
             // say otherwise. Now a wall is worth something even undefended - it
             // charges an entry fee - while still not being the free one-for-one
             // trade it was when creeps burst after a single floor.
-            if (this.hit(c, WALL_BITE)) continue // it died on the last block
+            if (this.hit(c, WALL_BITE, 'wall')) continue // it died on the last block
             // Its target may have just been destroyed outright - go and find
             // something else rather than swinging at a hole.
             if (!target.visible) { c.state = 'march'; c.target = null; c.t = 1 }

@@ -12,6 +12,19 @@ import { TopType, isTurret, isGenerator, isBarracks, isShield, roofGeomIndex, ti
 
 const SLOTS = 4
 const REFILL_TIME = 1.33 // seconds for a used/discarded palette slot to refill
+/**
+ * Slots refill faster as the levels climb, on the same straight line the turret
+ * fire rate uses (Turrets.rofPerWave).
+ *
+ * Walls come down faster every level and are replaced a TILE at a time, so the
+ * hand is what the late game actually runs short of: a logged level-20 round
+ * lost 95 wall blocks while the player drew 26 new tiles in total. The bag's
+ * wall SHARE cannot fix that - two thirds of 26 is still 17 - so the number of
+ * draws has to move, not just their composition.
+ *
+ * Small on purpose: 1.6x by level 20, against a threat that has grown ~30x.
+ */
+const REFILL_PER_WAVE = 0.03
 const LONG_PRESS = 0.5 // seconds to hold a tile to discard it
 const DRAG_THRESH = 6 // px of movement before a press becomes a drag
 // The drag ghost's two states. Both white: placeable is nearly solid, blocked
@@ -426,6 +439,12 @@ export class TilePalette {
     this._setTile(i, this.randomTile())
   }
 
+  /** Seconds a slot takes to refill right now - the card buff and the level ramp. */
+  _refillTime() {
+    const w = this.demo?.creeps?.waveNumber || 0
+    return REFILL_TIME * Buffs.refillRate / (1 + w * REFILL_PER_WAVE)
+  }
+
   // ---- per-frame: refill timers ----------------------------------------------
 
   update(dt) {
@@ -443,7 +462,9 @@ export class TilePalette {
       // Always show the refilled tile; if it's unaffordable its cost reads red and
       // it can't be dragged (no more holding slots empty until affordable).
       if (slot.refill <= 0) this._setTile(i, (this.fullHand && slot.lastTile) || this.randomTile())
-      else drawRing(slot, 1 - slot.refill / (REFILL_TIME * Buffs.refillRate))
+      // Against the total this slot STARTED with, not a freshly computed one -
+      // a wave ticking over mid-refill would otherwise jump the ring.
+      else drawRing(slot, 1 - slot.refill / (slot.refillTotal || REFILL_TIME))
     }
   }
 
@@ -459,7 +480,7 @@ export class TilePalette {
     if (this.fullHand) slot.lastTile = slot.tile
     slot.tile = null
     slot.pending = null
-    slot.refill = REFILL_TIME * Buffs.refillRate
+    slot.refill = slot.refillTotal = this._refillTime()
     slot.el.style.cursor = 'default'
     drawRing(slot, 0)
     if (slot.costEl) slot.costEl.textContent = ''
@@ -732,8 +753,6 @@ export class TilePalette {
         if (city.creeps.creepInCell(gx + dx, gy + dy)) { valid = false; break }
       }
     }
-    // Generator cap: no more than MAX_GENS placed at once.
-    if (valid && isGenerator(tile) && !city.canPlaceGen()) valid = false
     // Can't afford the (escalating) cost.
     if (valid && !this._affordable(tile)) valid = false
     return { gx, gy, cells, w, h, valid }

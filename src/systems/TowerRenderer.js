@@ -268,7 +268,7 @@ export class TowerRenderer {
       return tower.numFloors
     }
     tower.dmg -= blockHp
-    city.mana?.econ?.blockLost()
+    city.mana?.econ?.blockLost(tower)
 
     const center = tower.box.getCenter(city.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * city.floorHeight

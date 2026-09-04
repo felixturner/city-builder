@@ -96,6 +96,21 @@ export class Turrets {
     // whole cycle - which is a long time to be wrong for.
     this.mortarDamage = 4
     this.mortarCooldown = 2.8 // 1.43 dmg/s before the AoE catches anything
+
+    /**
+     * Per-level fire rate ramp - the defence's answer to Creeps.rampMul(), and
+     * written the same way so the two curves can be read against each other.
+     *
+     * Deliberately the smallest of the three: creeps gain +16% health and +14%
+     * swing rate a level, and the wave count grows on top of that, so the threat
+     * is the PRODUCT of two straight lines while this is one. It closes some of
+     * the gap and can never invert it - by level 17 the creep health pool is
+     * ~22x its level-1 value and this is 2.0x. That is the point. Ramping it
+     * quadratically, or compounding it, would match the threat curve and hand
+     * back the permanent steady state that removing the cap on hpPerWave was
+     * meant to end.
+     */
+    this.rofPerWave = 0.06 // +6% fire rate per level
     this.mortarRadius = 4 // AoE radius
     this.mortarArc = 8 // peak lob height
     this.mortarDur = 0.6 // travel time (seconds) - shorter so it lands near moving creeps
@@ -376,7 +391,7 @@ export class Turrets {
 
     this._to.copy(target.mesh.position)
     this.beamPool.fire(muzzle, this._to, tower.laserColor || this._white)
-    this.creeps.hit(target, this.laserDamage + Buffs.shotDamage.laser)
+    this.creeps.hit(target, this.laserDamage + Buffs.shotDamage.laser, 'laser')
     Sounds.play('shoot', 0.65, 0.2, 0.34)
     return true
   }
@@ -428,7 +443,7 @@ export class Turrets {
       const hitR = Math.max(this.hitRadius, Creeps.radiusOf(p.target))
       if (dist <= hitR + step) {
         // Reached the creep: land a hit and consume the projectile.
-        this.creeps.hit(p.target, 1 + Buffs.shotDamage.peg)
+        this.creeps.hit(p.target, 1 + Buffs.shotDamage.peg, 'rifle')
         this.scene.remove(p.mesh)
         this.projectiles.splice(i, 1)
         continue
@@ -460,12 +475,16 @@ export class Turrets {
           // Every support trail reaching this turret speeds it up, and they
           // stack: three of them is +75% fire rate, i.e. the gap between shots
           // divided by 1.75. None is the plain rate, not a penalised one.
-          cd = base * Buffs.fireRate / this.city.energy.fireRateFactor(tower)
+          cd = base * Buffs.fireRate
+            / this.city.energy.fireRateFactor(tower) / this.rofMul()
         } else cd = 0.15 // nothing in range or out of energy; re-check soon
       }
       this.cooldowns.set(tower, cd)
     }
   }
+
+  /** Fire rate multiplier for a shot fired right now. Mirrors Creeps.rampMul. */
+  rofMul() { return 1 + this.creeps.waveNumber * this.rofPerWave }
 
   /** Mortar turret: lob an arcing shell at the nearest creep (ignores LOS - it
    *  arcs over walls); it explodes in an AoE on landing. */
@@ -496,7 +515,7 @@ export class Turrets {
       // Same for the blast: measure to the creep's edge, so a shell landing
       // beside a giant still catches it.
       const rr = this.mortarRadius + Creeps.radiusOf(c)
-      if (dx * dx + dz * dz <= rr * rr) this.creeps.hit(c, this.mortarDamage + Buffs.shotDamage.mortar)
+      if (dx * dx + dz * dz <= rr * rr) this.creeps.hit(c, this.mortarDamage + Buffs.shotDamage.mortar, 'mortar')
     }
     // Blast dome: sphere centered at ground (y=0) so only the top half shows;
     // pops its scale up fast then fades out (animated in update()).

@@ -384,7 +384,7 @@ export class Soldiers {
         s.attackTimer -= dt
         if (s.attackTimer <= 0) {
           s.attackTimer = ATTACK_INTERVAL
-          this.creeps.hit(s.target, SOLDIER_DAMAGE)
+          this.creeps.hit(s.target, SOLDIER_DAMAGE, 'soldier')
           // Same blow the creeps land on buildings - one combat sound for the
           // whole game, pitched up a little because a soldier is a small thing.
           Sounds.play('attack', 1.25, 0.15, 0.4)

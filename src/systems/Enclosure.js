@@ -92,6 +92,85 @@ export class Enclosure {
     this.update()
   }
 
+  /**
+   * Cells one tile short of sealing a ring - the "you are missing a wall" list,
+   * as {gx, gy, ix, iy} with (ix,iy) pointing INWARD, at the pocket.
+   *
+   * A candidate is an open outside cell with two or more orthogonal walls: two
+   * OPPOSITE walls is a hole in a straight run, two ADJACENT ones a missing
+   * corner. Each is then tested on its own - plug it, flood out from each open
+   * side, and see whether exactly one side is now shut in with something that
+   * claims enclosure.
+   *
+   * KNOWN GAP IN THIS: a hole whose neighbouring walls touch it only at the
+   * CORNERS is never tested, because it has no orthogonal wall at all. The
+   * right answer there is the articulation points of the open ground, which
+   * finds every sealing cell whatever the shape - but a single hole comes back
+   * as the whole NECK of the pocket, three or four cells of which only one is
+   * the hole, and no cheap rule separated them. Straight runs are the common
+   * case and this gets them exactly right; corners show nothing rather than
+   * something wrong.
+   *
+   * `seen` is stamped per candidate rather than cleared, so the scan allocates
+   * nothing after the first call.
+   */
+  _findGaps(wall, outside, claimant, W, H) {
+    const gaps = []
+    // Bail-out for a pathological flood, not a judgement about ring size: at a
+    // few hundred it quietly refused to flag anything on a big ring, which is
+    // the board that needs the help most.
+    const MAX_POCKET = (W * H) >> 2
+    if (!this._seen || this._seen.length !== W * H) {
+      this._seen = new Int32Array(W * H)
+      this._stamp = 0
+    }
+    const seen = this._seen
+    const queue = []
+    const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]]
+
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        const c = y * W + x
+        if (wall[c] || !outside[c]) continue
+        let walls = 0
+        for (const [dx, dy] of DIRS) if (wall[(y + dy) * W + x + dx]) walls++
+        if (walls < 2) continue // open ground, not a hole in anything
+
+        wall[c] = 1 // plug it and see what that shuts off
+        // ONE stamp for the whole candidate, so a side already reached by an
+        // earlier side's flood is the same pocket, not a second one.
+        const stamp = ++this._stamp
+        let pockets = 0, dir = null, held = false
+        for (const [dx, dy] of DIRS) {
+          const n = (y + dy) * W + x + dx
+          if (wall[n] || seen[n] === stamp) continue
+          let escaped = false, sawClaimant = false, count = 0
+          queue.length = 0
+          queue.push(n)
+          seen[n] = stamp
+          while (queue.length) {
+            const i = queue.pop()
+            const ix = i % W, iy = (i - ix) / W
+            if (ix === 0 || iy === 0 || ix === W - 1 || iy === H - 1) { escaped = true; break }
+            if (claimant[i]) sawClaimant = true
+            if (++count > MAX_POCKET) { escaped = true; break }
+            for (const [ax, ay] of DIRS) {
+              const j = (iy + ay) * W + ix + ax
+              if (wall[j] || seen[j] === stamp) continue
+              seen[j] = stamp
+              queue.push(j)
+            }
+          }
+          if (!escaped) { pockets++; dir = [dx, dy]; held = held || sawClaimant }
+        }
+        wall[c] = 0 // the mask belongs to the caller
+
+        if (pockets === 1 && held) gaps.push({ gx: x, gy: y, ix: dir[0], iy: dir[1] })
+      }
+    }
+    return gaps
+  }
+
   /** Mark the footprint cells of a tower into a Uint8 mask. */
   _markCells(t, mask, W, H) {
     const set = (x, y) => { if (x >= 0 && y >= 0 && x < W && y < H) mask[y * W + x] = 1 }
@@ -119,8 +198,12 @@ export class Enclosure {
 
     // 1. Wall mask = visible towers except enclosure generators.
     const wall = new Uint8Array(W * H)
+    // ...and, in the same pass, where the things a ring is FOR are standing.
+    // findGaps needs to know whether a would-be pocket is worth pointing at.
+    const claimant = new Uint8Array(W * H)
     for (const t of this.city.towers) {
-      if (!t.visible || claimsEnclosure(t)) continue
+      if (!t.visible) continue
+      if (claimsEnclosure(t)) { this._markCells(t, claimant, W, H); continue }
       this._markCells(t, wall, W, H)
     }
 
@@ -148,8 +231,14 @@ export class Enclosure {
       if (y < H - 1) seed(x, y + 1)
     }
 
+    // Versioned so GapArrows can skip the work on frames where nothing moved.
+    this.gaps = this._findGaps(wall, outside, claimant, W, H)
+    this.gapsVersion = (this.gapsVersion || 0) + 1
+
     // King seal: the king is "enclosed" while no neighbouring cell is reachable
-    // from the boundary. success on a fresh seal, king-enc-lost when breached.
+    // from the boundary. king-sealed on a fresh seal; nothing on a breach - the
+    // power-down the region count already plays covers it, and two sounds for
+    // one event was one too many.
     if (this.city.king && this.city.king.visible) {
       const kx = this.city.king.cellX, ky = this.city.king.cellY
       let kingExposed = false
@@ -158,12 +247,8 @@ export class Enclosure {
         if (nx < 0 || ny < 0 || nx >= W || ny >= H || outside[ny * W + nx]) { kingExposed = true; break }
       }
       const enclosed = !kingExposed
-      if (this._kingEnclosed !== undefined) {
-        // Its own sound, not the one a cut support trail plays: that is a small
-        // blip about one building, and this is the ring around the king being
-        // broken open.
-        if (this._kingEnclosed && !enclosed) Sounds.play('king-enc-lost')
-        else if (!this._kingEnclosed && enclosed) Sounds.play('king-sealed') // king newly sealed
+      if (this._kingEnclosed !== undefined && !this._kingEnclosed && enclosed) {
+        Sounds.play('king-sealed')
       }
       this._kingEnclosed = enclosed
       // Read by Creeps for the king-is-open siren. Undefined until the first

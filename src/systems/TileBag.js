@@ -22,8 +22,12 @@ export class TileBag {
   }
 
   /**
-   * Fill + shuffle a 36-tile bag: walls 4 each (6 shapes = 24, ~67%), then 1x1
-   * support gens 3, enclosure gens 2, turrets 1 each (3), barracks 2, shields 2.
+   * Fill + shuffle a 35-tile bag: walls 4 each (6 shapes = 24, ~69%), then 1x1
+   * support gens 2, enclosure gens 2, turrets 1 each (3), barracks 2, shields 2.
+   *
+   * Support gens were 3 and felt like they were everywhere - they are the one
+   * utility tile whose job is done by having ENOUGH of them rather than more,
+   * since a trail only has to reach a building to buff it.
    *
    * Same proportions as the 64-tile bag this shrank from - what changed is only
    * the size. A tile type's AVERAGE wait follows from its share, so that is
@@ -42,7 +46,7 @@ export class TileBag {
     // less often than support gens because one enclosure ring covers a lot of
     // ground, and turrets stay the scarcest.
     const turrets = [TopType.RIFLE, TopType.LASER, TopType.MORTAR]
-    add(3, { s: 1, typeTop: TopType.SUPPORT })
+    add(2, { s: 1, typeTop: TopType.SUPPORT })
     add(2, { s: 1, typeTop: TopType.ENC_GEN })
     for (const typeTop of turrets) add(1, { s: 1, typeTop })
     add(2, { s: 1, typeTop: TopType.BARRACKS })

@@ -12,7 +12,8 @@
  * where it is a count, so "x0.85 twice" compounds sensibly but "+1 slot twice"
  * doesn't collapse to +1.
  */
-export const Buffs = {
+/** Neutral values - what every buff is worth before a card touches it. */
+const DEFAULTS = {
   wallHits: 0, // extra hits a grey wall absorbs per floor
   creepHp: 1, // multiplier on creep max hits (lower = weaker)
   genRate: 1, // multiplier on generator output
@@ -26,21 +27,19 @@ export const Buffs = {
   squadPerFloor: 0, // extra soldiers per barracks floor
   shieldRadius: 0, // extra shield radius in cells
   buildCost: 1, // multiplier on build/placement cost
+  floorsPerBuild: 1, // floors a single build click raises (each one charged for)
+  rebuildPerRound: 0, // walls handed a free floor when a round is cleared
 }
 
-/** Reset every buff to its neutral value (new game). */
+export const Buffs = structuredClone(DEFAULTS)
+
+/**
+ * Reset every buff to its neutral value (new game).
+ *
+ * Derived from DEFAULTS rather than written out a second time. The two lists
+ * used to be separate, and a new buff added to one and not the other leaked
+ * across runs - a card taken in one game still applied in the next.
+ */
 export function resetBuffs() {
-  Buffs.wallHits = 0
-  Buffs.creepHp = 1
-  Buffs.genRate = 1
-  Buffs.supportReach = 0
-  Buffs.shotDamage = { peg: 0, laser: 0, mortar: 0 }
-  Buffs.fireRate = 1
-  Buffs.paletteSlots = 0
-  Buffs.refillRate = 1
-  Buffs.energyMax = 0
-  Buffs.soldierHp = 0
-  Buffs.squadPerFloor = 0
-  Buffs.shieldRadius = 0
-  Buffs.buildCost = 1
+  Object.assign(Buffs, structuredClone(DEFAULTS))
 }

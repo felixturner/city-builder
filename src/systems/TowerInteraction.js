@@ -25,6 +25,8 @@ export class TowerInteraction {
     this.dragThreshold = 5 // pixels
     this._pickBox = new Box3()
     this._pickHit = new Vector3()
+    this._cellBox = new Box3()
+    this._cellHit = new Vector3()
 
     // Reroll build-wheel timers: {tower, ring, mat, t, step}
     this.rerollTimers = []
@@ -36,11 +38,20 @@ export class TowerInteraction {
   }
 
   /**
-   * Pick the nearest tower by its bounding box (ignores actual geometry so the
-   * hole in plus blocks stays clickable). Returns {batchId} or null.
+   * Pick the nearest tower by its FOOTPRINT CELLS. Cells, not geometry, so the
+   * hole in plus blocks stays clickable - but not the bounding box either,
+   * because a tetromino fills only four of its box's six cells and the other
+   * two would shadow their neighbours for the tower's full height. A one-floor
+   * tile in a five-floor L-piece's notch was unclickable. Returns {batchId} or
+   * null.
+   *
+   * Two phases, because hover runs this on every pointer move against the whole
+   * pool: the bounding box rejects almost every tower for one intersect each,
+   * and only a survivor pays for its handful of cells.
    */
   pickTowerBox(ray) {
     const city = this.city
+    const cu = city.cellUnit
     let nearest = null
     let nearestDist = Infinity
     for (const tower of city.towers) {
@@ -53,10 +64,27 @@ export class TowerInteraction {
       this._pickBox.max.set(
         tower.box.max.x + city.gridOffsetX, top, tower.box.max.y + city.gridOffsetZ
       )
-      const hit = ray.intersectBox(this._pickBox, this._pickHit)
-      if (!hit) continue
-      const d = ray.origin.distanceToSquared(hit)
-      if (d < nearestDist) { nearestDist = d; nearest = tower }
+      if (!ray.intersectBox(this._pickBox, this._pickHit)) continue
+      // The box entry is a lower bound on any cell hit inside it, so a tower
+      // that enters behind the best hit so far cannot beat it. Skip the cells.
+      let d = ray.origin.distanceToSquared(this._pickHit)
+      if (d >= nearestDist) continue
+
+      // Pre-built lot towers carry no cell list; their box is their footprint.
+      if (tower.cells) {
+        d = Infinity
+        for (const [dx, dy] of tower.cells) {
+          const x0 = (tower.cellX + dx) * cu + city.gridOffsetX
+          const z0 = (tower.cellY + dy) * cu + city.gridOffsetZ
+          this._cellBox.min.set(x0, 0, z0)
+          this._cellBox.max.set(x0 + cu, top, z0 + cu)
+          if (!ray.intersectBox(this._cellBox, this._cellHit)) continue
+          d = Math.min(d, ray.origin.distanceToSquared(this._cellHit))
+        }
+        if (d >= nearestDist) continue
+      }
+      nearestDist = d
+      nearest = tower
     }
     return nearest ? { batchId: nearest.roofInstance } : null
   }
@@ -119,17 +147,41 @@ export class TowerInteraction {
     this.clickGround()
   }
 
+  /**
+   * One click, `Buffs.floorsPerBuild` floors - each one checked and charged for
+   * on its own, so Double Time buys ACTIONS and never free height. It stops
+   * early on anything that would block a plain click: the cap, the bar, a tile
+   * a creep took in the meantime.
+   *
+   * Recorded ONCE, whatever the buff says. The buff is deterministic and
+   * playback has the same one, so a second record would build the extra floors
+   * twice over on replay.
+   */
+  /** How high a "-cost" / "+refund" caption floats above a tower: a whole floor
+   *  clear of the roof, so it reads against the sky rather than against the
+   *  block it is describing. */
+  _captionY(tower) {
+    return towerTopY(tower, this.city.floorHeight) + 0.5 + this.city.floorHeight
+  }
+
   buildFloor(tower) {
     const city = this.city
     if (!this.canBuild(tower)) return
-    // The tower's INDEX, not just its cell. A tile is identified on playback by
-    // its origin cell, and `towerAtCell` resolves that against bounding BOXES -
-    // but tetrominoes are L- and S-shaped, so two that share no cells can still
-    // have overlapping boxes. Playback then picked whichever came first in the
-    // array and built a floor on the neighbour of the one that was clicked.
-    // The pool array is fixed for the life of the run, so an index names the
-    // tile exactly. The cell stays for readability.
+    // The tower's INDEX, not just its cell. Playback names a tile by its origin
+    // cell, which `towerAtCell` resolves - but the pool array is fixed for the
+    // life of the run, so an index names the tile exactly and costs nothing.
+    // The cell stays for readability.
     city.demo?.run?.record('floor', { gx: tower.cellX, gy: tower.cellY, i: city.towers.indexOf(tower) })
+    this._raiseOneFloor(tower)
+    for (let n = 1; n < Buffs.floorsPerBuild; n++) {
+      if (!this.canBuild(tower)) return
+      this._raiseOneFloor(tower)
+    }
+  }
+
+  /** The build itself, with no recording - see buildFloor. */
+  _raiseOneFloor(tower) {
+    const city = this.city
     tower.handleClick(city, city.floorHeight, maxFloorsFor(tower), city.debris,
       city.towers, () => city.onTowerChanged(tower), () => {
         city.updateTowerVisuals()
@@ -202,7 +254,7 @@ export class TowerInteraction {
     // Floating "-cost" caption rising off the tower (like a placement / gen pulse).
     if (!city.freeClicks && city.floatingText) {
       const c = tower.box.getCenter(city.towerCenter)
-      city.floatingText.spawn(c.x + city.gridOffsetX, towerTopY(tower, city.floorHeight) + 0.5,
+      city.floatingText.spawn(c.x + city.gridOffsetX, this._captionY(tower),
         c.y + city.gridOffsetZ, `-${cost}`, ENERGY_COLOR, 0, null)
     }
     return true
@@ -241,13 +293,24 @@ export class TowerInteraction {
     // move you can make when you are desperate rather than a pure loss. Taken
     // before the tower is freed, while it still has its height.
     const refund = refundOfTower(city, tower)
+    // Its height too, and for the same reason: the caption rises from the top
+    // of what you just tore down, and by the time it spawns the stack is
+    // already falling and the floor count on its way to zero.
+    const topY = this._captionY(tower)
+    // Over the top of the fall, which brings its own per-floor ticks and the
+    // roof landing: those are the stack coming down, this is the player having
+    // torn it down. Only here, so a creep taking the last block never gets it.
+    Sounds.play('demolish', 1.0, 0.2, 0.3)
     city.demolishTower(tower, { animate: true })
     if (refund > 0 && city.mana) {
       city.mana.add(refund)
       const c = tower.box.getCenter(city.towerCenter)
       city.floatingText?.spawn(
-        c.x + city.gridOffsetX, 2, c.y + city.gridOffsetZ,
-        `+${refund}`, ENERGY_COLOR, 0, 'pick-up'
+        // No sound on the refund caption: the demolish thud, a tick per floor
+        // and the roof landing are already playing over each other, and a
+        // chime on top of that was one thing too many.
+        c.x + city.gridOffsetX, topY, c.y + city.gridOffsetZ,
+        `+${refund}`, ENERGY_COLOR, 0, null
       )
     }
   }

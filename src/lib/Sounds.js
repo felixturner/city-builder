@@ -152,7 +152,8 @@ const CORE = new Set([
 const SIMPLE = [
   'pop', 'tick', 'roll', 'good', 'intro', 'error', 'pluck',
   'energy', 'power-down', 'spawn', 'step1', 'step2', 'break2', 'creep-killed', 'dink',
-  'mortar-shoot', 'mortar-hit', 'support-lost', 'king-enc-lost', 'alert-swarm', 'king-sealed', 'shield-hit', 'king-warning', 'pick-up',
+  'demolish',
+  'mortar-shoot', 'mortar-hit', 'support-lost', 'alert-swarm', 'king-sealed', 'shield-hit', 'king-warning', 'pick-up',
   'board-expand',
   // long-form event sounds
   'horn-boss', 'countdown', 'tick-fast', 'gen-online', 'giant-killed',
@@ -179,8 +180,6 @@ const GROUPS = {
   // already on disk and never registered; all three are the same length and
   // within 3dB of each other, so they interchange cleanly.
   attack: ['attack', 'attack2', 'attack3'],
-  // Generator "about to expire": low + dull, 0.86s-2.35s.
-  'gen-warn': ['gen-warn1', 'gen-warn2', 'gen-warn3'],
 }
 
 /** Minimum seconds between repeats, for sounds that would otherwise stack up
@@ -189,7 +188,6 @@ const COOLDOWN = {
   // Fires on every dud click (max height, can't afford); spamming a wall you
   // can't build on shouldn't stutter.
   error: 0.35,
-  'gen-warn': 0.6,
   horn: 1.0,
   'horn-boss': 1.0,
   'gen-online': 0.4,
@@ -302,7 +300,7 @@ class SoundsManager {
   /**
    * Play a sound with optional rate variation and volume.
    *
-   * `name` may be a plain sound, a group (stone, clink, shoot, horn, gen-warn)
+   * `name` may be a plain sound, a group (stone, clink, shoot, horn)
    * or a voice (energy-up, score-up, ...). Voices supply their own rate/volume,
    * so calling play('energy-up') with no other arguments is the normal use;
    * pass arguments only to override.

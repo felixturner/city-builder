@@ -1,4 +1,4 @@
-import { AdditiveBlending } from 'three/webgpu'
+import { AdditiveBlending, BufferGeometry, Float32BufferAttribute } from 'three/webgpu'
 import { mrt, output, vec3 } from 'three/tsl'
 
 /**
@@ -105,4 +105,18 @@ export function stutter(gsap, target, {
     for (const [t, lit] of STUTTER) tl.set(target, { [prop]: lit ? on : off }, at + t)
   }
   return tl
+}
+
+// A plain triangle pointing toward +Z, wound face-up so it isn't back-face
+// culled by a camera looking down at the board.
+export function triangle(sizeCells) {
+  const L = sizeCells / 2, W = sizeCells / 2
+  const geo = new BufferGeometry()
+  geo.setAttribute('position', new Float32BufferAttribute([
+    0, 0, L,
+    W, 0, -L,
+    -W, 0, -L,
+  ], 3))
+  geo.computeVertexNormals()
+  return geo
 }

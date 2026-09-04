@@ -34,6 +34,7 @@ import { LootBoxes } from './LootBoxes.js'
 import { Turrets } from './Turrets.js'
 import { CreepTimeline } from './CreepTimeline.js'
 import { WaveArrows } from './WaveArrows.js'
+import { GapArrows } from './systems/GapArrows.js'
 import { FlowFieldView } from './systems/FlowFieldView.js'
 import { FloatingText } from './FloatingText.js'
 import { TilePalette } from './systems/TilePalette.js'
@@ -300,6 +301,10 @@ export class Demo {
         this.econ?.end()
         this.econ?.begin(waveIdx + 2) // the level now being built for, 1-based
       }
+      // Rubble Crews (a late card) puts floors back on walls between rounds.
+      // After the record closes, so the free floors read as next round's build
+      // rather than this round's, and only while there is still a city.
+      if (!this.kingDead && !this.isGameOver) this.powerUps?.rebuildWalls()
       if (!this.creeps.isBossWave(waveIdx)) return
       if (this.isGameOver || this.kingDead) return
       this._runBossReward()
@@ -311,6 +316,7 @@ export class Demo {
     // Screen-edge warning arrows for the side the next wave comes from. Creeps
     // reaches back for it to flash the arrow a clump is pouring out of.
     this.waveArrows = new WaveArrows(this)
+    this.gapArrows = new GapArrows(this)
     this.creeps.waveArrows = this.waveArrows
     // Mana was built before the strip existed, so its first layout pass found
     // nothing to avoid. Re-run it now the strip is measurable.
@@ -616,6 +622,7 @@ export class Demo {
 
     this.creepTimeline.update()
     this.waveArrows.update(dt)
+    this.gapArrows.update(dt)
     this.floatingText.update(this.camera, dt)
 
     // Feed turret range circles to the coverage-glow mask.
