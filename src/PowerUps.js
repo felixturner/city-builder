@@ -165,7 +165,11 @@ export class PowerUpScreen {
     const k = this.demo.city.king
     if (!k) return
     k.numFloors = this.kingMaxFloors()
-    k.shieldHits = 0
+    // Clear the partial-block damage accumulator too (TowerRenderer.damageTower
+    // counts bites into `dmg` until they cover a block). This used to zero a
+    // field nothing reads (`shieldHits`), so a freshly restored king could lose
+    // its "first" floor to a single leftover bite.
+    k.dmg = 0
     this.demo.city.onTowerChanged(k)
   }
   growKing(n) {
