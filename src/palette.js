@@ -43,9 +43,10 @@ export const BLUE = ACCENTS[2]
  *  (tower.accentIndex, tile specs, the enclosure claim map). */
 export const ACCENT = { PINK: 0, LIME: 1, BLUE: 2 }
 
-/** Build currency: every energy figure, caption and pulse. Pink, so income and
- *  the generators that earn it read as one thing. */
-export const ENERGY_COLOR = PINK
+/** Build currency: every energy figure, caption and pulse. Yellow - the
+ *  generators that earn it wear pink, so the number and the building that made
+ *  it are told apart on purpose. */
+export const ENERGY_COLOR = LIME
 
 /** Shield yellow - the tile, the barrier ring, and the flash a creep takes
  *  crossing it, all one colour. */

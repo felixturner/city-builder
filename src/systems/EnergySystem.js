@@ -1,6 +1,6 @@
 import { Vector2, Color } from 'three/webgpu'
 import { Sounds } from '../lib/Sounds.js'
-import { ENERGY_COLOR, LIME, BLUE } from '../palette.js'
+import { ENERGY_COLOR, PINK, BLUE } from '../palette.js'
 import { Buffs } from '../buffs.js'
 import {
   isSupport, claimsEnclosure, isWall, isShield, isTurret, isBarracks, towerArea, towerTopY,
@@ -80,10 +80,10 @@ const SUPPORT_SQUAD = 1 // +1 soldier in a barracks' garrison each
 // Hit points a shield ring adds to every block of every tower standing in it.
 const SHIELD_COVER_HP = 1
 // Caption colours by what the bonus DOES, not by which building granted it, so
-// the board teaches one vocabulary: pink is income, yellow is violence, blue is
+// the board teaches one vocabulary: pink is violence, yellow is income, blue is
 // staying up. Gains and losses share a colour and are told apart by the sign,
 // the sound and the ring.
-const LABEL_ATTACK = LIME
+const LABEL_ATTACK = PINK
 const LABEL_ENERGY = ENERGY_COLOR
 const LABEL_HP = BLUE
 // Support generators are blue; the connect burst reads as coming from them.

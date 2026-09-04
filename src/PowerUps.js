@@ -1,6 +1,6 @@
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
-import { ENERGY_COLOR, LIME, ACCENTS } from './palette.js'
+import { ENERGY_COLOR, PINK, ACCENTS } from './palette.js'
 import { TopType, KING_MAX_FLOORS, maxFloorsFor, isWall, isTurret } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
 import { simRand, simShuffle } from './lib/rng.js'
@@ -26,10 +26,10 @@ const CARDS_OFFERED = 4
 const LATE_LEVEL = 12
 
 // Card colours follow the board's vocabulary, not the card's wording: pink is
-// income, yellow is violence, blue is staying up. Named for the JOB so the two
+// violence, yellow is income, blue is staying up. Named for the JOB so the two
 // stay in step the next time an accent moves.
 const ECON = ENERGY_COLOR
-const COMBAT = LIME
+const COMBAT = PINK
 const BLUE = ACCENTS[2]
 
 /**
@@ -141,7 +141,7 @@ export const CARDS = [
     apply: () => { Buffs.soldierHp += 2 },
   },
   {
-    id: 'shield', title: 'Wider Aegis', color: COMBAT,
+    id: 'shield', title: 'Wider Aegis', color: ECON,
     desc: 'Shields cover 2 more cells of radius.',
     available: (g) => g.hasShield(),
     apply: () => { Buffs.shieldRadius += 2 },
