@@ -497,7 +497,7 @@ export class TilePalette {
     // rotate) raises its own pointerup on window, and without this check that
     // release ended the drag and sent the tile back to the tray - which is
     // exactly what made the rotate button look broken.
-    this.pending = { i, x: e.clientX, y: e.clientY, done: false, id: e.pointerId }
+    this.pending = { i, x: e.clientX, y: e.clientY, done: false, id: e.pointerId, touch: e.pointerType === 'touch' }
     this.pending.lpTimer = setTimeout(() => this._longPress(i), LONG_PRESS * 1000)
     window.addEventListener('pointermove', this._onMove)
     window.addEventListener('pointerup', this._onUp)
@@ -706,7 +706,7 @@ export class TilePalette {
     // turned away.
     const hi = this._white.clone()
     const lo = base.clone().lerp(this._white, GHOST_BLOCKED_LIFT)
-    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, lo, rot, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined }
+    this.drag = { slot: i, tile, ghost, mat, target: null, base, hi, lo, rot, lastX: null, lastY: null, lastCell: null, sticky: false, pointerId: this.pending ? this.pending.id : undefined, touch: this.pending ? this.pending.touch : false }
     mat.color.copy(base)
   }
 
@@ -904,7 +904,11 @@ export class TilePalette {
       // Invalid cell (or off-grid): hold onto it so a misjudged drop doesn't
       // cost a trip back to the palette. Click again to retry, Esc to give up.
       Sounds.play('error', 1.0, 0.2, 0.5)
-      if (!this.drag.sticky) this._goSticky()
+      // Touch has no hovering cursor, so a sticky tile just freezes mid-board
+      // with no way to see it's still in hand. Lift a finger on a bad cell and
+      // the tile goes back to the tray instead.
+      if (this.drag.touch) restore()
+      else if (!this.drag.sticky) this._goSticky()
     }
   }
 }
