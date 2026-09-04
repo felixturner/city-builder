@@ -1,7 +1,7 @@
 import gsap from 'gsap'
 import { Sounds } from './lib/Sounds.js'
 import { ENERGY_COLOR, PINK as PINK_ACCENT, ACCENTS } from './palette.js'
-import { TopType, KING_MAX_FLOORS, maxFloorsFor, isWall } from './blockTypes.js'
+import { TopType, KING_MAX_FLOORS, maxFloorsFor, isWall, isTurret } from './blockTypes.js'
 import { Buffs, resetBuffs } from './buffs.js'
 import { simRand, simShuffle } from './lib/rng.js'
 
@@ -19,6 +19,11 @@ export { Buffs, resetBuffs }
  */
 // Cards dealt onto the choose screen.
 const CARDS_OFFERED = 4
+
+/** Cards marked `late` are held out of the deal until this level. The board
+ *  opens its last lots on the level-12 boss, so from here on nothing the player
+ *  owns can grow outwards - only up. See the late block in CARDS. */
+const LATE_LEVEL = 12
 
 const YELLOW = ENERGY_COLOR
 const PINK = PINK_ACCENT
@@ -138,6 +143,43 @@ export const CARDS = [
     available: (g) => g.hasShield(),
     apply: () => { Buffs.shieldRadius += 2 },
   },
+  // -- Late game, level 12 and up ------------------------------------------
+  //
+  // Twelve is where the board stops growing: it opens two lots per boss cleared
+  // and caps at eleven, so 4, 8 and 12 are the last of them. From 13 on the
+  // only thing that can still grow is what is already standing, while the
+  // creeps keep ramping - and every card up to here was a few percent of
+  // something. These are the ones that change the shape of a last stand rather
+  // than its numbers, so the ending differs run to run.
+  {
+    id: 'double-time', title: 'Double Time', color: BLUE, late: true, repeat: false,
+    desc: 'Every build click raises two floors. You pay for both.',
+    // The late game runs out of ACTIONS, not energy - a full bar is no use when
+    // you cannot place fast enough to hold the line. This is the only card that
+    // buys the resource that is actually short, and charging for both floors is
+    // what keeps it a conversion of surplus energy into speed rather than a
+    // discount. Worthless early, which is why it gates itself.
+    apply: () => { Buffs.floorsPerBuild = 2 },
+  },
+  {
+    id: 'rubble', title: 'Rubble Crews', color: BLUE, late: true, repeat: 2,
+    desc: 'Ten walls come back a floor at the end of every round.',
+    // Recurring, not a one-shot: it answers the actual failure - walls coming
+    // down faster than hands can replace them - for the rest of the run.
+    apply: () => { Buffs.rebuildPerRound += 10 },
+  },
+  {
+    id: 'field-guns', title: 'Field Guns', color: PINK, late: true, repeat: false,
+    desc: 'Every gun hits one harder - rifles, lasers and mortars.',
+    // The three single-gun damage cards are a percent of one weapon each. This
+    // is all of them at once, which is what a level-17 wave is priced against.
+    available: (g) => g.city.towers.some((t) => t.visible && isTurret(t) && t.numFloors >= 1),
+    apply: () => {
+      Buffs.shotDamage.peg += 1
+      Buffs.shotDamage.laser += 1
+      Buffs.shotDamage.mortar += 1
+    },
+  },
 ]
 
 /**
@@ -153,6 +195,8 @@ export class PowerUpScreen {
   // -- the small API the cards act through ----------------------------------
 
   get city() { return this.demo.city }
+  /** The level being played, 1-based - what `late` cards gate on. */
+  get level() { return (this.demo.creeps?.waveNumber || 0) + 1 }
   kingMaxFloors() { return this.demo.city.kingMaxFloors || 5 }
   hasBarracks() { return this.demo.soldiers?.soldiers.length > 0 || this._anyBarracks() }
   _anyBarracks() {
@@ -211,6 +255,11 @@ export class PowerUpScreen {
     city.updateTowerVisuals()
   }
 
+  /** Free floors on walls at the end of every round from here on (Buffs). */
+  rebuildWalls() {
+    if (Buffs.rebuildPerRound > 0) this.growRandom(isWall, Buffs.rebuildPerRound)
+  }
+
   addPaletteSlot() {
     Buffs.paletteSlots += 1
     this.demo.tilePalette?.addSlot()
@@ -229,6 +278,8 @@ export class PowerUpScreen {
       const times = this.taken.get(c.id) || 0
       const cap = c.repeat === false ? 1 : (typeof c.repeat === 'number' ? c.repeat : Infinity)
       if (times >= cap) return false
+      // `late` cards are held back until the board has stopped growing.
+      if (c.late && !this._forceLate && this.level < LATE_LEVEL) return false
       return !c.available || c.available(this)
     })
     const picked = []
@@ -236,6 +287,20 @@ export class PowerUpScreen {
       picked.push(pool.splice(Math.floor(simRand() * pool.length), 1)[0])
     }
     return picked
+  }
+
+  /**
+   * Dev: open the screen now, late cards included whatever the level - there is
+   * otherwise no way to see them without playing to twelve.
+   *
+   * Deals from the sim RNG like any other deal, so pressing this shifts the
+   * stream and the run will not replay afterwards. It is a preview, not a game
+   * action, and the same is true of the Boss Clear button next to it.
+   */
+  showAll() {
+    this._forceLate = true
+    this.show() // deal() is synchronous, so the flag is spent by the time it returns
+    this._forceLate = false
   }
 
   /**

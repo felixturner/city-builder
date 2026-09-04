@@ -44,6 +44,24 @@ export class EconLog {
       spentFloor: 0, // levelling something already standing
       blocksLost: 0, // blocks creeps knocked off
       blocksPlaced: 0,
+      // The fight, so the economy can be read against what shaped it. Total
+      // damage and shots fired are not here on purpose: both are derivable
+      // (damage is kills x health, shots are turrets x rate x uptime) and
+      // neither would change a decision. These three are not derivable.
+      //
+      // spawned/killed is the number a run turns on. The level where kills stop
+      // keeping up with spawns is the level the city starts losing ground, and
+      // without the counters it can only be inferred from how the round felt.
+      spawned: 0,
+      killed: 0,
+      // Which defence is actually carrying the round. Turrets are single-target
+      // and mortars and shields are not, so a late round where the crowd
+      // weapons take the bulk is the case for more of them.
+      killedBy: { rifle: 0, laser: 0, mortar: 0, soldier: 0, shield: 0, king: 0, wall: 0 },
+      // blocksLost says how much came off; this says WHAT. Losing walls is the
+      // game working - they are there to be chewed. Losing generators is the
+      // death spiral, because the income that rebuilds them dies with them.
+      lostBy: { wall: 0, encGen: 0, support: 0, turret: 0, barracks: 0, shield: 0, king: 0 },
       seconds: 0,
       // The two failure modes, measured in seconds rather than inferred: pinned
       // at the ceiling with income falling on the floor, or stuck at nothing
@@ -93,6 +111,7 @@ export class EconLog {
     r.barracks = barracks
     r.shields = shield
     r.wallBlocks = wallBlocks
+    r.killPct = r.spawned > 0 ? Math.round((100 * r.killed) / r.spawned) : 0
     r.atCapPct = r.seconds > 0 ? Math.round((100 * r.atCap) / r.seconds) : 0
     r.atZeroPct = r.seconds > 0 ? Math.round((100 * r.atZero) / r.seconds) : 0
     // The headline: of everything the generators produced this round, how much
@@ -102,6 +121,9 @@ export class EconLog {
     this.rounds.push(r)
     // On playback, say whether this round came out the way it was recorded.
     this.demo.run?.checkRound(r, this.rounds.length - 1)
+    // Empty buckets are noise in a line this long - name only what happened.
+    const nonzero = (o) => Object.entries(o).filter(([, v]) => v > 0)
+      .map(([k, v]) => `${v} ${k}`).join(' ') || 'none'
     console.log(
       `[econ] L${r.level} lots ${r.lots} cap ${r.cap} | earned ${Math.round(r.earned)}`
       + ` wasted ${Math.round(r.wasted)} (${r.wastePct}%)`
@@ -109,6 +131,8 @@ export class EconLog {
       + ` | energy ${r.startEnergy}->${r.endEnergy} (low ${r.minEnergy})`
       + ` | spent ${r.spent} (${r.spentPlace} place / ${r.spentFloor} floors)`
       + ` | blocks +${r.blocksPlaced} -${r.blocksLost}`
+      + ` | creeps ${r.killed}/${r.spawned} killed (${r.killPct}%) by ${nonzero(r.killedBy)}`
+      + ` | lost ${nonzero(r.lostBy)}`
       + ` | income ${r.incomePerSec}/s (support ${r.supportMana} enc ${r.encGenMana})`
       + ` | banked: ${Math.round(r.from.support)} support, ${Math.round(r.from.enc)} enc,`
       + ` ${Math.round(r.from.king)} king, ${Math.round(r.from.crate)} crate`
@@ -147,6 +171,32 @@ export class EconLog {
     if (isFloor) this._round.spentFloor += amount
     else this._round.spentPlace += amount
   }
-  blockLost() { if (this._round) this._round.blocksLost++ }
+  blockLost(tower) {
+    const r = this._round
+    if (!r) return
+    r.blocksLost++
+    const k = this._lostKey(tower)
+    if (k) r.lostBy[k]++
+  }
   blockPlaced(n = 1) { if (this._round) this._round.blocksPlaced += n }
+  creepSpawned(n = 1) { if (this._round) this._round.spawned += n }
+  creepKilled(cause) {
+    const r = this._round
+    if (!r) return
+    r.killed++
+    if (cause in r.killedBy) r.killedBy[cause]++
+  }
+
+  /** Which bucket a destroyed block belongs to - the census order end() uses. */
+  _lostKey(t) {
+    if (!t) return null
+    if (t.king) return 'king'
+    if (t.typeTop === TopType.SUPPORT) return 'support'
+    if (t.typeTop === TopType.ENC_GEN) return 'encGen'
+    if (isTurret(t)) return 'turret'
+    if (isBarracks(t)) return 'barracks'
+    if (isShield(t)) return 'shield'
+    if (isWall(t)) return 'wall'
+    return null
+  }
 }

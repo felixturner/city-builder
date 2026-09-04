@@ -37,14 +37,9 @@ import { ACCENT_COLORS, PINK, CITY, WHITE } from './palette.js'
 import { KingVisuals, KING_COLOR, KING_HIT_FLASH } from './systems/KingVisuals.js'
 import { BoardGrid, EXPAND_TIME } from './systems/BoardGrid.js'
 import { Buffs } from './buffs.js'
-import { TopType, isTurret, isGenerator, towerArea, towerTopY, roofGeomIndex, isEncGen, isWall, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_MAX_FLOORS } from './blockTypes.js'
+import { TopType, isTurret, towerArea, towerTopY, roofGeomIndex, isEncGen, isWall, isShield, claimsEnclosure, shieldRadiusCells, maxFloorsFor, MAX_FLOORS, TURRET_EXTRA_FLOORS, KING_HEALTH, KING_MAX_FLOORS } from './blockTypes.js'
 import { fxMaterial, glow } from './fx.js'
 
-// Energy pulses a generator fires per floor before that floor crumbles away.
-// A generator's life is therefore its height: a 4-storey gen lasts 4x as long as
-// a 1-storey one, so building tall is an investment in uptime rather than just
-// output. It visibly shrinks as it burns down, and dies when the last floor goes.
-const MAX_GENS = 30 // hard cap on simultaneously placed generators
 // Lots across at the start, and the most that ever open up. The board is built
 // at CITY_SIZE_LOTS (13) so there is always a spawn margin outside the largest
 // play area (11).
@@ -449,7 +444,10 @@ export class City {
     return t
   }
 
-  /** Demolish a freely-placed tower (right-click): debris + free its cells. */
+  /** Demolish a freely-placed tower: debris + free its cells.
+   *  UNUSED - right-click goes through TowerInteraction.demolishTower, which
+   *  calls demolishTower directly. Kept because nothing has replaced the debris
+   *  burst it does. */
   demolishPlaced(tower) {
     const center = tower.box.getCenter(this.towerCenter)
     const y = Math.max(0.5, tower.numFloors - 0.5) * this.floorHeight
@@ -1241,18 +1239,6 @@ export class City {
     this.updateHitFlashes(dt)
     this.kingVisuals.update(dt)
     this.flowView?.update()
-  }
-
-  /** Count currently-placed generators (for the MAX_GENS cap). */
-  countGens() {
-    let n = 0
-    for (const t of this.towers) if (t.visible && isGenerator(t)) n++
-    return n
-  }
-
-  /** Whether another generator may be placed (under the cap). */
-  canPlaceGen() {
-    return this.countGens() < MAX_GENS
   }
 
   /**

@@ -13,6 +13,7 @@ export class GUIManager {
     gameplay: {
       spawnThreshold: 15,
       spawnCreeps: true,
+      freezeCreeps: false,
       freeClicks: false,
       music: true,
       fullHand: false,
@@ -87,6 +88,11 @@ export class GUIManager {
     gameplayFolder.add(allParams.gameplay, 'spawnCreeps').name('Creeps').onChange((v) => {
       if (demo.creeps) demo.creeps.spawnEnabled = v
     })
+    // Stops the creeps ALREADY on the board, unlike 'Creeps' above which only
+    // shuts off new spawns.
+    gameplayFolder.add(allParams.gameplay, 'freezeCreeps').name('Freeze Creeps').onChange((v) => {
+      if (demo.creeps) demo.creeps.frozen = v
+    })
     gameplayFolder.add(allParams.gameplay, 'freeClicks').name('Free Clicks').onChange((v) => {
       demo.city.freeClicks = v
     })
@@ -104,6 +110,11 @@ export class GUIManager {
     gameplayFolder.add(allParams.gameplay, 'fullHand').name('All Tiles').onChange((v) => {
       demo.tilePalette?.setFullHand(v)
     })
+    // The card screen on demand, late cards and all - they are gated on level 12
+    // and there is otherwise no way to look at them without playing that far.
+    gameplayFolder.add({
+      cards: () => demo.powerUps?.showAll(),
+    }, 'cards').name('🃏 Cards')
     // Wipe every tile off the board - king included - for clean screenshots.
     gameplayFolder.add({
       clearBoard: () => demo.city.clearBoard(),

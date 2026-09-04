@@ -106,6 +106,11 @@ export const CREEP = {
   spawnMarker: 0x7b2ff7,
 }
 
+/** Creep damage captions, as CSS. The same hot orange a creep flashes when it
+ *  is hit, so the number and the flash read as one event - it used to be a
+ *  hardcoded '#ff5a5a', which looked like blood rather than like a creep. */
+export const CREEP_LABEL = `#${CREEP.hitFlash.toString(16).padStart(6, '0')}`
+
 /** Turret hardware and what it throws. */
 export const TURRET = {
   projectile: 0xfff3c0,
@@ -119,6 +124,9 @@ export const WARN = {
   /** Incoming-wave arrows: a boss wave is red, an ordinary one orange. */
   arrowBoss: 0xff2a4a,
   arrow: 0xcc5500,
+  /** One tile short of a sealed ring: yellow, and only ever advice - it is not
+   *  a threat, so it does not borrow the incoming-wave orange. */
+  gap: 0xffcc00,
   /** Flow-field debug: cells that reach the king vs cells that do not. */
   flowOk: 0x22ff22,
   flowBlocked: 0xff2020,

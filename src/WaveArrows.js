@@ -1,6 +1,6 @@
-import { Mesh, BufferGeometry, Float32BufferAttribute, MeshBasicNodeMaterial, Color, Vector2 } from 'three/webgpu'
+import { Mesh, MeshBasicNodeMaterial, Color, Vector2 } from 'three/webgpu'
 import gsap from 'gsap'
-import { fxMaterial, glow, stutter } from './fx.js'
+import { fxMaterial, glow, stutter, triangle } from './fx.js'
 import { WARN } from './palette.js'
 
 /**
@@ -41,20 +41,6 @@ const FLICK = 0.15 // seconds per leg of the exposed-alarm blink
 const BLEEP_PERIOD = 0.7 // seconds between exposed-alarm blinks (matches the siren)
 const ALPHA_STEADY = 0.7 // "they are over there", not "brace"
 const ALPHA_COUNTDOWN = 0.45 // during the pre-wave countdown
-
-// A plain triangle pointing toward +Z, wound face-up so it isn't back-face
-// culled by a camera looking down at the board.
-function triangle(sizeCells) {
-  const L = sizeCells / 2, W = sizeCells / 2
-  const geo = new BufferGeometry()
-  geo.setAttribute('position', new Float32BufferAttribute([
-    0, 0, L,
-    W, 0, -L,
-    -W, 0, -L,
-  ], 3))
-  geo.computeVertexNormals()
-  return geo
-}
 
 export class WaveArrows {
   constructor(demo) {
